@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "ARS Mobile",
+    "slug": "ars-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": false,
+    "splash": {
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {},
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

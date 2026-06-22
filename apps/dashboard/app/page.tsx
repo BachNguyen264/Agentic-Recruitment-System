@@ -1,0 +1,24 @@
+import { AgentTracePanel } from "@/components/AgentTracePanel";
+import { ServiceStatus } from "@/components/ServiceStatus";
+
+export default function Home() {
+  return (
+    <main className="mx-auto max-w-4xl space-y-8 p-8">
+      <header className="space-y-1">
+        <h1 className="text-2xl font-bold">Autonomous Recruitment System</h1>
+        <p className="text-sm text-slate-500">
+          Dashboard HR — <span className="font-medium">scaffold</span>. Pipeline cố định:{" "}
+          <span className="font-mono">parser → ranker → screener → scheduler</span> + human_review.
+          Nguồn chân lý: PRD.md.
+        </p>
+      </header>
+
+      <ServiceStatus />
+      <AgentTracePanel />
+
+      <footer className="border-t border-slate-200 pt-4 text-xs text-slate-400">
+        Placeholder giai đoạn scaffold — node agent là stub, chưa có logic nghiệp vụ thật.
+      </footer>
+    </main>
+  );
+}

@@ -47,10 +47,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",   # Next.js dashboard
-        "http://localhost:19006",  # Expo web
-    ],
+    # Dev: cho phép localhost/127.0.0.1 mọi cổng (dashboard :3000, Expo web :19006...).
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
