@@ -53,9 +53,15 @@ class Settings(BaseSettings):
 
         QUAN TRỌNG (CLAUDE.md): bật SSL bằng ``ssl=True``, KHÔNG dùng ``?sslmode=``
         (asyncpg không hiểu sslmode trong URL).
+
+        ``statement_cache_size=0``: Neon dùng endpoint ``-pooler`` (PgBouncer, chế độ
+        transaction). Tắt prepared-statement cache của asyncpg để tránh lỗi
+        "prepared statement already exists" khi pool tái dùng kết nối.
         """
         host_is_local = "localhost" in self.database_url or "127.0.0.1" in self.database_url
-        return {} if host_is_local else {"ssl": True}
+        if host_is_local:
+            return {}
+        return {"ssl": True, "statement_cache_size": 0}
 
 
 @lru_cache
