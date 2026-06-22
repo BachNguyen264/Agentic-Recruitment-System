@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 
 from app.api.deps import DBSession
 from app.schemas.application import ApplicationCreate, ApplicationRead
 from app.services import application_service
+from app.tasks.background import process_application
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
 
 @router.post("", response_model=ApplicationRead, status_code=status.HTTP_201_CREATED)
-async def create_application(payload: ApplicationCreate, session: DBSession) -> ApplicationRead:
+async def create_application(
+    payload: ApplicationCreate, session: DBSession, background_tasks: BackgroundTasks
+) -> ApplicationRead:
     app_row = await application_service.create_application(session, payload)
-    # TODO (Phase 5 · PRD §8.3): đẩy vào xử lý bất đồng bộ bằng BackgroundTasks.
+    # PRD §8.3: đẩy vào xử lý bất đồng bộ (chạy SAU khi trả response). Mỗi CV một pipeline độc lập.
+    background_tasks.add_task(process_application, app_row.id)
     return ApplicationRead.model_validate(app_row)
 
 
