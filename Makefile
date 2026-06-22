@@ -42,8 +42,8 @@ health: ## Gọi health endpoint
 test: ## Chạy test backend
 	cd apps/backend && uv run pytest -q
 
-check-env: ## Kiểm tra kết nối 3 dịch vụ managed
-	cd apps/backend && uv run python -m app.scripts.check_connections
+check-env: ## Kiểm tra kết nối 3 dịch vụ managed (script độc lập, không cần backend)
+	uv run --no-project --with asyncpg --with "redis>=5" --with qdrant-client --with python-dotenv scripts/check_connections.py
 
 local-infra-up: ## Dựng hạ tầng local (dự phòng khi chưa có managed)
 	docker compose -f docker-compose.local.yml up -d
