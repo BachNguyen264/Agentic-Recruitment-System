@@ -1,0 +1,61 @@
+# ───────────────────────── Secrets ─────────────────────────
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+apps/backend/.env
+!apps/backend/.env.example
+
+# ───────────────────────── Python ──────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ───────────────────────── Node / pnpm ─────────────────────
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-error.log*
+
+# ───────────────────────── Next.js ─────────────────────────
+.next/
+out/
+build/
+dist/
+.turbo/
+
+# ───────────────────────── Expo / RN ───────────────────────
+.expo/
+.expo-shared/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# ───────────────────────── OS / IDE ────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Claude Code local tooling (skills, local settings) — keep out of VCS
+.claude/
+
+# ───────────────────────── Misc ────────────────────────────
+*.log
+.cache/
+tmp/

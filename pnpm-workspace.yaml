@@ -1,0 +1,6 @@
+# pnpm workspaces — chỉ gồm các package JS/TS.
+# Backend (apps/backend) là Python (uv), KHÔNG nằm trong workspace pnpm.
+packages:
+  - "apps/dashboard"
+  - "apps/mobile"
+  - "packages/*"
