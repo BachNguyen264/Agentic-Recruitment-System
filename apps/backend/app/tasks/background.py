@@ -18,6 +18,19 @@ from app.services import audit_service
 logger = get_logger("app.tasks.background")
 
 
+def _parsed_summary(parsed: dict | None) -> dict:
+    """Tóm tắt parsed_data cho audit detail (PRD §16) — không nhồi cả CV vào log."""
+    if not parsed:
+        return {"has_parsed_data": False}
+    return {
+        "has_parsed_data": True,
+        "full_name": parsed.get("full_name"),
+        "skills_count": len(parsed.get("skills") or []),
+        "experiences_count": len(parsed.get("experiences") or []),
+        "education_count": len(parsed.get("education") or []),
+    }
+
+
 async def process_application(application_id: int, *, force_review: bool = False) -> None:
     """Mỗi CV một pipeline độc lập (FR-PIPE-1). Ghi audit mọi bước (FR-PIPE-4)."""
     logger.info("BG: bắt đầu xử lý application_id=%s", application_id)
@@ -37,19 +50,28 @@ async def process_application(application_id: int, *, force_review: bool = False
                 force_review=force_review,
                 applicant_email=application.applicant_email,
                 application_id=application_id,
+                cv_path=application.cv_file_ref,  # parser đọc CV thật từ đây
             )
+            final = out["final"]
 
-            # Ghi audit cho từng node của pipeline.
+            # Ghi audit cho từng node (parser đã THẬT; ranker/screener/scheduler vẫn stub).
             for step in out["trace"]:
+                node = step["node"]
+                flags = step.get("uncertainty_flags", []) or []
+                if node == "parser":
+                    action = "parse_failed" if "parse_failed" in flags else "parsed"
+                    detail = {"status": step.get("status"), **_parsed_summary(final.get("parsed_data"))}
+                else:
+                    action = "stub_pass_through"
+                    detail = {"status": step.get("status")}
                 await audit_service.record(
-                    session, application_id=application_id, node=step["node"],
-                    action="stub_pass_through", confidence=step.get("confidence"),
-                    uncertainty_flags=step.get("uncertainty_flags", []),
-                    detail={"status": step.get("status")}, commit=False,
+                    session, application_id=application_id, node=node,
+                    action=action, confidence=step.get("confidence"),
+                    uncertainty_flags=flags, detail=detail, commit=False,
                 )
 
-            final = out["final"]
             application.status = final.get("status", application.status)
+            application.parsed_data = final.get("parsed_data") or {}
             application.confidence = final.get("confidence")
             application.uncertainty_flags = final.get("uncertainty_flags", []) or []
             application.escalation_reason = final.get("escalation_reason")

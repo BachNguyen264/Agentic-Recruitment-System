@@ -1,11 +1,17 @@
-"""Routes agent — run-demo chạy pipeline cả 2 nhánh (scaffold, KHÔNG chạm DB)."""
+"""Routes agent — run-demo (pipeline 2 nhánh) + parse-cv (Parser đồng bộ, iterate chất lượng)."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import os
+import tempfile
+from pathlib import Path
 
+from fastapi import APIRouter, File, UploadFile
+from fastapi.concurrency import run_in_threadpool
+
+from app.agents.nodes.parser import parse_cv
 from app.agents.runner import run_with_trace
-from app.schemas.agent import AgentTraceStep, RunDemoRequest, RunDemoResponse
+from app.schemas.agent import AgentTraceStep, ParseCVResponse, RunDemoRequest, RunDemoResponse
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -25,3 +31,20 @@ async def run_demo(payload: RunDemoRequest) -> RunDemoResponse:
         trace=[AgentTraceStep(**step) for step in out["trace"]],
         messages=final.get("messages", []),
     )
+
+
+@router.post("/parse-cv", response_model=ParseCVResponse, summary="Parse CV đồng bộ (iterate chất lượng)")
+async def parse_cv_endpoint(file: UploadFile = File(...)) -> ParseCVResponse:
+    """Chạy NGAY logic Parser trên file upload (KHÔNG qua DB/queue). Công cụ chính để soi chất
+    lượng trích xuất + tinh chỉnh prompt. LUÔN parse thật (không phụ thuộc ENABLE_LLM)."""
+    content = await file.read()
+    suffix = Path(file.filename or "").suffix.lower()
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        tmp.write(content)
+        tmp.close()
+        # parse_cv là sync (đọc file + gọi LLM sync) -> offload khỏi event loop.
+        result = await run_in_threadpool(parse_cv, tmp.name)
+    finally:
+        os.unlink(tmp.name)
+    return ParseCVResponse(**result)

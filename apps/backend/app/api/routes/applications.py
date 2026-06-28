@@ -1,23 +1,50 @@
-"""Routes Application — POST (nộp CV) / GET (đọc). Scaffold: chưa đẩy vào pipeline (Phase 5)."""
+"""Routes Application — POST (nộp CV, multipart) / GET (đọc). PRD §8.2–§8.3.
+
+Nộp CV = upload file (PDF/DOCX) + email + job_id → lưu file local, tạo Application SUBMITTED,
+đẩy vào pipeline bất đồng bộ (parser THẬT; ranker/screener/scheduler vẫn stub).
+"""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from pathlib import Path
+
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
+from pydantic import ValidationError
 
 from app.api.deps import DBSession
 from app.schemas.application import ApplicationCreate, ApplicationRead
 from app.services import application_service
 from app.tasks.background import process_application
+from app.tools import cv_storage
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
 
 @router.post("", response_model=ApplicationRead, status_code=status.HTTP_201_CREATED)
 async def create_application(
-    payload: ApplicationCreate, session: DBSession, background_tasks: BackgroundTasks
+    session: DBSession,
+    background_tasks: BackgroundTasks,
+    applicant_email: str = Form(...),
+    job_id: int | None = Form(None),
+    file: UploadFile = File(...),
 ) -> ApplicationRead:
-    app_row = await application_service.create_application(session, payload)
-    # PRD §8.3: đẩy vào xử lý bất đồng bộ (chạy SAU khi trả response). Mỗi CV một pipeline độc lập.
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in cv_storage.ALLOWED_SUFFIXES:
+        raise HTTPException(status_code=400, detail="Chỉ nhận CV định dạng .pdf hoặc .docx")
+
+    try:
+        data = ApplicationCreate(job_id=job_id, applicant_email=applicant_email)
+    except ValidationError:
+        raise HTTPException(status_code=422, detail="Email không hợp lệ") from None
+
+    content = await file.read()
+    app_row = await application_service.create_application(session, data)
+    # cv_file_ref cần application_id -> lưu file SAU khi có id, rồi cập nhật.
+    app_row.cv_file_ref = cv_storage.save_cv(app_row.id, file.filename or "", content)
+    await session.commit()
+    await session.refresh(app_row)
+
+    # PRD §8.3: đẩy vào xử lý bất đồng bộ (chạy SAU response). Mỗi CV một pipeline độc lập.
     background_tasks.add_task(process_application, app_row.id)
     return ApplicationRead.model_validate(app_row)
 

@@ -13,15 +13,21 @@ from app.agents.state import RecruitmentState
 
 
 def initial_state(*, force_review: bool = False, application_id: int | None = None,
-                  applicant_email: str | None = None) -> RecruitmentState:
+                  applicant_email: str | None = None,
+                  cv_path: str | None = None) -> RecruitmentState:
     return {
         "application_id": application_id,
-        "input": {"force_review": force_review, "applicant_email": applicant_email},
+        "input": {
+            "force_review": force_review,
+            "applicant_email": applicant_email,
+            "cv_path": cv_path,  # parser đọc CV từ đây (None -> parser stub)
+        },
         "scratchpad": {},
         "messages": [],
         "status": "SUBMITTED",
         "result": None,
         "error": None,
+        "parsed_data": None,
         "confidence": 1.0,
         "uncertainty_flags": [],
         "escalation_reason": None,
@@ -41,11 +47,13 @@ def run_sync(*, force_review: bool = False) -> dict[str, Any]:
 
 
 async def run_with_trace(*, force_review: bool = False, applicant_email: str | None = None,
-                         application_id: int | None = None) -> dict[str, Any]:
-    """Chạy bất đồng bộ, thu trace từng node (cho API run-demo)."""
+                         application_id: int | None = None,
+                         cv_path: str | None = None) -> dict[str, Any]:
+    """Chạy bất đồng bộ, thu trace từng node (cho API run-demo + background)."""
     config = _thread_config()
     state = initial_state(
-        force_review=force_review, applicant_email=applicant_email, application_id=application_id
+        force_review=force_review, applicant_email=applicant_email,
+        application_id=application_id, cv_path=cv_path,
     )
     trace: list[dict[str, Any]] = []
     async for update in recruitment_graph.astream(state, config, stream_mode="updates"):

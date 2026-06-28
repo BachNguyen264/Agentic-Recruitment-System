@@ -27,3 +27,12 @@ class RunDemoResponse(BaseModel):
     escalation_reason: str | None = None
     trace: list[AgentTraceStep] = Field(default_factory=list)
     messages: list[str] = Field(default_factory=list)
+
+
+class ParseCVResponse(BaseModel):
+    """Kết quả /agents/parse-cv (đồng bộ) — công cụ iterate chất lượng Parser (PRD §7.1)."""
+
+    parsed_data: dict | None = None
+    confidence: float
+    uncertainty_flags: list[str] = Field(default_factory=list)
+    escalation_reason: str | None = None
