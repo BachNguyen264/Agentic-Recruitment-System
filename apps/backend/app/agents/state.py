@@ -20,6 +20,9 @@ class RecruitmentState(TypedDict, total=False):
     result: dict[str, Any] | None
     error: str | None
 
+    # ── Parser (PRD §7.1): CV -> JSON có cấu trúc (ParsedCV.model_dump) ──
+    parsed_data: dict[str, Any] | None
+
     # ── 4 trụ cột (PRD §5 trụ cột 3: an toàn trước case lạ) ──────────
     confidence: float
     uncertainty_flags: list[str]      # vd: parse_failed, weak_match, no_response
