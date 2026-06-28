@@ -27,8 +27,18 @@ class Settings(BaseSettings):
     # ── App ──────────────────────────────────────────────────────────
     app_env: str = "local"
     log_level: str = "INFO"
-    # Scaffold: KHÔNG gọi LLM trong pipeline (PRD §17). Bật ở phase sau.
+    # Scaffold: KHÔNG gọi LLM trong pipeline (PRD §17). Slice-01 bật cho RIÊNG parser
+    # (chỉ node parser đọc cờ này; các node khác vẫn stub bất kể giá trị).
     enable_llm: bool = False
+
+    # ── LLM provider (slice-01 Parser dùng OpenAI — PRD §7.1) ─────────
+    # KHÔNG hardcode key/model. PARSER_MODEL mặc định gpt-4.1-mini (rẻ, đủ tốt cho trích xuất).
+    openai_api_key: str | None = None
+    parser_model: str = "gpt-4.1-mini"
+
+    # ── Lưu file CV upload (dev: local) ──────────────────────────────
+    # TODO (production): chuyển sang object storage (S3/Cloudinary) — xem PRD bàn deploy.
+    cv_upload_dir: str = str(_REPO_ROOT / "apps" / "backend" / "data" / "uploads")
 
     # ── Ngưỡng pipeline (PRD §5 trụ cột 3 · §9 gate · §10 screener) ──
     # Đọc từ env; tinh chỉnh thực nghiệm ở Chương 4 (PRD §18).

@@ -55,6 +55,10 @@ Thumbs.db
 # Claude Code local tooling (skills, local settings) — keep out of VCS
 .claude/
 
+# ───────────────────────── Uploads (CV file local — dev) ───
+# TODO (production): object storage thay cho local. KHÔNG commit CV (dữ liệu cá nhân, NFR-4).
+apps/backend/data/uploads/
+
 # ───────────────────────── Misc ────────────────────────────
 *.log
 .cache/
