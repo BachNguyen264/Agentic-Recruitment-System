@@ -1,192 +1,148 @@
-# PLAN — Scaffold Monorepo: HỆ THỐNG TUYỂN DỤNG TỰ TRỊ
+# SLICE 01 — Parser thật (CV → JSON) · plan one-shot
 
-> **Bản chất file này:** kịch bản ONE-SHOT để dựng khung dự án ban đầu. Scaffold xong thì **bỏ** —
-> KHÔNG phải nguồn chân lý. Nguồn chân lý của hệ thống là **`PRD.md`**.
-> Repo này dành RIÊNG cho đề tài tuyển dụng (đề tài CSKH có repo riêng).
+> **Bản chất:** plan ONE-SHOT cho một lát cắt logic. Xong + nghiệm thu thì bỏ. Nguồn chân lý vẫn là **`PRD.md`**.
+> **Mục tiêu lát này:** biến node `parser` từ stub thành THẬT — đọc CV (PDF/DOCX), gọi LLM, trả JSON có cấu
+> trúc, gắn confidence + cờ `parse_failed`, lưu vào DB. Chứng minh phần rủi ro nhất: **LLM có đọc CV đủ tốt không.**
+> Tham chiếu: PRD §7.1 (Parser), §13 (trạng thái), §16 (mô hình dữ liệu). Tuân thủ `CLAUDE.md`.
 >
-> **Phạm vi:** CHỈ dựng nền móng — monorepo, môi trường, skeleton **chạy được**. Node agent là **stub**,
-> UI là **placeholder**. KHÔNG triển khai logic nghiệp vụ thật. Mục tiêu: khung sạch để cắm logic theo PRD.
->
-> **Kiến trúc (theo PRD §5–§8):** pipeline cố định `parser → ranker → screener → scheduler` + human_review
-> có điều kiện, KHÔNG có Supervisor. Hạ tầng managed-first (Neon · Upstash · Qdrant); giữ docker-compose.local.yml dự phòng.
+> **LLM provider lát này: OpenAI** (không dùng Anthropic). Scaffold đã wiring sẵn `langchain-anthropic`; lát
+> này thêm `langchain-openai` + `OPENAI_API_KEY`, dùng `ChatOpenAI` cho parser. Config Anthropic cũ để nguyên
+> (không dùng tới). Nhờ LangChain, sau này muốn đổi provider chỉ cần thay class — không phá kiến trúc.
 
 ---
 
-## 1. Pipeline & thứ tự (khớp PRD §7–§8)
-
-`parser → ranker → [gate rank] → screener (suspend/resume) → [gate mời] → scheduler`, cộng `human_review`
-có điều kiện. Ở scaffold, 5 node là **stub**: `parser`, `ranker`, `screener`, `scheduler`, `human_review`.
-Node ra quyết định là `ranker` (sau nó là gate rank). Chi tiết nghiệp vụ: xem PRD, KHÔNG lặp lại ở đây.
-
----
-
-## 2. In / Out scope (scaffold)
+## 1. In scope / Out of scope
 
 **In scope:**
 
-- Monorepo pnpm workspaces + backend Python.
-- Kết nối Neon · Upstash Redis · Qdrant Cloud; `/api/health` ping thật cả 3.
-- Skeleton LangGraph: `RecruitmentState` (chừa sẵn confidence/uncertainty/escalation + các trường Screener),
-  5 node stub, `policy.py` route theo confidence, endpoint demo chạy **cả 2 nhánh** (scheduler / human_review).
-- Async skeleton bằng FastAPI BackgroundTasks.
-- Dashboard Next.js (trạng thái service + agent-trace placeholder) + Mobile Expo (trạng thái backend).
-- `shared-types`; migration Alembic tạo bảng tối thiểu (job_posting, application, audit_log) — đủ rộng theo PRD §16.
-- `.env.example`, `.gitignore`, `README.md`, `Makefile`, `docker-compose.local.yml`.
-- Sao chép `PRD.md` và `CLAUDE.md` vào repo (đặt ở gốc).
+- Schema Pydantic `ParsedCV` cho đầu ra có cấu trúc.
+- Trích xuất văn bản từ PDF (PyMuPDF) và DOCX (python-docx).
+- Node `parser` THẬT: trích text → LLM OpenAI (structured output) → `parsed_data` + `confidence` + `uncertainty_flags`.
+- Cờ `parse_failed` cho file không đọc được / rỗng / lỗi LLM.
+- Lưu file CV upload (local, dev) + lưu `parsed_data` vào bảng `application`.
+- Endpoint upload CV; endpoint `parse-cv` đồng bộ để test nhanh chất lượng.
+- Vài CV mẫu tổng hợp (Claude Code tự sinh) làm fixture; test (LLM mock).
+- Bật LLM CHO RIÊNG parser.
 
-**Out of scope (chỉ CHỪA CHỖ — theo PRD §17):** logic parse CV / RAG / chấm điểm / Screener async / gate /
-human_review / vòng học thật; LLM trong pipeline (`ENABLE_LLM=false`); tích hợp email/Calendar/Zalo; auth đầy đủ.
+**Out of scope (KHÔNG đụng — vẫn stub):**
 
----
-
-## 3. Tech Stack & Phiên bản
-
-| Thành phần            | Lựa chọn                                           | Phiên bản / Ghi chú                            |
-| --------------------- | -------------------------------------------------- | ---------------------------------------------- |
-| Monorepo (JS)         | pnpm workspaces                                    | pnpm 9.x                                       |
-| Node.js               | LTS                                                | 20.x / 22.x                                    |
-| Python                | CPython                                            | 3.12.x                                         |
-| Python pkg manager    | uv (fallback venv+pip)                             | latest                                         |
-| Backend               | FastAPI + uvicorn[standard]                        | 0.115.x / 0.30.x                               |
-| Agent orchestration   | LangGraph                                          | 0.2.x                                          |
-| LLM SDK               | langchain-anthropic                                | 0.2.x (chưa bật)                               |
-| ORM / Migration       | SQLAlchemy 2.0.x / Alembic 1.13.x                  | async                                          |
-| DB driver             | asyncpg                                            | 0.29.x (Neon cần SSL)                          |
-| Validation            | Pydantic 2.9.x / pydantic-settings 2.5.x           |                                                |
-| PostgreSQL            | Neon (managed)                                     | free: 0.5GB, 100 CU-hrs/tháng                  |
-| Redis                 | Upstash (managed)                                  | free: 500K lệnh/tháng; cache/short-term memory |
-| Vector DB             | Qdrant Cloud (managed)                             | free: 1GB; embedding JD–CV                     |
-| Async jobs (scaffold) | FastAPI BackgroundTasks                            | không broker                                   |
-| Async jobs (sau)      | Upstash QStash                                     | cần public URL khi dev                         |
-| Frontend              | Next.js 14 · Tailwind · shadcn/ui · TanStack Query |                                                |
-| Mobile                | React Native / Expo                                | SDK 51+                                        |
-| Container (dự phòng)  | Docker + Compose v2                                | chỉ cho docker-compose.local.yml               |
+- `ranker`, `screener`, `scheduler`, `human_review` — giữ nguyên stub.
+- Gate, Screener async, RAG/Qdrant, email/Calendar, vòng học.
+- Object storage (S3/Cloudinary) — lát này lưu file local, để TODO cho production.
+- OCR cho CV scan ảnh — ngoài phạm vi; CV không trích được text → `parse_failed`.
 
 ---
 
-## 4. Prerequisites
+## 2. Prerequisites
 
-```bash
-node --version              # >= 20
-corepack enable && corepack prepare pnpm@latest --activate
-python3 --version           # 3.12.x
-# uv:  curl -LsSf https://astral.sh/uv/install.sh | sh
-uv --version
-# (tùy chọn) docker --version
-```
+- Thêm dependency: `langchain-openai`, `pymupdf`, `python-docx` (qua `uv add`).
+- `.env`: đặt `OPENAI_API_KEY` thật. Thêm `PARSER_MODEL` (khuyến nghị `gpt-4o-mini` — rẻ, đủ tốt cho trích
+  xuất; đặt model string hiện hành của OpenAI, kiểm tra docs nếu không chắc).
+- Thêm `OPENAI_API_KEY` và `PARSER_MODEL` vào `core/config.py` (pydantic-settings) và `.env.example`.
+- `ENABLE_LLM=true` (hoặc cờ riêng `PARSER_ENABLED=true` — chọn một, nhất quán).
 
 ---
 
-## 5. TRƯỚC KHI BẮT ĐẦU — tài khoản managed (việc của con người)
+## 3. Việc cần làm
 
-Claude Code tạo `.env.example` + checklist rồi **DỪNG chờ** `.env` được điền.
+### 3.1 Schema đầu ra — `app/schemas/parsed_cv.py`
 
-| Dịch vụ                  | Đăng ký                    | Cần lấy               |
-| ------------------------ | -------------------------- | --------------------- |
-| Neon                     | https://neon.tech          | Connection string     |
-| Upstash Redis            | https://upstash.com        | `rediss://` URL (TLS) |
-| Qdrant Cloud             | https://cloud.qdrant.io    | Cluster URL + API key |
-| Langfuse (optional, sau) | https://cloud.langfuse.com | Public + Secret key   |
+`ParsedCV` (Pydantic v2), giữ ĐƠN GIẢN (đừng over-engineer):
 
----
+- `full_name: str | None`, `email: str | None`, `phone: str | None`
+- `skills: list[str]` (mặc định [])
+- `experiences: list[Experience]` — `Experience = {company, title, duration, summary}` (đều str|None)
+- `education: list[Education]` — `Education = {school, degree, field, year}` (str|None)
+- `total_years_experience: float | None`
+- `professional_summary: str | None`
 
-## 6. Cấu trúc Monorepo
+### 3.2 Trích xuất văn bản — `app/tools/cv_reader.py`
 
-```
-autonomous-recruitment-system/
-├── PRD.md                        # NGUỒN CHÂN LÝ (giữ ở gốc)
-├── CLAUDE.md                     # quy ước code (Claude Code tự đọc)
-├── plan.md                       # file này — bỏ sau scaffold
-├── README.md, Makefile, .gitignore, .env.example
-├── docker-compose.local.yml      # dự phòng
-├── package.json, pnpm-workspace.yaml
-├── apps/
-│   ├── backend/                  # FastAPI · LangGraph
-│   │   ├── pyproject.toml, Dockerfile, .env.example, alembic.ini, alembic/
-│   │   └── app/
-│   │       ├── main.py
-│   │       ├── core/{config.py, database.py, redis_client.py, qdrant_client.py, logging.py}
-│   │       ├── api/{deps.py, routes/{health.py, applications.py, agents.py}}
-│   │       ├── agents/{state.py, graph.py, policy.py, nodes/{parser,ranker,screener,scheduler,human_review}.py}
-│   │       ├── models/{base.py, job_posting.py, application.py, audit_log.py}
-│   │       ├── schemas/{application.py, agent.py}
-│   │       ├── services/{application_service.py, audit_service.py}
-│   │       ├── tools/            # placeholder (PRD §7 — phase sau)
-│   │       └── tasks/{background.py}
-│   ├── dashboard/                # Next.js 14 — dashboard HR + cổng công khai (placeholder)
-│   └── mobile/                   # Expo — HR duyệt nhanh (placeholder)
-├── packages/shared-types/
-└── docs/architecture.md          # tóm tắt kiến trúc + trỏ PRD
-```
+- `extract_text(path) -> str`: theo đuôi file → PDF dùng PyMuPDF (`fitz`, gom `page.get_text()`), DOCX dùng
+  python-docx (gom paragraph). Đuôi khác → raise lỗi rõ ràng.
+- Nếu text sau khi strip < ~50 ký tự → coi như rỗng/CV ảnh scan → ném tín hiệu để node set `parse_failed`
+  (lý do: "CV có thể là ảnh scan, không trích được văn bản — OCR ngoài phạm vi").
 
----
+### 3.3 Node parser THẬT — `app/agents/nodes/parser.py`
 
-## 7. Kế hoạch theo Phase
+Thay logic stub bằng:
 
-> Sau MỖI phase: chạy "Verify", hiển thị output, `git commit` (`feat(scaffold): phase N - ...`), tiếp tục nếu không lỗi.
+1. Lấy đường dẫn file CV từ state/application.
+2. `extract_text`. Nếu lỗi đọc / text rỗng → set `uncertainty_flags += ["parse_failed"]`, `confidence = 0.0`,
+   `escalation_reason = "<lý do>"`, `parsed_data = None`, return (KHÔNG ném exception làm sập pipeline).
+3. Nếu có text: gọi LLM `ChatOpenAI(model=settings.PARSER_MODEL, temperature=0).with_structured_output(ParsedCV)`
+   với prompt trích xuất (tiếng Việt + Anh; chỉ trích thông tin có thật, không bịa; trường thiếu để None).
+4. Tính `confidence` bằng heuristic xác định (KHÔNG hỏi LLM tự chấm): tỉ lệ trường lõi có dữ liệu trong
+   `{full_name, (email or phone), skills≠[], experiences≠[], education≠[]}` (mỗi cái 1 điểm / 5).
+5. Lưu `parsed_data` (dict) + confidence + flags vào state. Ghi `audit_log` qua `audit_service` (node="parser",
+   action, confidence, uncertainty_flags, detail).
+6. Bọc lời gọi LLM trong try/except: lỗi API → `parse_failed` + confidence 0.0 + escalation_reason, KHÔNG sập.
 
-**Phase 0 — Khởi tạo.** `git init`, `.gitignore`, prerequisites, README, pnpm-workspace, root package.json,
-Makefile (`dev-backend`, `dev-dashboard`, `dev-mobile`, `migrate`, `health`, `test`, `local-infra-up/down`).
-Đặt sẵn `PRD.md` + `CLAUDE.md` ở gốc.
-**Verify:** `pnpm -v`, `python3 --version`, `uv --version` OK; git sạch.
+- Nếu `ENABLE_LLM=false` → giữ hành vi stub cũ (để không phá các test/flow khác).
 
-**Phase 1 — Kết nối managed.** Tạo `.env.example` + checklist §5. **DỪNG** chờ `.env`. Tạo docker-compose.local.yml dự phòng.
-**Verify:** script kiểm tra kết nối 3 dịch vụ.
+### 3.4 Lưu file + cập nhật API
 
-**Phase 2 — Backend + Health.** `uv init`; `config.py` (gồm `CONFIDENCE_THRESHOLD=0.6`, `SCREENER_DEADLINE_HOURS=72`,
-`SCREENER_REMINDER_HOURS=24` — đọc env, ghi chú "tinh chỉnh ở Chương 4"); `database.py` (Neon SSL qua
-`connect_args={"ssl": True}`, KHÔNG `sslmode=`); redis/qdrant client; `main.py`; `health.py` ping thật.
-**Verify:** `/api/health` trả `ok` cho api + 3 dịch vụ.
+- Thư mục lưu dev: `apps/backend/data/uploads/` (gitignore). Tên file theo `application_id` + đuôi gốc.
+  Ghi `# TODO (production): chuyển sang object storage S3/Cloudinary` (xem PRD bàn deploy).
+- Mở rộng tạo application thành multipart: `file` (PDF/DOCX) + `applicant_email` + `job_id`. Lưu file, set
+  `cv_file_ref`, tạo application `SUBMITTED`, kích BackgroundTask chạy graph (parser THẬT, phần sau vẫn stub).
+- `GET /api/applications/{id}` trả `parsed_data`, `confidence`, `uncertainty_flags`, `status`.
 
-**Phase 3 — Models + Migration.** `job_posting` (id, title, description, rubric JSONB, screener_questions JSONB,
-gate_config JSONB, status, timestamps); `application` (id, job_id, applicant_email, parsed_data JSONB, score,
-score_breakdown JSONB, status, confidence, uncertainty_flags JSONB, escalation_reason, screener_sent_at,
-screener_deadline, timestamps); `audit_log` (id, application_id, node, action, confidence, uncertainty_flags JSONB,
-escalation_reason, detail JSONB, created_at). Alembic async + migration đầu. Service + `applications.py` (POST/GET).
-**Verify:** `make migrate`; POST/GET application; 3 bảng tồn tại.
+### 3.5 Endpoint test nhanh (đồng bộ) — `app/api/routes/agents.py`
 
-**Phase 4 — Skeleton LangGraph.** `state.py` `RecruitmentState`: `application_id, input, scratchpad,
-messages(append-only), status, result, error` + **chừa sẵn** `confidence, uncertainty_flags, escalation_reason,
-require_human_review` + **trường Screener** `awaiting_screener: bool, screener_answers`. 5 node stub set giá trị
-stub (`confidence=1.0`, `uncertainty_flags=[]`); `ranker` là node quyết định; `human_review` set
-`require_human_review=True` + `escalation_reason`. `policy.py` `should_review(state)`. `graph.py`:
-`parser → ranker → [should_review] → (screener-path | human_review)`; trong scaffold giữ tuyến tính đơn giản,
-conditional sau ranker route `scheduler`(đại diện nhánh tự động) vs `human_review`. Checkpointer `MemorySaver`
-(TODO: Postgres cho Screener suspend — PRD §10). `agents.py` `run-demo` có cờ ép nhánh → chạy **cả 2 nhánh**.
-TODO rõ: `# TODO (PRD §9/§10): gate, screener suspend/resume`.
-**Verify:** `make test` (graph compile + 2 nhánh); `run-demo` trả trace đúng nhánh + confidence.
+- `POST /api/agents/parse-cv` (multipart `file`): chạy NGAY logic parser (không qua DB/queue), trả JSON
+  `{parsed_data, confidence, uncertainty_flags}`. Đây là công cụ chính để bạn iterate prompt + kiểm tra chất lượng.
 
-**Phase 5 — Async (BackgroundTasks).** `tasks/background.py` `process_application(id)` → log + audit + (tùy chọn)
-graph. TODO: QStash + Screener suspend (PRD §10).
-**Verify:** POST application → task nền ghi audit_log.
+### 3.6 CV mẫu (fixture) — `apps/backend/tests/fixtures/`
 
-**Phase 6 — Frontend & Mobile & shared-types.** `shared-types`: `Application, AgentTraceStep(node, confidence,
-branch), HealthStatus`. Dashboard `/`: ServiceStatus + AgentTracePanel (Run demo + toggle ép review). Mobile
-StatusScreen. `docs/architecture.md` (tóm tắt + trỏ PRD).
-**Verify:** dashboard localhost:3000 (3 service xanh + Run demo 2 nhánh); Expo OK; `pnpm -r build` pass.
+Claude Code tự sinh tối thiểu:
+
+- `good_cv.docx` (CV đầy đủ, dữ liệu giả thực tế: tên, email, kỹ năng, 2 kinh nghiệm, học vấn).
+- `good_cv.pdf` (tương tự, định dạng PDF — sinh bằng reportlab/fpdf hoặc PyMuPDF).
+- `sparse_cv.pdf` (chỉ tên + 1-2 dòng — để thử confidence thấp).
+- `not_a_cv.pdf` (văn bản ngẫu nhiên không phải CV — xem hệ thống xử lý sao).
+  Bạn (người dùng) có thể tự thả CV thật vào thư mục này để thử thêm.
+
+### 3.7 Test — `apps/backend/tests/test_parser.py`
+
+- **Mock LLM** (không gọi API thật trong test — giữ `make test` nhanh, không tốn credit):
+  - parse `good_cv.docx`/`good_cv.pdf` (mock LLM trả ParsedCV đầy đủ) → assert lưu đúng + confidence cao.
+  - extract_text trên file rỗng/đuôi lạ → `parse_failed`, confidence 0.0.
+  - LLM ném exception → `parse_failed`, không sập.
+- Test trích text THẬT (không mock) trên fixture PDF/DOCX → assert text không rỗng (kiểm extractor thật).
 
 ---
 
-## 8. Definition of Done
+## 4. Verify (chạy thật)
 
-- [ ] `.env` có managed HOẶC trỏ local.
-- [ ] `/api/health` trả `ok` (api + 3 dịch vụ).
-- [ ] `make migrate`; bảng job_posting/application/audit_log tồn tại (đủ cột theo PRD §16).
-- [ ] `RecruitmentState` chừa sẵn confidence/uncertainty_flags/escalation_reason/require_human_review + trường Screener.
-- [ ] `run-demo` chạy **cả 2 nhánh** (scheduler / human_review), trace có nhánh + confidence.
-- [ ] `make test` xanh; BackgroundTask ghi audit_log.
-- [ ] dashboard + mobile chạy; `pnpm -r build` pass; `shared-types` dùng chung.
-- [ ] Chỉ `.env.example` commit; `.env` gitignore.
-- [ ] `PRD.md`, `CLAUDE.md` ở gốc repo; `docs/architecture.md` trỏ PRD.
+1. `make migrate` (nếu có thay đổi schema/cột) → OK.
+2. `make dev-backend`; tại `/docs` gọi `POST /api/agents/parse-cv` upload `good_cv.pdf` → nhận JSON đúng
+   tên/kỹ năng/kinh nghiệm; confidence cao.
+3. Upload `sparse_cv.pdf` → confidence thấp; `not_a_cv.pdf` → quan sát đầu ra (nhiều None / flag).
+4. Upload một file rỗng hoặc ảnh-scan giả → `uncertainty_flags` chứa `parse_failed`.
+5. Tạo application qua endpoint upload → `GET /api/applications/{id}` thấy `parsed_data` đã lưu + audit_log có dòng parser.
+6. `make test` xanh.
 
 ---
 
-## 9. Lưu ý cho Claude Code
+## 5. Definition of Done
 
-- Async-first; cấu hình từ env; không hardcode secret. Mỗi phase 1 commit.
-- **Chừa chỗ, không build logic thật** (theo PRD): State có sẵn các trường; `should_review` route được;
-  demo 2 nhánh; audit_log đủ cột. Logic gate/Screener-async/parse/RAG/vòng học → stub + TODO trỏ PRD.
-- Async/queue: BackgroundTasks (KHÔNG worker polling Redis — phá free tier Upstash).
-- Phase 1: DỪNG chờ `.env` trước khi verify kết nối.
-- Mọi quyết định nghiệp vụ → tra `PRD.md`, KHÔNG suy diễn. Plan này chỉ lo dựng khung.
-- Kết thúc: in cây thư mục, lệnh chạy, checklist DoD.
+- [ ] `POST /api/agents/parse-cv` trả JSON có cấu trúc đúng cho CV mẫu (PDF + DOCX) — dùng OpenAI.
+- [ ] confidence phản ánh độ đầy đủ; CV sparse lỗi/rỗng → `parse_failed` + confidence 0.0 + escalation_reason.
+- [ ] Tạo application kèm file → `parsed_data` lưu vào bảng `application`; audit_log có dòng node="parser".
+- [ ] LLM lỗi không làm sập pipeline (try/except → parse_failed).
+- [ ] `make test` xanh (LLM mock); test trích text thật trên fixture pass.
+- [ ] `ENABLE_LLM=false` vẫn giữ hành vi stub (không phá flow cũ).
+- [ ] `ranker/screener/scheduler/human_review` KHÔNG bị đụng (vẫn stub).
+- [ ] File lưu local có `# TODO (production): object storage`.
+
+---
+
+## 6. Ranh giới & quy ước (theo CLAUDE.md)
+
+- CHỈ động vào parser + những gì mục 3 liệt kê. KHÔNG refactor/đụng các node khác.
+- Async-first; cấu hình từ env (OPENAI_API_KEY, PARSER_MODEL, ENABLE_LLM); không hardcode model string/secret.
+- Đơn giản trước: schema vừa đủ, không thêm trường suy đoán. confidence bằng heuristic xác định, không hỏi LLM tự chấm.
+- Commit nhỏ theo bước (vd `feat(parser): cv_reader + ParsedCV schema`, `feat(parser): real parser node (OpenAI) + flags`, `test(parser): fixtures + mocked tests`).
+- Nghiệp vụ chưa rõ → tra **PRD.md** (§7.1). PRD chưa đủ → DỪNG, hỏi, đừng suy diễn.
+- Kết thúc: in tóm tắt thay đổi, lệnh verify, checklist DoD đã đạt.
