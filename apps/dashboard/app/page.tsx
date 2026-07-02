@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AgentTracePanel } from "@/components/AgentTracePanel";
 import { ServiceStatus } from "@/components/ServiceStatus";
 
@@ -10,6 +11,11 @@ export default function Home() {
           Dashboard HR — <span className="font-medium">scaffold</span>. Pipeline cố định:{" "}
           <span className="font-mono">parser → ranker → screener → scheduler</span> + human_review.
           Nguồn chân lý: PRD.md.
+        </p>
+        <p className="text-sm">
+          <Link href="/cv-check" className="text-slate-700 underline hover:text-slate-900">
+            → Kiểm tra bóc tách CV
+          </Link>
         </p>
       </header>
 
