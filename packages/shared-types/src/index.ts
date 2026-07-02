@@ -61,3 +61,37 @@ export interface Application {
   created_at: string;
   updated_at: string;
 }
+
+// Parser (PRD §7.1) — khớp app/schemas/parsed_cv.py (backend). Mọi trường có thể null/rỗng.
+export interface Experience {
+  company: string | null;
+  title: string | null;
+  duration: string | null;
+  summary: string | null;
+}
+
+export interface Education {
+  school: string | null;
+  degree: string | null;
+  field: string | null;
+  year: string | null;
+}
+
+export interface ParsedCV {
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+  skills: string[];
+  experiences: Experience[];
+  education: Education[];
+  total_years_experience: number | null;
+  professional_summary: string | null;
+}
+
+// Trả về của POST /api/agents/parse-cv — khớp ParseCVResponse (app/schemas/agent.py).
+export interface ParseCvResponse {
+  parsed_data: ParsedCV | null;
+  confidence: number;
+  uncertainty_flags: string[];
+  escalation_reason: string | null;
+}
