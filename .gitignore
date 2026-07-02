@@ -36,6 +36,7 @@ out/
 build/
 dist/
 .turbo/
+*.tsbuildinfo
 
 # ───────────────────────── Expo / RN ───────────────────────
 .expo/
