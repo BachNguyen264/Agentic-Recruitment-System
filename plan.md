@@ -1,10 +1,10 @@
-# SLICE 01b — UI upload CV + hiển thị kết quả parse · plan one-shot
+# SLICE — Cập nhật repo: bỏ React Native, chuyển sang PWA · plan one-shot
 
-> **Bản chất:** plan ONE-SHOT cho một lát UI. Xong + nghiệm thu thì bỏ. Nguồn chân lý vẫn là **`PRD.md`**.
-> **Mục tiêu:** màn hình web cho phép upload CV (PDF/DOCX), gọi endpoint `parse-cv` (đã có ở slice 01),
-> hiển thị `parsed_data` + `confidence` + `uncertainty_flags` một cách gọn gàng. Vừa để nghiệm thu Parser
-> trực quan, vừa là viên gạch UI THẬT đầu tiên. Frontend-only.
-> Tham chiếu: PRD §7.1 (Parser), §14 (web). Tuân thủ `CLAUDE.md` + skill frontend-design.
+> **Bản chất:** plan ONE-SHOT cho một lát refactor + đồng bộ tài liệu. Xong thì bỏ. Nguồn chân lý: **`PRD.md`**.
+> **Quyết định:** bỏ hẳn app mobile React Native (Expo). "App trên điện thoại" giờ là **web dashboard dạng PWA**
+> (cài lên màn hình chính) — một codebase web duy nhất, responsive; không duy trì codebase mobile riêng.
+> **Lý do:** nhu cầu mobile chỉ là xem thông tin + phê duyệt nhanh, không cần truy cập phần cứng/OS → PWA đủ,
+> giảm một codebase. Tuân thủ `CLAUDE.md`.
 
 ---
 
@@ -12,109 +12,91 @@
 
 **In scope:**
 
-- Component tái dùng `CVUpload` (chọn/kéo-thả file) + `ParsedCVResult` (hiển thị parsed_data dạng đẹp).
-- Một route mới trong dashboard (`/cv-check`) dùng hai component trên.
-- `lib/api.ts`: thêm hàm gọi `POST /api/agents/parse-cv` (multipart FormData).
-- Trạng thái loading (parse mất vài giây) + xử lý lỗi + validate phía client (loại file, kích thước).
-- Hiển thị confidence, uncertainty_flags (badge), và xử lý gọn trường null / ca `parse_failed`.
+- Gỡ bỏ `apps/mobile` (Expo/React Native) khỏi monorepo + mọi tham chiếu build/script.
+- Biến `apps/dashboard` (Next.js) thành **PWA cài được**: web app manifest + service worker tối giản + icon.
+- Đảm bảo các trang hiện có responsive tốt trên khổ điện thoại.
+- Cập nhật MỌI tài liệu nhắc tới mobile: `PRD.md`, `CLAUDE.md`, `docs/architecture.md`, `README.md`.
+- Cập nhật cấu hình monorepo: `pnpm-workspace.yaml`, root `package.json`, `Makefile`.
 
 **Out of scope (KHÔNG làm ở lát này):**
 
-- KHÔNG lưu file / object storage (endpoint parse-cv xử lý in-memory — để lát storage riêng sau).
-- KHÔNG chọn JD, KHÔNG tạo application, KHÔNG luồng async — đó là trang nộp CV công khai thật, lát sau.
-- KHÔNG auth/đăng nhập.
-- KHÔNG đụng backend (parse-cv đã có từ slice 01) — đây là lát thuần frontend.
-- KHÔNG dựng các trang HR khác (danh sách ứng viên, review queue…) — ngoài phạm vi.
-- KHÔNG thêm thư viện UI nặng ngoài shadcn/ui đã có (đừng thêm react-dropzone… — dùng native).
+- KHÔNG làm push notification thật (đưa vào PRD §17 tương lai — iOS hạn chế; dùng badge in-app thay thế).
+- KHÔNG xây các trang HR mới (danh sách ứng viên, review queue…) — lát sau; đây chỉ là hạ tầng PWA + dọn dẹp.
+- KHÔNG đụng backend, agent/node, logic nghiệp vụ.
+- KHÔNG đổi tên `apps/dashboard` (giữ tên, tránh churn; nó là app web duy nhất: public + HR + PWA).
 
 ---
 
-## 2. Prerequisites
+## 2. Gỡ bỏ app mobile
 
-- Backend chạy (`make dev-backend`) với slice 01 đã xong; `POST /api/agents/parse-cv` hoạt động.
-- Dashboard: `NEXT_PUBLIC_API_URL` trỏ đúng backend (đã có từ scaffold).
-- Lệnh Node chạy trong PowerShell (máy này Git Bash lỗi fnm — đã biết).
+- Xóa thư mục `apps/mobile/`.
+- `pnpm-workspace.yaml`: bỏ mục `apps/mobile` nếu có.
+- Root `package.json`: bỏ script liên quan mobile nếu có.
+- `Makefile`: bỏ target `dev-mobile` (và target/ghi chú riêng cho Expo/mobile nếu có).
+- `packages/shared-types`: GIỮ NGUYÊN (dashboard vẫn dùng). Chỉ cần chắc không còn type nào chỉ dành riêng cho mobile; nếu có thì bỏ.
+- `.gitignore`: có thể bỏ các dòng riêng của Expo (không bắt buộc, vô hại nếu để lại).
+- Chạy `pnpm install` lại để cập nhật lockfile sau khi bỏ workspace.
 
----
+## 3. Biến dashboard thành PWA (tối giản, không thư viện nặng)
 
-## 3. Việc cần làm
+Ưu tiên cách thủ công gọn, tránh phụ thuộc dễ vỡ (không bắt buộc `next-pwa`):
 
-### 3.1 `lib/api.ts` — hàm gọi parse-cv
+- **Manifest:** thêm `app/manifest.ts` (Next.js App Router sinh ra `/manifest.webmanifest`): `name`,
+  `short_name`, `start_url: "/"`, `display: "standalone"`, `background_color`, `theme_color`, `icons` (192, 512).
+- **Icon:** sinh icon placeholder đơn giản (ô vuông màu + chữ/logo) kích thước 192×192 và 512×512 vào `public/`.
+- **Service worker:** thêm `public/sw.js` TỐI GIẢN — precache app shell / static của Next; với request `/api/*`
+  và dữ liệu động thì **network (không cache)** để tránh dữ liệu cũ. Không cần chiến lược caching phức tạp.
+- **Đăng ký SW:** trong một client component (vd thêm vào `app/layout.tsx` qua một `<PWARegister/>`), đăng ký
+  `sw.js` — **chỉ ở production** (`process.env.NODE_ENV === "production"`) để tránh SW phá hot-reload khi dev.
+- **Meta:** thêm `themeColor` + `viewport` phù hợp (App Router: qua `export const viewport`/`metadata`).
+- **Responsive:** rà các trang hiện có (`/`, `/cv-check`) hiển thị tốt trên khổ điện thoại (không tràn, chạm được).
 
-- Thêm `parseCv(file: File): Promise<ParseCvResponse>`: tạo `FormData`, append `file`, `POST` tới
-  `${NEXT_PUBLIC_API_URL}/api/agents/parse-cv` (multipart, KHÔNG tự set Content-Type — để browser tự thêm boundary).
-- Kiểu `ParseCvResponse = { parsed_data: ParsedCV | null; confidence: number; uncertainty_flags: string[] }`.
-- Nếu `packages/shared-types` là nơi đặt type dùng chung, thêm `ParsedCV` (và các type con Experience/Education) vào đó để backend-shape và frontend khớp; import từ đó.
+> Ghi chú: PWA cài được cần HTTPS ở production (localhost dev thì OK). Không xử lý gì thêm ở lát này.
 
-### 3.2 Component `CVUpload` — `components/CVUpload.tsx`
+## 4. Cập nhật tài liệu (đồng bộ — quan trọng)
 
-- Presentational + có callback: nhận prop `onResult(result)` và `onError(err)`; hoặc tự quản mutation bên trong (chọn một, ưu tiên gọn).
-- UI: vùng chọn file (input `accept=".pdf,.docx"`) + hỗ trợ kéo-thả bằng native drag events (không thư viện ngoài). Hiện tên file sau khi chọn; nút "Phân tích CV".
-- **Validate client trước khi gửi:** chỉ nhận `.pdf`/`.docx`; chặn > 10MB. Sai → hiện thông báo thân thiện, không gọi API.
-- Dùng TanStack Query `useMutation` cho lần upload (đây là action). Khi `isPending`: hiện spinner + disable nút.
-- Cho phép upload lại (reset kết quả cũ khi chọn file mới).
+| File                   | Sửa gì                                                                                                                                                                     |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PRD.md`               | §1.3, §6, §11 (FR-HR-3), §14, §17 — đổi "app mobile React Native" → "web PWA trên điện thoại"; đưa push vào §17. Xem wording bên dưới.                                     |
+| `CLAUDE.md`            | Mục stack: "Mobile: React Native / Expo…" → "PWA: web dashboard cài được trên điện thoại cho HR (không codebase mobile riêng)". Bỏ mọi nhắc React Native/Expo.             |
+| `docs/architecture.md` | Đổi mọi nhắc mobile → PWA; nếu có sơ đồ/nhánh mobile thì mô tả lại là "web PWA".                                                                                           |
+| `README.md`            | Bỏ `make dev-mobile` + hướng dẫn Expo; thêm dòng "web là PWA, cài trên điện thoại qua Add to Home Screen". Giữ ghi chú lệnh Node chạy PowerShell (vẫn đúng cho pnpm/next). |
 
-### 3.3 Component `ParsedCVResult` — `components/ParsedCVResult.tsx`
+**Wording mới cho các mục PRD (áp đúng, không tự chế thêm):**
 
-- **Thuần presentational**, nhận prop `{ parsed_data, confidence, uncertainty_flags }` — để TÁI DÙNG sau ở
-  màn chi tiết ứng viên của HR và trang nộp CV công khai.
-- Hiển thị:
-  - **confidence**: badge/thanh nhỏ (vd 1.0 → "Đầy đủ", thấp → màu cảnh báo).
-  - **uncertainty_flags**: mỗi cờ một badge; nếu chứa `parse_failed` → hiện khối cảnh báo rõ ("Không đọc được
-    CV / có thể là ảnh scan"), KHÔNG cố render các trường trống.
-  - **Thông tin**: họ tên + email + phone (khối liên hệ). Trường null → hiện "—" hoặc bỏ, không vỡ layout.
-  - **skills**: dạng chip/badge.
-  - **experiences**: mỗi mục một card: title + (company nếu có, null → nhãn "Dự án cá nhân" hoặc bỏ) +
-    (duration nếu có) + summary.
-  - **education**: school + field + year + (degree nếu có).
-  - **total_years_experience**: hiện nếu khác null.
-  - **professional_summary**: khối văn bản.
-- Dùng component shadcn/ui sẵn có (Card, Badge, Alert, Skeleton…). Giữ style NHẤT QUÁN với ServiceStatus/
-  AgentTracePanel đã có (cùng spacing, cùng "cảm giác").
+- §1.3: "Trên điện thoại, chính web này (dạng PWA cài được lên màn hình chính) cho HR phê duyệt nhanh khi di chuyển."
+- §6: "Trên điện thoại: web dạng PWA (cài lên màn hình chính) — HR xem CV + duyệt human_review nhanh. Một app web duy nhất, responsive; KHÔNG có codebase mobile riêng."
+- §11 FR-HR-3: "Trên điện thoại (PWA): giao diện rút gọn, responsive (tóm tắt + điểm + lý do + 2 nút) để duyệt nhanh. Thông báo: badge số ca chờ hiển thị trong app. (Web push đẩy thật: xem §17.)"
+- §14 (bảng): đổi tiêu đề cột "Mobile HR" → "Điện thoại (PWA, HR)"; giữ nguyên các chức năng (xem CV, duyệt review = ✓; giám sát agent, quản lý JD, thống kê = ✗). Thêm một dòng ghi chú dưới bảng: "Chỉ một app web (Next.js), responsive; cột 'Điện thoại' là ưu tiên hiển thị trên màn hình nhỏ, không phải app riêng."
+- §17 (thêm dòng): "Web push notification xuyên nền tảng cho HR (đặc biệt trên iOS, vốn hạn chế PWA push)."
 
-### 3.4 Route `/cv-check` — `app/cv-check/page.tsx`
+> Giữ nguyên tắc: PRD là nguồn chân lý — sau lát này PRD phải phản ánh đúng rằng mobile = PWA.
 
-- Trang ghép `CVUpload` (trên) + `ParsedCVResult` (hiện khi có kết quả). Tiêu đề rõ ("Kiểm tra bóc tách CV").
-- Thêm một link/nav tới trang này từ trang chủ (giữ trang chủ nguyên trạng — service status + Run demo).
-- Trạng thái: chưa upload → hướng dẫn ngắn; đang phân tích → Skeleton/spinner; có kết quả → ParsedCVResult;
-  lỗi API → Alert lỗi (vd backend chưa chạy).
+## 5. Verify
 
----
+1. `pnpm install` OK; `apps/mobile` đã biến mất; không còn tham chiếu mobile trong workspace/Makefile/package.json.
+2. `make dev-dashboard`; mở `http://localhost:3000` — trang chạy bình thường, `/cv-check` vẫn hoạt động.
+3. `pnpm --filter dashboard build` (production) PASS; kiểm tra `/manifest.webmanifest` truy cập được.
+4. Ở bản production/preview: DevTools → Application → Manifest hiện đúng name/icons; Service Worker đăng ký OK;
+   trình duyệt cho phép "Install app" / "Add to Home Screen".
+5. Thu nhỏ cửa sổ / DevTools device mode (khổ điện thoại) → các trang hiện có responsive, không tràn.
+6. `grep -ri "react-native\|expo\|apps/mobile" .` (trừ node_modules, git history) → không còn kết quả trong tài liệu/config.
 
-## 4. Verify (chạy thật)
+## 6. Definition of Done
 
-1. `make dev-backend` + `make dev-dashboard`; mở `http://localhost:3000/cv-check`.
-2. Upload `good_cv.pdf` (hoặc CV thật) → hiện đúng họ tên, skills (chip), 2 experiences, education,
-   confidence 1.0, flags rỗng.
-3. Upload `sparse_cv.pdf`/`not_a_cv.pdf` → confidence thấp / trường null hiển thị gọn, không vỡ layout.
-4. Upload file `.txt` hoặc file > 10MB → client chặn, hiện thông báo, KHÔNG gọi API.
-5. Tắt backend rồi upload → hiện Alert lỗi thân thiện (không crash trắng trang).
-6. `pnpm -r build` (hoặc `pnpm --filter dashboard build`) PASS.
+- [ ] `apps/mobile` đã xóa; `pnpm-workspace.yaml`/`package.json`/`Makefile` sạch tham chiếu mobile; `pnpm install` OK.
+- [ ] `pnpm --filter dashboard build` PASS; `/manifest.webmanifest` + icon 192/512 tồn tại.
+- [ ] Service worker đăng ký ở production; app "Install/Add to Home Screen" được; API không bị cache (dữ liệu tươi).
+- [ ] Các trang hiện có responsive trên khổ điện thoại.
+- [ ] `PRD.md` §1.3/§6/§11/§14/§17 đã cập nhật đúng wording ở mục 4; push nằm ở §17.
+- [ ] `CLAUDE.md`, `docs/architecture.md`, `README.md` không còn nhắc React Native/Expo; mô tả PWA.
+- [ ] `grep` không còn "react-native"/"expo"/"apps/mobile" trong tài liệu & config.
 
----
+## 7. Ranh giới & quy ước (theo CLAUDE.md)
 
-## 5. Definition of Done
-
-- [ ] `/cv-check` upload được CV và hiển thị parsed_data đẹp (họ tên, skills chip, experiences, education, summary).
-- [ ] confidence + uncertainty_flags hiển thị; ca `parse_failed` hiện cảnh báo rõ, không render trường trống.
-- [ ] Trường null (company/duration/degree/total_years…) hiển thị gọn, layout không vỡ.
-- [ ] Validate client: chặn sai loại file + > 10MB trước khi gọi API.
-- [ ] Loading state khi parse; lỗi API hiện Alert (không crash).
-- [ ] `ParsedCVResult` là component thuần presentational, tái dùng được (nhận prop, không tự fetch).
-- [ ] Trang chủ giữ nguyên; có link tới `/cv-check`.
-- [ ] KHÔNG lưu file, KHÔNG JD/application/auth, KHÔNG đụng backend.
-- [ ] `pnpm build` PASS; không thêm thư viện UI ngoài shadcn.
-
----
-
-## 6. Ranh giới & quy ước (theo CLAUDE.md + frontend-design)
-
-- CHỈ động vào dashboard (frontend). KHÔNG sửa backend, KHÔNG đụng các node/agent.
-- Đơn giản trước: dùng shadcn sẵn có, native drag-drop, không thêm dependency. Không thêm tính năng ngoài mục 3
-  (không filter, không lưu lịch sử, không export… — nếu nảy ra ý, ghi vào PRD §17, đừng làm).
-- Component tách bạch: `ParsedCVResult` thuần presentational (tái dùng), `CVUpload` lo upload + trạng thái.
-- Giữ style nhất quán với component sẵn có; thiết kế sạch, đủ dùng, không polish quá mức (chức năng > thẩm mỹ).
-- Type khớp backend: dùng/khai báo `ParsedCV` ở `shared-types` để frontend và backend cùng một shape.
-- Commit nhỏ theo bước (vd `feat(ui): parseCv api + ParsedCV types`, `feat(ui): CVUpload + ParsedCVResult`, `feat(ui): /cv-check page + nav link`).
-- Nghiệp vụ/hiển thị chưa rõ → tra **PRD.md** (§7.1, §14). PRD chưa đủ → DỪNG, hỏi.
-- Kết thúc: in tóm tắt thay đổi, lệnh verify, checklist DoD đã đạt.
+- CHỈ làm: gỡ mobile + PWA hạ tầng cho dashboard + cập nhật tài liệu/config. KHÔNG đụng backend/agent/logic.
+- Đơn giản trước: PWA tối giản (manifest + SW cơ bản + icon), không thư viện nặng, không caching phức tạp,
+  KHÔNG push thật. Đừng đẻ thêm việc ngoài mục 2–4.
+- SW không cache API/dữ liệu động (tránh dữ liệu cũ); SW chỉ bật ở production.
+- Commit nhỏ theo bước (vd `chore(repo): remove react-native mobile app`, `feat(pwa): manifest + service worker + icons`, `docs: sync mobile→PWA in PRD/CLAUDE/architecture/README`).
+- Kết thúc: in tóm tắt thay đổi, kết quả verify, checklist DoD đã đạt.
