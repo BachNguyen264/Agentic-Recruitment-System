@@ -1,6 +1,6 @@
 """FastAPI entrypoint (scaffold).
 
-Khởi tạo app, CORS cho dashboard/mobile, lifespan đóng kết nối sạch khi tắt.
+Khởi tạo app, CORS cho web dashboard (PWA), lifespan đóng kết nối sạch khi tắt.
 Nguồn chân lý nghiệp vụ: PRD.md.
 """
 
@@ -47,7 +47,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    # Dev: cho phép localhost/127.0.0.1 mọi cổng (dashboard :3000, Expo web :19006...).
+    # Dev: cho phép localhost/127.0.0.1 mọi cổng (dashboard :3000).
     allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
