@@ -40,7 +40,7 @@ Bất biến FR-GATE-2: ca bất định LUÔN vào `human_review`, bất kể g
 | ↳ data     | SQLAlchemy 2 async + Alembic    | `app/models/`, `apps/backend/alembic/`  |
 | ↳ async    | FastAPI BackgroundTasks         | `app/tasks/background.py`               |
 | Dashboard  | Next.js 14 + TanStack Query     | [`apps/dashboard`](../apps/dashboard)   |
-| Mobile     | Expo (React Native)             | [`apps/mobile`](../apps/mobile)         |
+| PWA (điện thoại) | web dashboard cài được — không codebase riêng | [`apps/dashboard`](../apps/dashboard) |
 | Types      | TS dùng chung                   | [`packages/shared-types`](../packages/shared-types) |
 | Hạ tầng    | Neon · Upstash · Qdrant         | managed (xem `.env.example`)            |
 

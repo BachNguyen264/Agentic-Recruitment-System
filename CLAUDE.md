@@ -41,7 +41,7 @@ Giai đoạn hiện tại (nếu đang theo plan.md): **chỉ scaffold** — nod
 - **Async:** FastAPI BackgroundTasks (KHÔNG worker polling — phá free tier Upstash). Screener dùng suspend/resume
   (LangGraph interrupt + Postgres checkpointer — phase sau).
 - **Frontend:** Next.js 14 · Tailwind · shadcn/ui · TanStack Query.
-- **Mobile:** React Native / Expo (SDK 51+).
+- **PWA:** web dashboard cài được trên điện thoại cho HR (không codebase mobile riêng).
 - **Monorepo:** pnpm workspaces; dùng chung ở `packages/shared-types`.
 
 ---

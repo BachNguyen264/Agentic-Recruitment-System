@@ -25,10 +25,10 @@ parser → ranker → [gate rank] → screener (suspend/resume) → [gate mời]
 | ---------- | ------------------------------------------------------------------------ |
 | Backend    | Python 3.12 · FastAPI · LangGraph · SQLAlchemy 2 (async) · Alembic · Pydantic v2 · `uv` |
 | Frontend   | Next.js 14 · Tailwind · shadcn/ui · TanStack Query                       |
-| Mobile     | React Native / Expo (SDK 51+)                                            |
+| PWA        | web dashboard cài được trên điện thoại (Add to Home Screen) — không codebase mobile riêng |
 | Hạ tầng    | Neon (Postgres) · Upstash Redis · Qdrant Cloud · (Langfuse — phase sau)  |
 | Async      | FastAPI BackgroundTasks (KHÔNG worker polling — giữ free-tier Upstash)   |
-| Monorepo   | pnpm workspaces (`apps/dashboard`, `apps/mobile`, `packages/*`)          |
+| Monorepo   | pnpm workspaces (`apps/dashboard`, `packages/*`)                         |
 
 ---
 
@@ -42,8 +42,7 @@ autonomous-recruitment-system/
 ├── package.json  pnpm-workspace.yaml
 ├── apps/
 │   ├── backend/      # FastAPI · LangGraph (Python, uv)
-│   ├── dashboard/    # Next.js 14 — dashboard HR + cổng công khai (placeholder)
-│   └── mobile/       # Expo — HR duyệt nhanh (placeholder)
+│   └── dashboard/    # Next.js 14 — dashboard HR + cổng công khai (PWA cài được)
 ├── packages/shared-types/                # type dùng chung TS
 └── docs/architecture.md
 ```
@@ -80,8 +79,10 @@ make migrate
 # 5. Chạy từng phần
 make dev-backend                     # FastAPI  → http://localhost:8000  (/api/health, /docs)
 make dev-dashboard                   # Next.js  → http://localhost:3000
-make dev-mobile                      # Expo
 ```
+
+> Web là **PWA**: ở bản production, cài lên điện thoại qua *Add to Home Screen* — một codebase web
+> duy nhất, không app mobile riêng.
 
 > **Windows (không có make):** dùng Git Bash (đã kèm make) hoặc chạy lệnh tương đương:
 > `cd apps/backend && uv run uvicorn app.main:app --reload --port 8000`,

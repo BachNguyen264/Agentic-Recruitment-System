@@ -23,8 +23,9 @@ tầm kiểm soát**: ưu tiên tính dự đoán được và khả năng kiể
 
 ### 1.3 Bối cảnh sản phẩm
 
-Web đóng vai trò kép: cổng nộp CV công khai cho ứng viên VÀ bảng điều hành đầy đủ cho HR. Mobile là công cụ
-tối giản cho HR phê duyệt nhanh khi di chuyển. Backend chạy pipeline đa tác tử bất đồng bộ.
+Web đóng vai trò kép: cổng nộp CV công khai cho ứng viên VÀ bảng điều hành đầy đủ cho HR. Trên điện thoại,
+chính web này (dạng PWA cài được lên màn hình chính) cho HR phê duyệt nhanh khi di chuyển. Backend chạy
+pipeline đa tác tử bất đồng bộ.
 
 ---
 
@@ -96,7 +97,8 @@ tối giản cho HR phê duyệt nhanh khi di chuyển. Backend chạy pipeline 
 ## 6. Kiến trúc tổng thể
 
 - **Web (Next.js):** cổng công khai (xem JD, nộp CV, form Screener) + dashboard HR (giám sát, review, cấu hình).
-- **Mobile (React Native/Expo):** tối giản cho HR — xem CV + duyệt human_review nhanh + nhận push.
+- **Trên điện thoại:** web dạng PWA (cài lên màn hình chính) — HR xem CV + duyệt human_review nhanh.
+  Một app web duy nhất, responsive; KHÔNG có codebase mobile riêng.
 - **Backend (FastAPI + LangGraph):** pipeline đa tác tử; xử lý bất đồng bộ; suspend/resume cho Screener.
 - **Hạ tầng managed:** Neon (Postgres), Upstash Redis (cache/short-term memory), Qdrant Cloud (embedding JD–CV).
 - **Tích hợp:** Email (gửi câu hỏi/thư mời/từ chối), tùy chọn Zalo OA; Google Calendar (đặt lịch).
@@ -219,8 +221,8 @@ dậy theo sự kiện hoặc theo hạn.
   yêu cầu JD đạt/thiếu; `escalation_reason` cụ thể (vd "điểm 62/100 sát ngưỡng 60", "thiếu kinh nghiệm X",
   "CV parse một phần", "không phản hồi screener sau 72h"); đề xuất của hệ thống; nút Duyệt/Từ chối + ô ghi chú.
 - **FR-HR-2 (web):** thẻ đầy đủ + mở xem CV gốc + toàn bộ agent trace.
-- **FR-HR-3 (mobile):** bản rút gọn (tóm tắt + điểm + lý do + 2 nút) để duyệt nhanh; có push notification khi
-  có ca mới cần review.
+- **FR-HR-3 (điện thoại — PWA):** giao diện rút gọn, responsive (tóm tắt + điểm + lý do + 2 nút) để duyệt
+  nhanh. Thông báo: badge số ca chờ hiển thị trong app. (Web push đẩy thật: xem §17.)
 - **FR-HR-4 (delegate):** HR duyệt → giao cho `scheduler` thực thi (gửi thư mời + đặt lịch). HR từ chối →
   `scheduler` gửi thư từ chối. Giai đoạn đầu HR KHÔNG tự thao tác thủ công.
 - **FR-HR-5:** mọi quyết định HR ghi vào `audit_log` (ai, lúc nào, duyệt/từ chối, ghi chú).
@@ -292,8 +294,8 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 
 ## 14. Web vs Mobile
 
-| Chức năng                             | Web HR | Mobile HR       | Web công khai |
-| ------------------------------------- | ------ | --------------- | ------------- |
+| Chức năng                             | Web HR | Điện thoại (PWA, HR) | Web công khai |
+| ------------------------------------- | ------ | -------------------- | ------------- |
 | Nộp CV                                | —      | —               | ✅            |
 | Xem danh sách JD                      | ✅     | —               | ✅            |
 | Quản lý JD                            | ✅     | ❌              | —             |
@@ -303,6 +305,9 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 | Dashboard giám sát agent (live trace) | ✅     | ❌              | —             |
 | Bật/tắt gate                          | ✅     | ❌              | —             |
 | Thống kê / vòng học                   | ✅     | ❌              | —             |
+
+> Chỉ một app web (Next.js), responsive; cột "Điện thoại" là ưu tiên hiển thị trên màn hình nhỏ,
+> không phải app riêng.
 
 ---
 
@@ -341,6 +346,7 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 
 - Luồng HR đặt lịch thủ công (không delegate cho scheduler).
 - Kênh Zalo OA / web chat real-time cho Screener (email + form là chính).
+- Web push notification xuyên nền tảng cho HR (đặc biệt trên iOS, vốn hạn chế PWA push).
 - Vòng học bán tự động đầy đủ (gom mẫu → đề xuất → HR duyệt) — thiết kế đã chừa, triển khai sau.
 - Đa ngôn ngữ nâng cao, đa JD song song cho một ứng viên, A/B testing rubric.
 
