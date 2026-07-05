@@ -1,0 +1,60 @@
+"""job_service — tạo/đọc JD; khi tạo thì embed + upsert Qdrant (PRD §8.1, FR-HR-JD-1).
+
+BẤT BIẾN slice 02a: embedding/Qdrant lỗi KHÔNG làm sập tạo JD — JD vẫn nằm DB,
+`embedding_ref=None` (cờ "chưa embed") + trả cảnh báo cho caller.
+"""
+
+from __future__ import annotations
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.logging import get_logger
+from app.models.job_posting import JobPosting
+from app.schemas.job_posting import JobPostingCreate
+from app.services import qdrant_service
+from app.services.embedding_service import build_jd_text, embed_text
+
+logger = get_logger("app.services.job_service")
+
+
+async def create_job(
+    session: AsyncSession, data: JobPostingCreate
+) -> tuple[JobPosting, str | None]:
+    """Lưu JD → embed → upsert Qdrant. Trả (row, warning|None). Embed lỗi → JD vẫn tạo."""
+    job = JobPosting(
+        title=data.title,
+        description=data.description,
+        requirements="\n".join(data.requirements),  # cột Text — Read tách lại thành list
+        rubric=[c.model_dump() for c in data.rubric],
+        screener_questions=list(data.screener_questions),
+        gate_config=data.gate_config.model_dump(),
+    )
+    session.add(job)
+    await session.commit()
+    await session.refresh(job)
+
+    warning: str | None = None
+    try:
+        text = build_jd_text(
+            title=data.title, description=data.description, requirements=data.requirements
+        )
+        vector = await embed_text(text)
+        job.embedding_ref = await qdrant_service.upsert_jd(job.id, vector, title=job.title)
+        await session.commit()
+        await session.refresh(job)
+    except Exception as exc:  # noqa: BLE001 — embed/Qdrant lỗi KHÔNG sập tạo JD (plan 02a)
+        logger.warning("Embed/upsert JD id=%s thất bại (JD vẫn lưu DB): %s", job.id, exc)
+        warning = f"JD đã lưu nhưng CHƯA embed được (embedding_ref=None): {exc}"
+    return job, warning
+
+
+async def get_job(session: AsyncSession, job_id: int) -> JobPosting | None:
+    return await session.get(JobPosting, job_id)
+
+
+async def list_jobs(session: AsyncSession, *, limit: int = 100) -> list[JobPosting]:
+    result = await session.execute(
+        select(JobPosting).order_by(JobPosting.created_at.desc()).limit(limit)
+    )
+    return list(result.scalars().all())

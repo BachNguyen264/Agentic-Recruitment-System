@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import agents, applications, health
+from app.api.routes import agents, applications, health, jobs
 from app.core.config import settings
 from app.core.database import engine
 from app.core.logging import get_logger, setup_logging
@@ -57,6 +57,7 @@ app.add_middleware(
 app.include_router(health.router, prefix="/api")
 app.include_router(applications.router, prefix="/api")
 app.include_router(agents.router, prefix="/api")
+app.include_router(jobs.router, prefix="/api")
 
 
 @app.get("/", tags=["meta"])
