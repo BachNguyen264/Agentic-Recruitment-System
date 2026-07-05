@@ -259,7 +259,7 @@ dậy theo sự kiện hoặc theo hạn.
 ### 12.4 Thông báo
 
 - FR-NOTI-1: email tới ứng viên (xác nhận nộp, câu hỏi Screener, nhắc, kết quả).
-- FR-NOTI-2: push notification + badge dashboard tới HR khi có ca cần review.
+- FR-NOTI-2: badge số ca chờ trong app (web push đẩy thật: xem §17) tới HR khi có ca cần review.
 
 ---
 
@@ -292,7 +292,7 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 
 ---
 
-## 14. Web vs Mobile
+## 14. Web (desktop) vs Điện thoại (PWA)
 
 | Chức năng                             | Web HR | Điện thoại (PWA, HR) | Web công khai |
 | ------------------------------------- | ------ | -------------------- | ------------- |
