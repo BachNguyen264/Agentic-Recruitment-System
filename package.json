@@ -10,7 +10,6 @@
   },
   "scripts": {
     "dev:dashboard": "pnpm --filter dashboard dev",
-    "dev:mobile": "pnpm --filter mobile start",
     "build": "pnpm -r build",
     "lint": "pnpm -r --if-present lint",
     "typecheck": "pnpm -r --if-present typecheck"

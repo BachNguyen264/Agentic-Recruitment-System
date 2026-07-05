@@ -1,14 +1,13 @@
 # Makefile — giao diện lệnh chuẩn cho monorepo (chạy qua GNU make).
 # Trên Windows: dùng Git Bash (đã có make) hoặc xem README cho lệnh pnpm/uv tương đương.
 .DEFAULT_GOAL := help
-.PHONY: help install dev-backend dev-dashboard dev-mobile migrate makemigration health test check-env local-infra-up local-infra-down
+.PHONY: help install dev-backend dev-dashboard migrate makemigration health test check-env local-infra-up local-infra-down
 
 help: ## Liệt kê các target
 	@echo "Targets:"
 	@echo "  install          - cài deps backend (uv) + workspace (pnpm)"
 	@echo "  dev-backend      - chạy FastAPI (uvicorn --reload :8000)"
 	@echo "  dev-dashboard    - chạy Next.js dashboard (:3000)"
-	@echo "  dev-mobile       - chạy Expo (mobile)"
 	@echo "  migrate          - alembic upgrade head"
 	@echo "  makemigration    - alembic revision --autogenerate"
 	@echo "  health           - curl /api/health"
@@ -26,9 +25,6 @@ dev-backend: ## FastAPI dev server
 
 dev-dashboard: ## Next.js dashboard
 	pnpm --filter dashboard dev
-
-dev-mobile: ## Expo mobile
-	pnpm --filter mobile start
 
 migrate: ## Áp dụng migration mới nhất
 	cd apps/backend && uv run alembic upgrade head

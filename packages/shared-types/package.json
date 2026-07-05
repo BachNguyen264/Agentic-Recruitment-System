@@ -2,7 +2,7 @@
   "name": "@ars/shared-types",
   "version": "0.1.0",
   "private": true,
-  "description": "Type dùng chung giữa dashboard và mobile (scaffold).",
+  "description": "Type dùng chung cho dashboard (khớp schema backend).",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

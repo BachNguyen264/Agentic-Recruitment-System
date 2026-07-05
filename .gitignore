@@ -6,6 +6,7 @@
 !.env.example
 apps/backend/.env
 !apps/backend/.env.example
+*.key
 
 # ───────────────────────── Python ──────────────────────────
 __pycache__/
@@ -37,15 +38,6 @@ build/
 dist/
 .turbo/
 *.tsbuildinfo
-
-# ───────────────────────── Expo / RN ───────────────────────
-.expo/
-.expo-shared/
-*.jks
-*.p8
-*.p12
-*.key
-*.mobileprovision
 
 # ───────────────────────── OS / IDE ────────────────────────
 .DS_Store
