@@ -24,7 +24,7 @@ def jd_point_id(job_id: int) -> str:
 
 
 async def ensure_collection() -> None:
-    """Tạo collection nếu chưa có (size=EMBEDDING_DIM, Cosine). Idempotent."""
+    """Tạo collection nếu chưa có (size=EMBEDDING_DIM, Cosine) + payload index. Idempotent."""
     global _collection_ready
     if _collection_ready:
         return
@@ -35,6 +35,13 @@ async def ensure_collection() -> None:
                 size=settings.embedding_dim, distance=models.Distance.COSINE
             ),
         )
+    # Qdrant Cloud BẮT BUỘC payload index cho field dùng trong filter ("type").
+    # Gọi cả khi collection đã tồn tại (idempotent — tạo lại index sẵn có trả OK).
+    await qdrant_client.create_payload_index(
+        collection_name=settings.qdrant_collection,
+        field_name="type",
+        field_schema=models.PayloadSchemaType.KEYWORD,
+    )
     _collection_ready = True
 
 
