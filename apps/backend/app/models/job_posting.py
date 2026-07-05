@@ -22,8 +22,9 @@ class JobPosting(Base, TimestampMixin):
     description: Mapped[str] = mapped_column(Text, default="")
     requirements: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # rubric: tiêu chí + trọng số (PRD §7.2). screener_questions: bộ câu hỏi cố định (PRD §10 FR-SCR-6).
-    rubric: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # rubric: list tiêu chí + trọng số (PRD §7.2) — [{criterion, weight}]. Row scaffold cũ có thể
+    # còn dict {} (JSONB nhận cả hai; JobPostingRead chuẩn hóa). screener_questions: PRD §10 FR-SCR-6.
+    rubric: Mapped[list] = mapped_column(JSONB, default=list)
     screener_questions: Mapped[list] = mapped_column(JSONB, default=list)
     # gate_config: {auto_reject, auto_invite} (PRD §9). Có thể đặt theo từng JD (FR-GATE-1).
     gate_config: Mapped[dict] = mapped_column(JSONB, default=_default_gate_config)

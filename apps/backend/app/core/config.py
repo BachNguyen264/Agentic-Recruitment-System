@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     parser_model: str = "gpt-4.1-mini"
 
+    # ── Embedding (slice-02a JD → Qdrant — PRD §7.2, §16) ─────────────
+    # EMBEDDING_DIM phải khớp model (text-embedding-3-small = 1536); đổi model thì đổi cả dim
+    # và tạo collection mới (kích thước vector là bất biến của collection).
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dim: int = 1536
+
     # ── Lưu file CV upload (dev: local) ──────────────────────────────
     # TODO (production): chuyển sang object storage (S3/Cloudinary) — xem PRD bàn deploy.
     cv_upload_dir: str = str(_REPO_ROOT / "apps" / "backend" / "data" / "uploads")
@@ -51,6 +57,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str | None = None
+    # Một collection dùng chung JD + CV (phân biệt bằng payload "type") — plan 02a.
+    qdrant_collection: str = "cv_jd_embeddings"
 
     # ── Langfuse (observability — phase sau) ─────────────────────────
     langfuse_public_key: str | None = None
