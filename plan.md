@@ -1,10 +1,12 @@
-# SLICE — Cập nhật repo: bỏ React Native, chuyển sang PWA · plan one-shot
+# SLICE 02a — Quản lý JD + embedding vào Qdrant · plan one-shot
 
-> **Bản chất:** plan ONE-SHOT cho một lát refactor + đồng bộ tài liệu. Xong thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Quyết định:** bỏ hẳn app mobile React Native (Expo). "App trên điện thoại" giờ là **web dashboard dạng PWA**
-> (cài lên màn hình chính) — một codebase web duy nhất, responsive; không duy trì codebase mobile riêng.
-> **Lý do:** nhu cầu mobile chỉ là xem thông tin + phê duyệt nhanh, không cần truy cập phần cứng/OS → PWA đủ,
-> giảm một codebase. Tuân thủ `CLAUDE.md`.
+> **Bản chất:** plan ONE-SHOT cho một lát logic. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
+> **Mục tiêu:** HR tạo được tin tuyển dụng (JD) đầy đủ; khi tạo, JD được embedding (text-embedding-3-small)
+> và lưu vào Qdrant Cloud. Chứng minh hạ tầng vector chạy: JD vào → embed → tra cứu tương đồng ra được.
+> Đây là nền cho Ranker (lát 2b). Backend-only.
+> Tham chiếu: PRD §7.2 (Ranker cần JD chuẩn), §9 (gate_config), §16 (mô hình dữ liệu). Tuân thủ `CLAUDE.md`.
+>
+> **LLM/embedding provider: OpenAI.** Embedding model: `text-embedding-3-small` (1536 chiều).
 
 ---
 
@@ -12,91 +14,122 @@
 
 **In scope:**
 
-- Gỡ bỏ `apps/mobile` (Expo/React Native) khỏi monorepo + mọi tham chiếu build/script.
-- Biến `apps/dashboard` (Next.js) thành **PWA cài được**: web app manifest + service worker tối giản + icon.
-- Đảm bảo các trang hiện có responsive tốt trên khổ điện thoại.
-- Cập nhật MỌI tài liệu nhắc tới mobile: `PRD.md`, `CLAUDE.md`, `docs/architecture.md`, `README.md`.
-- Cập nhật cấu hình monorepo: `pnpm-workspace.yaml`, root `package.json`, `Makefile`.
+- DTO/schema tạo JD đầy đủ: title, description, requirements, rubric (tiêu chí + trọng số), screener_questions, gate_config.
+- Endpoint tạo/đọc JD (POST/GET) — lưu DB (bảng `job_posting` đã có từ scaffold).
+- Embedding service (OpenAIEmbeddings `text-embedding-3-small`) + xây text JD để embed.
+- Thiết lập Qdrant collection (size 1536, Cosine) + upsert vector JD kèm payload `{job_id, title, type:"jd"}`.
+- Endpoint/script tra cứu để VERIFY: embed một đoạn text truy vấn → search Qdrant → trả JD khớp + điểm tương đồng.
+- Dọn 2 comment cũ trong `apps/backend/app/main.py` (CORS "dashboard/mobile", "Expo web :19006") → sửa cho khớp PWA/một app web.
+- Test (mock embedding cho logic; một kiểm tra tích hợp embedding+Qdrant có thể gate hoặc script riêng).
 
 **Out of scope (KHÔNG làm ở lát này):**
 
-- KHÔNG làm push notification thật (đưa vào PRD §17 tương lai — iOS hạn chế; dùng badge in-app thay thế).
-- KHÔNG xây các trang HR mới (danh sách ứng viên, review queue…) — lát sau; đây chỉ là hạ tầng PWA + dọn dẹp.
-- KHÔNG đụng backend, agent/node, logic nghiệp vụ.
-- KHÔNG đổi tên `apps/dashboard` (giữ tên, tránh churn; nó là app web duy nhất: public + HR + PWA).
+- KHÔNG chấm điểm CV, KHÔNG đối sánh CV–JD, KHÔNG đụng node `ranker` (vẫn stub) — đó là lát 2b.
+- KHÔNG embed CV (chỉ embed JD; CV embed ở 2b khi Ranker cần).
+- KHÔNG chunk JD (một vector/JD là đủ; chunk để tương lai nếu JD quá dài).
+- KHÔNG UI quản lý JD (tạo JD qua `/docs` như parser; UI để lát HR dashboard sau).
+- KHÔNG đụng screener/scheduler/human_review; KHÔNG gate logic (chỉ lưu gate_config).
 
 ---
 
-## 2. Gỡ bỏ app mobile
+## 2. Prerequisites
 
-- Xóa thư mục `apps/mobile/`.
-- `pnpm-workspace.yaml`: bỏ mục `apps/mobile` nếu có.
-- Root `package.json`: bỏ script liên quan mobile nếu có.
-- `Makefile`: bỏ target `dev-mobile` (và target/ghi chú riêng cho Expo/mobile nếu có).
-- `packages/shared-types`: GIỮ NGUYÊN (dashboard vẫn dùng). Chỉ cần chắc không còn type nào chỉ dành riêng cho mobile; nếu có thì bỏ.
-- `.gitignore`: có thể bỏ các dòng riêng của Expo (không bắt buộc, vô hại nếu để lại).
-- Chạy `pnpm install` lại để cập nhật lockfile sau khi bỏ workspace.
+- `.env`: thêm `EMBEDDING_MODEL=text-embedding-3-small`. `OPENAI_API_KEY` đã có. `QDRANT_URL`/`QDRANT_API_KEY`/
+  `QDRANT_COLLECTION` (=`cv_jd_embeddings`) đã có từ scaffold.
+- `langchain-openai`, `qdrant-client` đã có (parser + scaffold). Thêm `EMBEDDING_MODEL` vào `core/config.py`.
 
-## 3. Biến dashboard thành PWA (tối giản, không thư viện nặng)
+---
 
-Ưu tiên cách thủ công gọn, tránh phụ thuộc dễ vỡ (không bắt buộc `next-pwa`):
+## 3. Việc cần làm
 
-- **Manifest:** thêm `app/manifest.ts` (Next.js App Router sinh ra `/manifest.webmanifest`): `name`,
-  `short_name`, `start_url: "/"`, `display: "standalone"`, `background_color`, `theme_color`, `icons` (192, 512).
-- **Icon:** sinh icon placeholder đơn giản (ô vuông màu + chữ/logo) kích thước 192×192 và 512×512 vào `public/`.
-- **Service worker:** thêm `public/sw.js` TỐI GIẢN — precache app shell / static của Next; với request `/api/*`
-  và dữ liệu động thì **network (không cache)** để tránh dữ liệu cũ. Không cần chiến lược caching phức tạp.
-- **Đăng ký SW:** trong một client component (vd thêm vào `app/layout.tsx` qua một `<PWARegister/>`), đăng ký
-  `sw.js` — **chỉ ở production** (`process.env.NODE_ENV === "production"`) để tránh SW phá hot-reload khi dev.
-- **Meta:** thêm `themeColor` + `viewport` phù hợp (App Router: qua `export const viewport`/`metadata`).
-- **Responsive:** rà các trang hiện có (`/`, `/cv-check`) hiển thị tốt trên khổ điện thoại (không tràn, chạm được).
+### 3.1 Schema tạo JD — `app/schemas/job_posting.py`
 
-> Ghi chú: PWA cài được cần HTTPS ở production (localhost dev thì OK). Không xử lý gì thêm ở lát này.
+`JobPostingCreate` (Pydantic v2), khớp cột bảng `job_posting`:
 
-## 4. Cập nhật tài liệu (đồng bộ — quan trọng)
+- `title: str`, `description: str`
+- `requirements: list[str]` (các yêu cầu chính) — hoặc str; chọn list cho có cấu trúc.
+- `rubric: list[RubricCriterion]` — `RubricCriterion = {criterion: str, weight: float}` (trọng số 0..1; nên tổng ~1, validate mềm).
+- `screener_questions: list[str]` (bộ câu hỏi Screener cho JD này — lưu để dùng ở lát Screener sau).
+- `gate_config: GateConfig` — `{auto_reject: bool = False, auto_invite: bool = False}` (mặc định TẮT, PRD §9 FR-GATE-3).
+- `JobPostingRead` cho GET (kèm id, status, created_at).
 
-| File                   | Sửa gì                                                                                                                                                                     |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PRD.md`               | §1.3, §6, §11 (FR-HR-3), §14, §17 — đổi "app mobile React Native" → "web PWA trên điện thoại"; đưa push vào §17. Xem wording bên dưới.                                     |
-| `CLAUDE.md`            | Mục stack: "Mobile: React Native / Expo…" → "PWA: web dashboard cài được trên điện thoại cho HR (không codebase mobile riêng)". Bỏ mọi nhắc React Native/Expo.             |
-| `docs/architecture.md` | Đổi mọi nhắc mobile → PWA; nếu có sơ đồ/nhánh mobile thì mô tả lại là "web PWA".                                                                                           |
-| `README.md`            | Bỏ `make dev-mobile` + hướng dẫn Expo; thêm dòng "web là PWA, cài trên điện thoại qua Add to Home Screen". Giữ ghi chú lệnh Node chạy PowerShell (vẫn đúng cho pnpm/next). |
+### 3.2 Embedding service — `app/services/embedding_service.py`
 
-**Wording mới cho các mục PRD (áp đúng, không tự chế thêm):**
+- `embed_text(text: str) -> list[float]`: dùng `OpenAIEmbeddings(model=settings.EMBEDDING_MODEL)`; trả vector 1536.
+- `build_jd_text(jd) -> str`: ghép `title + "\n" + description + "\n" + "\n".join(requirements)` thành text để embed.
+- Bọc try/except: lỗi API embedding → raise lỗi rõ ràng (JD vẫn lưu DB được, nhưng đánh dấu chưa embed — xem 3.4).
 
-- §1.3: "Trên điện thoại, chính web này (dạng PWA cài được lên màn hình chính) cho HR phê duyệt nhanh khi di chuyển."
-- §6: "Trên điện thoại: web dạng PWA (cài lên màn hình chính) — HR xem CV + duyệt human_review nhanh. Một app web duy nhất, responsive; KHÔNG có codebase mobile riêng."
-- §11 FR-HR-3: "Trên điện thoại (PWA): giao diện rút gọn, responsive (tóm tắt + điểm + lý do + 2 nút) để duyệt nhanh. Thông báo: badge số ca chờ hiển thị trong app. (Web push đẩy thật: xem §17.)"
-- §14 (bảng): đổi tiêu đề cột "Mobile HR" → "Điện thoại (PWA, HR)"; giữ nguyên các chức năng (xem CV, duyệt review = ✓; giám sát agent, quản lý JD, thống kê = ✗). Thêm một dòng ghi chú dưới bảng: "Chỉ một app web (Next.js), responsive; cột 'Điện thoại' là ưu tiên hiển thị trên màn hình nhỏ, không phải app riêng."
-- §17 (thêm dòng): "Web push notification xuyên nền tảng cho HR (đặc biệt trên iOS, vốn hạn chế PWA push)."
+### 3.3 Qdrant — `app/services/qdrant_service.py` (hoặc mở rộng core/qdrant_client.py)
 
-> Giữ nguyên tắc: PRD là nguồn chân lý — sau lát này PRD phải phản ánh đúng rằng mobile = PWA.
+- `ensure_collection()`: tạo collection `QDRANT_COLLECTION` nếu chưa có (vectors size=1536, distance=Cosine). Gọi idempotent lúc khởi động (lifespan) hoặc lần đầu dùng.
+- `upsert_jd(job_id, vector, payload)`: upsert điểm với id ổn định theo job_id, payload `{job_id, title, type:"jd"}`.
+- `search(vector, top_k=5, filter_type="jd")`: search trả các điểm + score.
 
-## 5. Verify
+### 3.4 JD service + endpoint — `app/services/job_service.py` + `app/api/routes/jobs.py`
 
-1. `pnpm install` OK; `apps/mobile` đã biến mất; không còn tham chiếu mobile trong workspace/Makefile/package.json.
-2. `make dev-dashboard`; mở `http://localhost:3000` — trang chạy bình thường, `/cv-check` vẫn hoạt động.
-3. `pnpm --filter dashboard build` (production) PASS; kiểm tra `/manifest.webmanifest` truy cập được.
-4. Ở bản production/preview: DevTools → Application → Manifest hiện đúng name/icons; Service Worker đăng ký OK;
-   trình duyệt cho phép "Install app" / "Add to Home Screen".
-5. Thu nhỏ cửa sổ / DevTools device mode (khổ điện thoại) → các trang hiện có responsive, không tràn.
-6. `grep -ri "react-native\|expo\|apps/mobile" .` (trừ node_modules, git history) → không còn kết quả trong tài liệu/config.
+- `create_job(...)`: lưu JD vào DB (`SUBMITTED`/`OPEN` tùy trạng thái mặc định) → `build_jd_text` → `embed_text` →
+  `upsert_jd`. Nếu embedding lỗi: vẫn giữ JD trong DB, set cờ/trạng thái `embedding_pending` (hoặc log rõ), KHÔNG sập request; trả cảnh báo.
+- `POST /api/jobs` (JobPostingCreate → tạo + embed), `GET /api/jobs` (list), `GET /api/jobs/{id}`.
 
-## 6. Definition of Done
+### 3.5 Endpoint VERIFY tra cứu — `app/api/routes/jobs.py`
 
-- [ ] `apps/mobile` đã xóa; `pnpm-workspace.yaml`/`package.json`/`Makefile` sạch tham chiếu mobile; `pnpm install` OK.
-- [ ] `pnpm --filter dashboard build` PASS; `/manifest.webmanifest` + icon 192/512 tồn tại.
-- [ ] Service worker đăng ký ở production; app "Install/Add to Home Screen" được; API không bị cache (dữ liệu tươi).
-- [ ] Các trang hiện có responsive trên khổ điện thoại.
-- [ ] `PRD.md` §1.3/§6/§11/§14/§17 đã cập nhật đúng wording ở mục 4; push nằm ở §17.
-- [ ] `CLAUDE.md`, `docs/architecture.md`, `README.md` không còn nhắc React Native/Expo; mô tả PWA.
-- [ ] `grep` không còn "react-native"/"expo"/"apps/mobile" trong tài liệu & config.
+- `POST /api/jobs/search-test` (body `{query: str, top_k?: int}`): `embed_text(query)` → `qdrant.search` → trả
+  danh sách `{job_id, title, score}`. Dùng để chứng minh embedding + tra cứu tương đồng hoạt động.
 
-## 7. Ranh giới & quy ước (theo CLAUDE.md)
+### 3.6 Dọn comment cũ — `apps/backend/app/main.py`
 
-- CHỈ làm: gỡ mobile + PWA hạ tầng cho dashboard + cập nhật tài liệu/config. KHÔNG đụng backend/agent/logic.
-- Đơn giản trước: PWA tối giản (manifest + SW cơ bản + icon), không thư viện nặng, không caching phức tạp,
-  KHÔNG push thật. Đừng đẻ thêm việc ngoài mục 2–4.
-- SW không cache API/dữ liệu động (tránh dữ liệu cũ); SW chỉ bật ở production.
-- Commit nhỏ theo bước (vd `chore(repo): remove react-native mobile app`, `feat(pwa): manifest + service worker + icons`, `docs: sync mobile→PWA in PRD/CLAUDE/architecture/README`).
-- Kết thúc: in tóm tắt thay đổi, kết quả verify, checklist DoD đã đạt.
+- Docstring/dòng nhắc "CORS cho dashboard/mobile" → "CORS cho web dashboard (PWA)".
+- Dòng "Expo web :19006" → bỏ (không còn Expo). Giữ origin dashboard (:3000). CHỈ sửa comment/oригин thừa, không đổi logic.
+
+### 3.7 Test — `apps/backend/tests/test_jd_embedding.py`
+
+- **Mock embedding** (không gọi API thật): tạo JD → assert lưu DB đúng + `upsert_jd` được gọi với vector đúng chiều.
+- `build_jd_text` ghép đúng định dạng.
+- gate_config mặc định TẮT khi không truyền.
+- (Tùy chọn, gate bằng biến môi trường) một test tích hợp thật: tạo JD thật → search-test bằng query liên quan → JD đó nằm trong kết quả với score hợp lý.
+
+---
+
+## 4. Verify (chạy thật)
+
+1. `make dev-backend`; tại `/docs` `POST /api/jobs` tạo một JD (vd "Backend Intern (Node.js)") với requirements + rubric + screener_questions + gate_config.
+2. `GET /api/jobs/{id}` trả đúng JD đã lưu (kèm rubric/gate_config).
+3. Kiểm Qdrant: `POST /api/jobs/search-test` với query "Node.js Express REST API backend" → JD vừa tạo xuất hiện, score tương đồng cao. Query lệch hẳn ("kế toán thuế") → score thấp/không khớp.
+4. Tạo JD thứ hai khác lĩnh vực → search-test phân biệt được hai JD theo query.
+5. Kiểm embedding lỗi không sập: (nếu tiện) tạm để key sai → JD vẫn vào DB, có cảnh báo, request không 500.
+6. `make test` xanh. `main.py` không còn nhắc mobile/Expo.
+
+---
+
+## 5. Definition of Done
+
+- [ ] `POST /api/jobs` tạo JD đầy đủ (title/description/requirements/rubric/screener_questions/gate_config) → lưu DB.
+- [ ] Collection Qdrant tồn tại (size 1536, Cosine); JD được upsert kèm payload `{job_id, title, type:"jd"}`.
+- [ ] `POST /api/jobs/search-test` trả JD khớp theo tương đồng ngữ nghĩa; query lệch → điểm thấp.
+- [ ] gate_config mặc định `auto_reject=false, auto_invite=false`.
+- [ ] Embedding lỗi không làm sập tạo JD (JD vẫn lưu + cảnh báo).
+- [ ] `main.py` hết comment "dashboard/mobile"/"Expo :19006"; CORS vẫn cho :3000.
+- [ ] `make test` xanh (embedding mock).
+- [ ] Node `ranker`/screener/scheduler/human_review KHÔNG bị đụng (vẫn stub). KHÔNG embed CV.
+
+---
+
+## 6. Ranh giới & quy ước (theo CLAUDE.md)
+
+- CHỈ động vào phần JD + embedding + Qdrant + 2 comment main.py. KHÔNG chấm điểm, KHÔNG đụng ranker/các node khác.
+- Async-first; cấu hình từ env (EMBEDDING*MODEL, QDRANT*\*); không hardcode.
+- Đơn giản trước: một vector/JD (không chunk), một collection dùng chung (payload `type` để phân biệt), không thêm dep ngoài đã có.
+- `ensure_collection` phải idempotent (chạy nhiều lần không lỗi).
+- Commit nhỏ theo bước (vd `feat(jd): schema + job endpoints`, `feat(embedding): embedding_service + qdrant upsert/search`, `feat(jd): search-test verify endpoint`, `chore(backend): dọn comment mobile/Expo trong main.py`, `test(jd): mocked embedding tests`).
+- Nghiệp vụ chưa rõ → tra **PRD.md** (§7.2, §9, §16). PRD chưa đủ → DỪNG, hỏi.
+- Kết thúc: in tóm tắt thay đổi, lệnh verify, checklist DoD đã đạt.
+
+---
+
+## 7. Lát kế tiếp (2b — KHÔNG làm bây giờ, chỉ để định hướng)
+
+Ranker chấm điểm THẬT: node `ranker` nhận parsed CV + JD → embed CV, tính tương đồng (tín hiệu phụ) + LLM chấm
+theo rubric (điểm chính, có breakdown từng tiêu chí) → `score` + `score_breakdown` + `confidence` +
+cờ `weak_match`. Là node quyết định; wiring conditional sau ranker (should_review) chạy theo score/confidence
+thật. Có endpoint `rank-test` đồng bộ (parsed CV + job_id → điểm) để tinh chỉnh. Mở rộng State với
+`score`/`score_breakdown` nếu cần (PRD §16).

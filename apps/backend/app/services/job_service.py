@@ -44,6 +44,10 @@ async def create_job(
         await session.commit()
         await session.refresh(job)
     except Exception as exc:  # noqa: BLE001 — embed/Qdrant lỗi KHÔNG sập tạo JD (plan 02a)
+        # Rollback + reset ref in-memory: commit thứ hai fail mà không rollback thì response
+        # sẽ mang embedding_ref đã gán (expire_on_commit=False) trong khi DB là NULL.
+        await session.rollback()
+        job.embedding_ref = None
         logger.warning("Embed/upsert JD id=%s thất bại (JD vẫn lưu DB): %s", job.id, exc)
         warning = f"JD đã lưu nhưng CHƯA embed được (embedding_ref=None): {exc}"
     return job, warning

@@ -7,16 +7,20 @@ với point CV sau này trong cùng collection.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from qdrant_client import models
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from app.core.config import settings
 from app.core.qdrant_client import qdrant_client
 
 _NAMESPACE = uuid.NAMESPACE_URL
-# ensure_collection chỉ cần chạy thật một lần mỗi process (idempotent cả khi chạy lại).
+# ensure_collection chỉ cần chạy thật một lần mỗi process; lock chặn race 2 request đầu tiên
+# cùng check-then-create (create_collection KHÔNG idempotent — Qdrant trả 409).
 _collection_ready = False
+_ensure_lock = asyncio.Lock()
 
 
 def jd_point_id(job_id: int) -> str:
@@ -28,21 +32,29 @@ async def ensure_collection() -> None:
     global _collection_ready
     if _collection_ready:
         return
-    if not await qdrant_client.collection_exists(settings.qdrant_collection):
-        await qdrant_client.create_collection(
+    async with _ensure_lock:
+        if _collection_ready:  # request khác vừa hoàn thành trong lúc đợi lock
+            return
+        if not await qdrant_client.collection_exists(settings.qdrant_collection):
+            try:
+                await qdrant_client.create_collection(
+                    collection_name=settings.qdrant_collection,
+                    vectors_config=models.VectorParams(
+                        size=settings.embedding_dim, distance=models.Distance.COSINE
+                    ),
+                )
+            except UnexpectedResponse as exc:
+                # 409 = process/replica khác vừa tạo xong (lock chỉ chặn trong 1 process) — coi là OK.
+                if exc.status_code != 409:
+                    raise
+        # Qdrant Cloud BẮT BUỘC payload index cho field dùng trong filter ("type").
+        # Gọi cả khi collection đã tồn tại (idempotent — tạo lại index sẵn có trả OK).
+        await qdrant_client.create_payload_index(
             collection_name=settings.qdrant_collection,
-            vectors_config=models.VectorParams(
-                size=settings.embedding_dim, distance=models.Distance.COSINE
-            ),
+            field_name="type",
+            field_schema=models.PayloadSchemaType.KEYWORD,
         )
-    # Qdrant Cloud BẮT BUỘC payload index cho field dùng trong filter ("type").
-    # Gọi cả khi collection đã tồn tại (idempotent — tạo lại index sẵn có trả OK).
-    await qdrant_client.create_payload_index(
-        collection_name=settings.qdrant_collection,
-        field_name="type",
-        field_schema=models.PayloadSchemaType.KEYWORD,
-    )
-    _collection_ready = True
+        _collection_ready = True
 
 
 async def upsert_jd(job_id: int, vector: list[float], *, title: str) -> str:

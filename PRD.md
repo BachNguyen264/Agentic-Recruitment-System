@@ -87,7 +87,7 @@ pipeline đa tác tử bất đồng bộ.
    nhưng bị giới hạn số bước để giữ dự đoán được. Pipeline cố định ở tầng điều phối.
 3. **An toàn trước case lạ.** Mỗi agent trả kèm `confidence` + `uncertainty_flags`; dưới ngưỡng → tự chuyển
    `human_review`. "Không chắc thì hỏi HR" là hành vi đúng, không phải thất bại.
-4. **Cải thiện dần bán tự động có người duyệt.** Hệ thống phát hiện mẫu case lạ từ audit_log → _đề xuất_
+4. **Cải thiện dần bán tự động có người duyệt.** Hệ thống phát hiện mẫu case lạ từ audit*log → *đề xuất\_
    chỉnh rubric/JD/prompt → HR duyệt mới áp dụng. Agent KHÔNG tự đổi control flow.
 
 > Đánh đổi cốt lõi: quyền tự trị ở tầng điều phối ĐỔI LẤY độ tin cậy/khả năng kiểm soát + chi phí thấp.
@@ -296,15 +296,15 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 
 | Chức năng                             | Web HR | Điện thoại (PWA, HR) | Web công khai |
 | ------------------------------------- | ------ | -------------------- | ------------- |
-| Nộp CV                                | —      | —               | ✅            |
-| Xem danh sách JD                      | ✅     | —               | ✅            |
-| Quản lý JD                            | ✅     | ❌              | —             |
-| Xem danh sách CV + lọc                | ✅     | ✅ (xem)        | —             |
-| Chi tiết CV (parse, điểm, trace)      | ✅     | ✅ rút gọn      | —             |
-| Duyệt/từ chối human_review            | ✅     | ✅ nhanh + push | —             |
-| Dashboard giám sát agent (live trace) | ✅     | ❌              | —             |
-| Bật/tắt gate                          | ✅     | ❌              | —             |
-| Thống kê / vòng học                   | ✅     | ❌              | —             |
+| Nộp CV                                | —      | —                    | ✅            |
+| Xem danh sách JD                      | ✅     | —                    | ✅            |
+| Quản lý JD                            | ✅     | ❌                   | —             |
+| Xem danh sách CV + lọc                | ✅     | ✅ (xem)             | —             |
+| Chi tiết CV (parse, điểm, trace)      | ✅     | ✅ rút gọn           | —             |
+| Duyệt/từ chối human_review            | ✅     | ✅ nhanh + push      | —             |
+| Dashboard giám sát agent (live trace) | ✅     | ❌                   | —             |
+| Bật/tắt gate                          | ✅     | ❌                   | —             |
+| Thống kê / vòng học                   | ✅     | ❌                   | —             |
 
 > Chỉ một app web (Next.js), responsive; cột "Điện thoại" là ưu tiên hiển thị trên màn hình nhỏ,
 > không phải app riêng.
@@ -349,6 +349,7 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 - Web push notification xuyên nền tảng cho HR (đặc biệt trên iOS, vốn hạn chế PWA push).
 - Vòng học bán tự động đầy đủ (gom mẫu → đề xuất → HR duyệt) — thiết kế đã chừa, triển khai sau.
 - Đa ngôn ngữ nâng cao, đa JD song song cho một ứng viên, A/B testing rubric.
+- LLM đề xuất rubric từ JD, HR duyệt/chỉnh (bán tự động, trụ cột 4)
 
 ---
 

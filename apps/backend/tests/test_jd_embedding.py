@@ -19,16 +19,27 @@ from app.services.qdrant_service import jd_point_id
 
 
 class FakeSession:
-    """AsyncSession tối thiểu cho create_job: add/commit/refresh (refresh gán id)."""
+    """AsyncSession tối thiểu cho create_job: add/commit/refresh/rollback (refresh gán id).
 
-    def __init__(self) -> None:
+    ``fail_commit_at``: commit thứ N ném lỗi (mô phỏng Neon rớt kết nối lúc lưu embedding_ref).
+    """
+
+    def __init__(self, *, fail_commit_at: int | None = None) -> None:
         self.added: list = []
+        self.commits = 0
+        self.rollbacks = 0
+        self._fail_commit_at = fail_commit_at
 
     def add(self, obj) -> None:
         self.added.append(obj)
 
     async def commit(self) -> None:
-        pass
+        self.commits += 1
+        if self._fail_commit_at is not None and self.commits == self._fail_commit_at:
+            raise ConnectionError("mất kết nối DB (giả lập)")
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
 
     async def refresh(self, obj) -> None:
         if getattr(obj, "id", None) is None:
@@ -144,6 +155,32 @@ async def test_create_job_survives_embedding_error(monkeypatch) -> None:
     assert job.embedding_ref is None
     assert warning is not None and "CHƯA embed" in warning
     assert called["upsert"] is False  # embed hỏng thì không upsert
+
+
+async def test_create_job_second_commit_failure_consistent(monkeypatch) -> None:
+    """Commit lưu embedding_ref fail → rollback + ref reset None (response khớp DB)."""
+
+    async def fake_embed(text: str) -> list[float]:
+        return [0.0] * settings.embedding_dim
+
+    async def fake_upsert(job_id: int, vector: list[float], *, title: str) -> str:
+        return "point-ok"
+
+    monkeypatch.setattr(job_service, "embed_text", fake_embed)
+    monkeypatch.setattr(job_service.qdrant_service, "upsert_jd", fake_upsert)
+
+    session = FakeSession(fail_commit_at=2)  # commit 1 = lưu JD OK; commit 2 = lưu ref FAIL
+    job, warning = await job_service.create_job(session, _payload())
+
+    assert job.embedding_ref is None  # KHÔNG trả point id khi DB chưa ghi được
+    assert warning is not None
+    assert session.rollbacks == 1
+
+
+def test_requirements_newline_normalized() -> None:
+    # Item chứa newline sẽ vỡ round-trip Text->list — phải chuẩn hóa thành 1 space.
+    jd = _payload(requirements=["Thành thạo SQL\nvà NoSQL", "  ", "Git\r\ncơ bản"])
+    assert jd.requirements == ["Thành thạo SQL và NoSQL", "Git cơ bản"]
 
 
 # ── point id ổn định ─────────────────────────────────────────────────────────

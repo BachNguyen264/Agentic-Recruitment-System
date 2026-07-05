@@ -27,6 +27,13 @@ class JobPostingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str = Field(min_length=1)
     requirements: list[str] = Field(default_factory=list, description="Các yêu cầu chính.")
+
+    @field_validator("requirements")
+    @classmethod
+    def _normalize_requirement_items(cls, v: list[str]) -> list[str]:
+        # Cột DB là Text join "\n": item chứa newline sẽ bị tách đôi khi đọc lại —
+        # chuẩn hóa mọi whitespace nội bộ thành 1 space, bỏ item rỗng.
+        return [" ".join(item.split()) for item in v if item.strip()]
     rubric: list[RubricCriterion] = Field(default_factory=list)
     screener_questions: list[str] = Field(
         default_factory=list, description="Bộ câu hỏi cố định cho Screener (PRD §10 FR-SCR-6)."
