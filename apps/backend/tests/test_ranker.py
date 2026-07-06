@@ -64,18 +64,30 @@ def _mock_embed(monkeypatch):
 async def test_overall_recomputed_from_weighted_criteria() -> None:
     llm = FakeLLM(_result(("Kinh nghiệm Node.js", 0.6, 90), ("Hiểu biết DB", 0.4, 70)))
     res = await ranker.rank_cv(_PARSED, _JD, llm=llm, jd_vector=[1.0, 0.0, 0.0])
-    assert res["score"] == 82.0  # 90*0.6 + 70*0.4 (Σweight=1)
+    assert res["score"] == 82.0  # 90*0.6 + 70*0.4 (trọng số JD, Σ=1)
     assert res["semantic_similarity"] == 1.0
     assert res["uncertainty_flags"] == []
     assert res["require_human_review"] is False
     assert res["confidence"] == 1.0
+    # breakdown dùng TÊN tiêu chí authoritative từ rubric JD (không phải LLM tự echo).
+    assert [c["criterion"] for c in res["score_breakdown"]] == [
+        "Kinh nghiệm Node.js", "Hiểu biết DB",
+    ]
 
 
-async def test_weighted_overall_normalizes_when_weights_not_sum_to_one() -> None:
+def test_weighted_overall_normalizes_when_weights_not_sum_to_one() -> None:
     # Σweight = 0.5 → chuẩn hóa: (80*0.3 + 60*0.2)/0.5 = 72.0
-    llm = FakeLLM(_result(("A", 0.3, 80), ("B", 0.2, 60)))
+    assert ranker._weighted_overall([
+        {"score": 80, "weight": 0.3}, {"score": 60, "weight": 0.2},
+    ]) == 72.0
+    assert ranker._weighted_overall([]) is None  # không có tiêu chí → None
+
+
+async def test_overall_uses_jd_weights_not_llm_echoed() -> None:
+    # LLM echo trọng số SAI (0.1/0.9) nhưng code phải dùng trọng số JD (0.6/0.4).
+    llm = FakeLLM(_result(("x", 0.1, 90), ("y", 0.9, 40)))
     res = await ranker.rank_cv(_PARSED, _JD, llm=llm, jd_vector=[1.0, 0.0, 0.0])
-    assert res["score"] == 72.0
+    assert res["score"] == 70.0  # 90*0.6 + 40*0.4 (JD), KHÔNG phải 90*0.1+40*0.9=45
 
 
 # ── cờ heuristic ─────────────────────────────────────────────────────────────

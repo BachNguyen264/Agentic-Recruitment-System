@@ -101,12 +101,38 @@ def _cosine(a: list[float] | None, b: list[float] | None) -> float | None:
 
 
 def _weighted_overall(criteria: list[dict]) -> float | None:
-    """Điểm tổng = Σ(score×weight)/Σweight (chuẩn hóa) — auditable, KHÔNG tin mù điểm LLM."""
+    """Điểm tổng = Σ(score×weight)/Σweight (chuẩn hóa). None nếu tổng trọng số ≤ 0."""
     total_w = sum(max(float(c.get("weight", 0)), 0.0) for c in criteria)
     if total_w <= 0:
         return None
     acc = sum(float(c.get("score", 0)) * max(float(c.get("weight", 0)), 0.0) for c in criteria)
     return round(acc / total_w, 1)
+
+
+def _reconcile_criteria(
+    llm_criteria: list[dict], jd_rubric: list[dict]
+) -> tuple[list[dict], float | None]:
+    """Ghép điểm LLM với TÊN + TRỌNG SỐ authoritative từ rubric JD — điểm auditable, KHÔNG tin
+    trọng số/tên do LLM tự echo. Ghép theo thứ tự (prompt yêu cầu LLM trả đúng thứ tự rubric);
+    lệch số tiêu chí → log + ghép theo min. Trả (criteria đã hợp nhất, điểm tổng có trọng số JD).
+    """
+    if not jd_rubric:
+        return llm_criteria, _weighted_overall(llm_criteria)
+    if len(llm_criteria) != len(jd_rubric):
+        logger.info(
+            "ranker: số tiêu chí LLM (%d) != rubric JD (%d) — ghép theo min",
+            len(llm_criteria), len(jd_rubric),
+        )
+    merged = [
+        {
+            "criterion": jd_rubric[i].get("criterion"),
+            "weight": float(jd_rubric[i].get("weight", 0) or 0),
+            "score": float(llm_criteria[i].get("score", 0) or 0),
+            "reasoning": llm_criteria[i].get("reasoning", ""),
+        }
+        for i in range(min(len(llm_criteria), len(jd_rubric)))
+    ]
+    return merged, _weighted_overall(merged)
 
 
 def _flags_and_confidence(
@@ -203,22 +229,23 @@ async def rank_cv(
         logger.warning("ranker: tín hiệu similarity lỗi (bỏ qua): %s", exc)
         similarity = None
 
-    # 2) Chấm rubric (điểm CHÍNH) — lỗi LLM → rank_failed, KHÔNG sập.
+    # 2-3) Chấm rubric (điểm CHÍNH) + tính lại điểm tổng bằng trọng số JD — lỗi LLM/parse →
+    #      rank_failed, KHÔNG sập.
     try:
         client = llm or build_ranker_llm()
         result: RankResult = await client.ainvoke(_build_prompt(parsed_data, jd))
+        criteria, computed = _reconcile_criteria(
+            [c.model_dump() for c in result.criteria], jd.get("rubric") or []
+        )
+        llm_overall = float(result.overall_score)
+        summary = result.summary
     except Exception as exc:  # noqa: BLE001
-        logger.warning("ranker: lỗi LLM chấm điểm: %s", exc)
+        logger.warning("ranker: lỗi LLM/parse khi chấm điểm: %s", exc)
         return _failed(f"Lỗi gọi LLM khi chấm điểm: {exc}", similarity)
 
-    # 3) Tính lại điểm tổng từ criteria×weight (đối chiếu, không tin mù).
-    criteria = [c.model_dump() for c in result.criteria]
-    computed = _weighted_overall(criteria)
-    overall = computed if computed is not None else round(float(result.overall_score), 1)
-    if computed is not None and abs(computed - result.overall_score) > _OVERALL_DIVERGE:
-        logger.info(
-            "ranker: điểm tính lại lệch LLM (computed=%s, llm=%s)", computed, result.overall_score
-        )
+    overall = computed if computed is not None else round(llm_overall, 1)
+    if computed is not None and abs(computed - llm_overall) > _OVERALL_DIVERGE:
+        logger.info("ranker: điểm tính lại lệch LLM (computed=%s, llm=%s)", computed, llm_overall)
 
     # 4) Cờ + confidence + quyết định escalate.
     flags, confidence, escalation = _flags_and_confidence(overall, similarity)
@@ -232,7 +259,7 @@ async def rank_cv(
     return {
         "score": overall,
         "score_breakdown": criteria,
-        "summary": result.summary,
+        "summary": summary,
         "semantic_similarity": similarity,
         "confidence": confidence,
         "uncertainty_flags": flags,
