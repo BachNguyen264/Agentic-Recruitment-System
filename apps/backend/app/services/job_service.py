@@ -53,6 +53,18 @@ async def create_job(
     return job, warning
 
 
+def jd_dict(job: JobPosting) -> dict:
+    """JD dict cho ranker (state.input.jd / rank-cv). requirements cột Text → tách lại list."""
+    reqs = [line for line in (job.requirements or "").splitlines() if line.strip()]
+    return {
+        "job_id": job.id,
+        "title": job.title,
+        "description": job.description or "",
+        "requirements": reqs,
+        "rubric": list(job.rubric or []),
+    }
+
+
 async def get_job(session: AsyncSession, job_id: int) -> JobPosting | None:
     return await session.get(JobPosting, job_id)
 

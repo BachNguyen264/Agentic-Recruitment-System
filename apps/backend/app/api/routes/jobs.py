@@ -48,7 +48,10 @@ async def search_test(payload: SearchTestRequest) -> SearchTestResponse:
         vector = await embed_text(payload.query)
     except EmbeddingError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    points = await qdrant_service.search(vector, top_k=payload.top_k)
+    try:
+        points = await qdrant_service.search(vector, top_k=payload.top_k)
+    except Exception as exc:  # noqa: BLE001 — Qdrant down/timeout → 502 message rõ (không 500 chung)
+        raise HTTPException(status_code=502, detail=f"Lỗi truy vấn Qdrant: {exc}") from exc
     hits = [
         SearchTestHit(
             job_id=int(p.payload["job_id"]),

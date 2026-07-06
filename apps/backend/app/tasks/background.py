@@ -14,7 +14,7 @@ from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.models.application import Application, ApplicationStatus
 from app.models.job_posting import JobPosting
-from app.services import audit_service
+from app.services import audit_service, job_service
 
 logger = get_logger("app.tasks.background")
 
@@ -29,18 +29,6 @@ def _parsed_summary(parsed: dict | None) -> dict:
         "skills_count": len(parsed.get("skills") or []),
         "experiences_count": len(parsed.get("experiences") or []),
         "education_count": len(parsed.get("education") or []),
-    }
-
-
-def _jd_dict(job: JobPosting) -> dict:
-    """JD dict cho ranker (state.input.jd). requirements cột Text → tách lại thành list."""
-    reqs = [line for line in (job.requirements or "").splitlines() if line.strip()]
-    return {
-        "job_id": job.id,
-        "title": job.title,
-        "description": job.description or "",
-        "requirements": reqs,
-        "rubric": list(job.rubric or []),
     }
 
 
@@ -64,7 +52,7 @@ async def process_application(application_id: int, *, force_review: bool = False
             if application.job_id is not None:
                 job = await session.get(JobPosting, application.job_id)
                 if job is not None:
-                    jd = _jd_dict(job)
+                    jd = job_service.jd_dict(job)
 
             out = await run_with_trace(
                 force_review=force_review,
