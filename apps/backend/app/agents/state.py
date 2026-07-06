@@ -23,6 +23,11 @@ class RecruitmentState(TypedDict, total=False):
     # ── Parser (PRD §7.1): CV -> JSON có cấu trúc (ParsedCV.model_dump) ──
     parsed_data: dict[str, Any] | None
 
+    # ── Ranker (PRD §7.2, §16): điểm rubric + tín hiệu embedding phụ ──
+    score: float | None
+    score_breakdown: list[dict[str, Any]] | None  # [{criterion, weight, score, reasoning}]
+    semantic_similarity: float | None              # cosine CV↔JD (tín hiệu phụ, KHÔNG vào điểm)
+
     # ── 4 trụ cột (PRD §5 trụ cột 3: an toàn trước case lạ) ──────────
     confidence: float
     uncertainty_flags: list[str]      # vd: parse_failed, weak_match, no_response

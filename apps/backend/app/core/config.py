@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_dim: int = 1536
 
+    # ── Ranker (slice-02b — PRD §7.2 chấm rubric có suy luận) ─────────
+    # Model CHỌN SAU BENCHMARK (plan §6). RANKER_REASONING_EFFORT rỗng → non-reasoning
+    # (temperature=0); có giá trị (low/medium/high) → reasoning (KHÔNG truyền temperature).
+    ranker_model: str = "gpt-4.1"
+    ranker_reasoning_effort: str | None = None
+    # Ngưỡng điểm đạt (0..100) + dải "sát ngưỡng" cho cờ near_threshold. PRD §8.3, §18.
+    score_pass_threshold: float = 60.0
+    score_near_band: float = 10.0
+
     # ── Lưu file CV upload (dev: local) ──────────────────────────────
     # TODO (production): chuyển sang object storage (S3/Cloudinary) — xem PRD bàn deploy.
     cv_upload_dir: str = str(_REPO_ROOT / "apps" / "backend" / "data" / "uploads")
