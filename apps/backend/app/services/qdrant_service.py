@@ -74,6 +74,23 @@ async def upsert_jd(job_id: int, vector: list[float], *, title: str) -> str:
     return point_id
 
 
+async def get_jd_vector(job_id: int) -> list[float] | None:
+    """Lấy vector JD đã lưu (retrieve theo point_id) để cosine với CV — tín hiệu phụ (plan 02b).
+
+    Trả None nếu JD chưa embed. Retrieve-by-id chính xác đúng JD này, không cần index payload job_id.
+    """
+    await ensure_collection()
+    records = await qdrant_client.retrieve(
+        collection_name=settings.qdrant_collection,
+        ids=[jd_point_id(job_id)],
+        with_vectors=True,
+    )
+    if not records:
+        return None
+    vector = records[0].vector
+    return vector if isinstance(vector, list) else None
+
+
 async def search(
     vector: list[float], *, top_k: int = 5, filter_type: str = "jd"
 ) -> list[models.ScoredPoint]:

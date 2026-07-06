@@ -5,6 +5,7 @@ Tách khỏi route để test gọi trực tiếp không cần HTTP.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -14,13 +15,15 @@ from app.agents.state import RecruitmentState
 
 def initial_state(*, force_review: bool = False, application_id: int | None = None,
                   applicant_email: str | None = None,
-                  cv_path: str | None = None) -> RecruitmentState:
+                  cv_path: str | None = None,
+                  jd: dict[str, Any] | None = None) -> RecruitmentState:
     return {
         "application_id": application_id,
         "input": {
             "force_review": force_review,
             "applicant_email": applicant_email,
             "cv_path": cv_path,  # parser đọc CV từ đây (None -> parser stub)
+            "jd": jd,            # ranker đọc JD từ đây (None -> ranker stub)
         },
         "scratchpad": {},
         "messages": [],
@@ -28,6 +31,9 @@ def initial_state(*, force_review: bool = False, application_id: int | None = No
         "result": None,
         "error": None,
         "parsed_data": None,
+        "score": None,
+        "score_breakdown": None,
+        "semantic_similarity": None,
         "confidence": 1.0,
         "uncertainty_flags": [],
         "escalation_reason": None,
@@ -42,18 +48,24 @@ def _thread_config() -> dict[str, Any]:
 
 
 def run_sync(*, force_review: bool = False) -> dict[str, Any]:
-    """Chạy đồng bộ (cho tests). Trả về state cuối."""
-    return recruitment_graph.invoke(initial_state(force_review=force_review), _thread_config())
+    """Chạy đồng bộ (cho tests). Dùng ainvoke qua asyncio.run vì có node async (ranker).
+
+    An toàn: chỉ được gọi từ ngữ cảnh KHÔNG có event loop (test đồng bộ) — không dùng trong route.
+    """
+    return asyncio.run(
+        recruitment_graph.ainvoke(initial_state(force_review=force_review), _thread_config())
+    )
 
 
 async def run_with_trace(*, force_review: bool = False, applicant_email: str | None = None,
                          application_id: int | None = None,
-                         cv_path: str | None = None) -> dict[str, Any]:
+                         cv_path: str | None = None,
+                         jd: dict[str, Any] | None = None) -> dict[str, Any]:
     """Chạy bất đồng bộ, thu trace từng node (cho API run-demo + background)."""
     config = _thread_config()
     state = initial_state(
         force_review=force_review, applicant_email=applicant_email,
-        application_id=application_id, cv_path=cv_path,
+        application_id=application_id, cv_path=cv_path, jd=jd,
     )
     trace: list[dict[str, Any]] = []
     async for update in recruitment_graph.astream(state, config, stream_mode="updates"):

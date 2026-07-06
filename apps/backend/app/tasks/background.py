@@ -13,6 +13,7 @@ from app.agents.runner import run_with_trace
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.models.application import Application, ApplicationStatus
+from app.models.job_posting import JobPosting
 from app.services import audit_service
 
 logger = get_logger("app.tasks.background")
@@ -31,6 +32,18 @@ def _parsed_summary(parsed: dict | None) -> dict:
     }
 
 
+def _jd_dict(job: JobPosting) -> dict:
+    """JD dict cho ranker (state.input.jd). requirements cột Text → tách lại thành list."""
+    reqs = [line for line in (job.requirements or "").splitlines() if line.strip()]
+    return {
+        "job_id": job.id,
+        "title": job.title,
+        "description": job.description or "",
+        "requirements": reqs,
+        "rubric": list(job.rubric or []),
+    }
+
+
 async def process_application(application_id: int, *, force_review: bool = False) -> None:
     """Mỗi CV một pipeline độc lập (FR-PIPE-1). Ghi audit mọi bước (FR-PIPE-4)."""
     logger.info("BG: bắt đầu xử lý application_id=%s", application_id)
@@ -46,21 +59,36 @@ async def process_application(application_id: int, *, force_review: bool = False
                 action="received", detail={"source": "background_task"}, commit=False,
             )
 
+            # JD cho ranker (nếu application gắn job_id + JD tồn tại).
+            jd = None
+            if application.job_id is not None:
+                job = await session.get(JobPosting, application.job_id)
+                if job is not None:
+                    jd = _jd_dict(job)
+
             out = await run_with_trace(
                 force_review=force_review,
                 applicant_email=application.applicant_email,
                 application_id=application_id,
                 cv_path=application.cv_file_ref,  # parser đọc CV thật từ đây
+                jd=jd,                             # ranker đọc JD thật từ đây
             )
             final = out["final"]
 
-            # Ghi audit cho từng node (parser đã THẬT; ranker/screener/scheduler vẫn stub).
+            # Ghi audit cho từng node (parser + ranker đã THẬT; screener/scheduler vẫn stub).
             for step in out["trace"]:
                 node = step["node"]
                 flags = step.get("uncertainty_flags", []) or []
                 if node == "parser":
                     action = "parse_failed" if "parse_failed" in flags else "parsed"
                     detail = {"status": step.get("status"), **_parsed_summary(final.get("parsed_data"))}
+                elif node == "ranker":
+                    action = "rank_failed" if "rank_failed" in flags else "ranked"
+                    detail = {
+                        "status": step.get("status"),
+                        "score": final.get("score"),
+                        "semantic_similarity": final.get("semantic_similarity"),
+                    }
                 else:
                     action = "stub_pass_through"
                     detail = {"status": step.get("status")}
@@ -72,6 +100,12 @@ async def process_application(application_id: int, *, force_review: bool = False
 
             application.status = final.get("status", application.status)
             application.parsed_data = final.get("parsed_data") or {}
+            application.score = final.get("score")
+            application.score_breakdown = {
+                "criteria": final.get("score_breakdown") or [],
+                "summary": (final.get("scratchpad") or {}).get("rank_summary"),
+                "semantic_similarity": final.get("semantic_similarity"),
+            }
             application.confidence = final.get("confidence")
             application.uncertainty_flags = final.get("uncertainty_flags", []) or []
             application.escalation_reason = final.get("escalation_reason")

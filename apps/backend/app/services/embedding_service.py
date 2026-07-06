@@ -41,3 +41,18 @@ def build_jd_text(*, title: str, description: str, requirements: list[str]) -> s
     """Ghép JD thành một đoạn text để embed (một vector/JD — không chunk, plan 02a)."""
     parts = [title, description, *requirements]
     return "\n".join(p.strip() for p in parts if p and p.strip())
+
+
+def build_cv_text(parsed_data: dict) -> str:
+    """Ghép nội dung CV để embed (tín hiệu tương đồng CV↔JD — plan 02b, KHÔNG vào điểm)."""
+    parts: list[str] = []
+    if parsed_data.get("professional_summary"):
+        parts.append(str(parsed_data["professional_summary"]))
+    skills = parsed_data.get("skills") or []
+    if skills:
+        parts.append("Kỹ năng: " + ", ".join(str(s) for s in skills))
+    for exp in parsed_data.get("experiences") or []:
+        seg = " ".join(str(exp.get(k) or "") for k in ("title", "company", "summary")).strip()
+        if seg:
+            parts.append(seg)
+    return "\n".join(p for p in parts if p and p.strip())
