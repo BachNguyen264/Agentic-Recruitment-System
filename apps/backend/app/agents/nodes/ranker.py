@@ -61,8 +61,8 @@ def model_label() -> str:
     return f"{settings.ranker_model} ({mode})"
 
 
-def build_ranker_llm():
-    """Client LLM cấu hình được: reasoning (reasoning_effort) vs non-reasoning (temperature=0).
+def build_ranker_chat():
+    """ChatOpenAI cấu hình được: reasoning (reasoning_effort) vs non-reasoning (temperature=0).
 
     Đổi qua lại CHỈ bằng .env (RANKER_REASONING_EFFORT) — không sửa code (plan §3.3, §6).
     """
@@ -71,19 +71,22 @@ def build_ranker_llm():
     effort = (settings.ranker_reasoning_effort or "").strip()
     if effort:
         # Reasoning model (vd gpt-5-mini): dùng reasoning_effort, KHÔNG truyền temperature.
-        llm = ChatOpenAI(
+        return ChatOpenAI(
             model=settings.ranker_model,
             reasoning_effort=effort,
             api_key=settings.openai_api_key,
         )
-    else:
-        # Non-reasoning (vd gpt-4.1): temperature=0 cho ổn định.
-        llm = ChatOpenAI(
-            model=settings.ranker_model,
-            temperature=0,
-            api_key=settings.openai_api_key,
-        )
-    return llm.with_structured_output(RankResult)
+    # Non-reasoning (vd gpt-4.1): temperature=0 cho ổn định.
+    return ChatOpenAI(
+        model=settings.ranker_model,
+        temperature=0,
+        api_key=settings.openai_api_key,
+    )
+
+
+def build_ranker_llm():
+    """ChatOpenAI (theo env) + structured output RankResult — client chấm rubric."""
+    return build_ranker_chat().with_structured_output(RankResult)
 
 
 def _cosine(a: list[float] | None, b: list[float] | None) -> float | None:
