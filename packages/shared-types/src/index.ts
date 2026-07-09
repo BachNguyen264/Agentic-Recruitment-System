@@ -77,6 +77,22 @@ export interface Education {
   year: string | null;
 }
 
+export interface Certificate {
+  name: string;
+  detail: string | null;
+  year: string | null;
+}
+
+export interface Language {
+  name: string;
+  proficiency: string | null;
+}
+
+export interface OtherItem {
+  label: string;
+  content: string;
+}
+
 export interface ParsedCV {
   full_name: string | null;
   email: string | null;
@@ -86,6 +102,11 @@ export interface ParsedCV {
   education: Education[];
   total_years_experience: number | null;
   professional_summary: string | null;
+  // slice 01c — mặc định [] (tương thích ngược với parsed_data cũ có thể thiếu).
+  certificates: Certificate[];
+  languages: Language[];
+  awards: string[];
+  other: OtherItem[];
 }
 
 // Trả về của POST /api/agents/parse-cv — khớp ParseCVResponse (app/schemas/agent.py).

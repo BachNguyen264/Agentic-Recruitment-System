@@ -169,6 +169,72 @@ export function ParsedCVResult({
               </ol>
             </div>
           )}
+
+          {/* Chứng chỉ (?? [] — tương thích parsed_data cũ thiếu trường) */}
+          {(parsed_data.certificates ?? []).length > 0 && (
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-semibold text-slate-700">
+                Chứng chỉ ({parsed_data.certificates.length})
+              </h3>
+              <div className="flex flex-wrap gap-1.5">
+                {parsed_data.certificates.map((c, i) => (
+                  <Chip key={`${c.name}-${i}`}>
+                    {c.name}
+                    {c.detail?.trim() ? ` · ${c.detail}` : ""}
+                    {c.year?.trim() ? ` (${c.year})` : ""}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Ngôn ngữ */}
+          {(parsed_data.languages ?? []).length > 0 && (
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-semibold text-slate-700">
+                Ngôn ngữ ({parsed_data.languages.length})
+              </h3>
+              <div className="flex flex-wrap gap-1.5">
+                {parsed_data.languages.map((l, i) => (
+                  <Chip key={`${l.name}-${i}`}>
+                    {l.name}
+                    {l.proficiency?.trim() ? ` · ${l.proficiency}` : ""}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Giải thưởng */}
+          {(parsed_data.awards ?? []).length > 0 && (
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-semibold text-slate-700">
+                Giải thưởng ({parsed_data.awards.length})
+              </h3>
+              <ul className="list-disc space-y-0.5 pl-5 text-sm text-slate-700">
+                {parsed_data.awards.map((a, i) => (
+                  <li key={i}>{a}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Khác (lưới an toàn) */}
+          {(parsed_data.other ?? []).length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold text-slate-700">
+                Khác ({parsed_data.other.length})
+              </h3>
+              <dl className="space-y-1">
+                {parsed_data.other.map((o, i) => (
+                  <div key={i} className="text-sm">
+                    <dt className="font-medium text-slate-700">{o.label}</dt>
+                    <dd className="text-slate-600">{o.content}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          )}
         </div>
       )}
     </section>
