@@ -29,6 +29,13 @@ _PROMPT = (
     "CHỈ dùng thông tin CÓ THẬT trong CV — KHÔNG suy đoán, KHÔNG bịa. "
     "Trường nào không tìm thấy thì để trống (None) hoặc danh sách rỗng. "
     "CV có thể bằng tiếng Việt hoặc tiếng Anh.\n\n"
+    "QUY TẮC XẾP THÔNG TIN (quan trọng — để `other` không thành thùng rác):\n"
+    "1. LUÔN ưu tiên xếp thông tin vào đúng trường CÓ CẤU TRÚC: full_name, email, phone, skills, "
+    "experiences, education, certificates (chứng chỉ như TOEIC/IELTS/AWS — điểm/cấp độ để ở `detail`), "
+    "languages (ngôn ngữ + trình độ), awards (giải thưởng/thành tích).\n"
+    "2. `other` là LƯỚI AN TOÀN — CHỈ dùng cho khối CV KHÔNG thuộc bất kỳ trường nào ở trên "
+    "(vd: Sở thích, Người tham chiếu, Hoạt động ngoại khóa). Mỗi khối một {label, content}.\n"
+    "3. TUYỆT ĐỐI KHÔNG đặt chứng chỉ/ngôn ngữ/giải thưởng vào `other` — chúng đã có trường riêng.\n\n"
     "----- CV BẮT ĐẦU -----\n{cv_text}\n----- CV KẾT THÚC -----"
 )
 
