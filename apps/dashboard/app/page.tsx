@@ -12,7 +12,10 @@ export default function Home() {
           <span className="font-mono">parser → ranker → screener → scheduler</span> + human_review.
           Nguồn chân lý: PRD.md.
         </p>
-        <p className="text-sm">
+        <p className="flex flex-wrap gap-x-4 text-sm">
+          <Link href="/applications" className="text-slate-700 underline hover:text-slate-900">
+            → Danh sách ứng viên
+          </Link>
           <Link href="/cv-check" className="text-slate-700 underline hover:text-slate-900">
             → Kiểm tra bóc tách CV
           </Link>
