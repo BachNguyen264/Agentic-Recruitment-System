@@ -78,19 +78,19 @@ export interface Education {
 }
 
 export interface Certificate {
-  name: string;
+  name: string | null;
   detail: string | null;
   year: string | null;
 }
 
 export interface Language {
-  name: string;
+  name: string | null;
   proficiency: string | null;
 }
 
 export interface OtherItem {
-  label: string;
-  content: string;
+  label: string | null;
+  content: string | null;
 }
 
 export interface ParsedCV {

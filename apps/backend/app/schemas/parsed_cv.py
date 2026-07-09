@@ -24,22 +24,24 @@ class Education(BaseModel):
     year: str | None = Field(None, description="Năm tốt nghiệp hoặc khoảng thời gian học.")
 
 
+# Mọi trường str | None (như Experience/Education) — một mục thiếu field KHÔNG được làm hỏng
+# cả ParsedCV (structured output validate lỗi → parse_failed toàn CV).
 class Certificate(BaseModel):
-    name: str = Field(description="Tên chứng chỉ, vd 'TOEIC', 'IELTS', 'AWS Certified Developer'.")
+    name: str | None = Field(None, description="Tên chứng chỉ, vd 'TOEIC', 'IELTS', 'AWS Certified Developer'.")
     detail: str | None = Field(None, description="Điểm/cấp độ nếu có, vd '945/990', '7.0', 'Associate'.")
     year: str | None = Field(None, description="Năm đạt được nếu có.")
 
 
 class Language(BaseModel):
-    name: str = Field(description="Tên ngôn ngữ, vd 'English', 'Japanese', 'Tiếng Nhật'.")
+    name: str | None = Field(None, description="Tên ngôn ngữ, vd 'English', 'Japanese', 'Tiếng Nhật'.")
     proficiency: str | None = Field(
         None, description="Trình độ nếu có, vd 'Professional working', 'IELTS 7.0', 'bản ngữ'."
     )
 
 
 class OtherItem(BaseModel):
-    label: str = Field(description="Nhãn khối thông tin, vd 'Sở thích', 'Người tham chiếu', 'Hoạt động'.")
-    content: str = Field(description="Nội dung của khối.")
+    label: str | None = Field(None, description="Nhãn khối thông tin, vd 'Sở thích', 'Người tham chiếu'.")
+    content: str | None = Field(None, description="Nội dung của khối.")
 
 
 class ParsedCV(BaseModel):
