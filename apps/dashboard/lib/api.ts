@@ -1,4 +1,9 @@
-import type { ParseCvResponse } from "@ars/shared-types";
+import type {
+  ApplicationDetail,
+  ApplicationListItem,
+  JobPosting,
+  ParseCvResponse,
+} from "@ars/shared-types";
 
 // Base URL backend — đọc từ env (NEXT_PUBLIC_API_BASE), mặc định localhost:8000.
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
@@ -18,6 +23,16 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
   if (!res.ok) throw new Error(`HTTP ${res.status} khi POST ${path}`);
   return (await res.json()) as T;
 }
+
+// ── Màn HR ứng viên (slice 03a, CHỈ ĐỌC) ──
+export const getApplications = () =>
+  getJson<ApplicationListItem[]>("/api/applications");
+
+export const getApplication = (id: number) =>
+  getJson<ApplicationDetail>(`/api/applications/${id}`);
+
+// JD của ứng viên (tiêu đề + rubric) để hiển thị ngữ cảnh chấm điểm ở trang chi tiết.
+export const getJob = (id: number) => getJson<JobPosting>(`/api/jobs/${id}`);
 
 // Upload CV -> POST /api/agents/parse-cv (multipart). KHÔNG tự set Content-Type:
 // để browser tự thêm boundary cho FormData.

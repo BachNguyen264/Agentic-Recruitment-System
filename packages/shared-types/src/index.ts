@@ -62,6 +62,68 @@ export interface Application {
   updated_at: string;
 }
 
+// ── Màn HR danh sách/chi tiết ứng viên (slice 03a, CHỈ ĐỌC) — khớp ApplicationRead (backend) ──
+
+// Item danh sách: đủ để hiển thị dòng ứng viên (không cần parsed_data/breakdown — giữ nhẹ).
+export interface ApplicationListItem {
+  id: number;
+  applicant_email: string;
+  job_id: number | null;
+  status: ApplicationStatus;
+  score: number | null;
+  confidence: number | null;
+  uncertainty_flags: string[];
+  created_at: string;
+}
+
+// Một tiêu chí rubric đã chấm (khớp ranker._reconcile_criteria: tên+trọng số từ JD, điểm từ LLM).
+export interface Criterion {
+  criterion: string | null;
+  weight: number;
+  score: number;
+  reasoning: string;
+}
+
+// score_breakdown lưu trong DB (JSONB) — khớp tasks/background.py: {criteria, summary, semantic_similarity}.
+export interface ScoreBreakdownRaw {
+  criteria: Criterion[];
+  summary: string | null;
+  semantic_similarity: number | null;
+}
+
+// Chi tiết: list item + parsed_data + breakdown. escalation_reason kèm để hiển thị lý do leo thang.
+export interface ApplicationDetail extends ApplicationListItem {
+  parsed_data: ParsedCV | null;
+  score_breakdown: ScoreBreakdownRaw;
+  escalation_reason: string | null;
+}
+
+// Prop cho component ScoreBreakdown (thuần presentational — tái dùng ở ReviewCard, lát human_review).
+// Chuẩn hóa từ ApplicationDetail: gộp overall + criteria + tín hiệu phụ + confidence/flags vào một chỗ.
+export interface ScoreBreakdownData {
+  overall_score: number | null;
+  criteria: Criterion[];
+  semantic_similarity: number | null;
+  confidence: number | null;
+  uncertainty_flags: string[];
+  summary?: string | null;
+}
+
+// JD tối thiểu để hiển thị ngữ cảnh ở trang chi tiết (tiêu đề + rubric) — khớp JobPostingRead (backend).
+export interface RubricCriterion {
+  criterion: string;
+  weight: number;
+}
+
+export interface JobPosting {
+  id: number;
+  title: string;
+  description: string;
+  requirements: string[];
+  rubric: RubricCriterion[];
+  status: string;
+}
+
 // Parser (PRD §7.1) — khớp app/schemas/parsed_cv.py (backend). Mọi trường có thể null/rỗng.
 export interface Experience {
   company: string | null;

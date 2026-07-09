@@ -6,6 +6,9 @@ interface ParsedCVResultProps {
   confidence: number;
   uncertainty_flags: string[];
   escalation_reason?: string | null;
+  // Trang chi tiết ứng viên đã có ScoreBreakdown lo phần confidence/flags của Ranker — ẩn badge
+  // confidence ở đây để khỏi nhầm tín hiệu Ranker thành chất lượng bóc tách (mặc định hiện, cho cv-check).
+  showConfidence?: boolean;
 }
 
 function confidenceStyle(c: number): { label: string; cls: string } {
@@ -35,6 +38,7 @@ export function ParsedCVResult({
   confidence,
   uncertainty_flags,
   escalation_reason,
+  showConfidence = true,
 }: ParsedCVResultProps) {
   const conf = confidenceStyle(confidence);
   const failed = uncertainty_flags.includes("parse_failed");
@@ -43,17 +47,21 @@ export function ParsedCVResult({
     <section className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="mr-1 text-lg font-semibold">Kết quả bóc tách</h2>
-        <span className={`rounded px-2 py-0.5 text-sm font-medium ${conf.cls}`}>
-          {conf.label} · conf {confidence.toFixed(2)}
-        </span>
-        {uncertainty_flags.map((flag) => (
-          <span
-            key={flag}
-            className="rounded bg-amber-100 px-2 py-0.5 text-sm font-medium text-amber-800"
-          >
-            {flag}
-          </span>
-        ))}
+        {showConfidence && (
+          <>
+            <span className={`rounded px-2 py-0.5 text-sm font-medium ${conf.cls}`}>
+              {conf.label} · conf {confidence.toFixed(2)}
+            </span>
+            {uncertainty_flags.map((flag) => (
+              <span
+                key={flag}
+                className="rounded bg-amber-100 px-2 py-0.5 text-sm font-medium text-amber-800"
+              >
+                {flag}
+              </span>
+            ))}
+          </>
+        )}
       </div>
 
       {failed ? (
