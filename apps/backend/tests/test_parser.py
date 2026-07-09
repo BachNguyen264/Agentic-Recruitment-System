@@ -7,14 +7,23 @@ Ref: plan slice-01 §3.7, PRD §7.1.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+import pytest
 from docx import Document
 
 from app.agents.nodes import parser as parser_mod
-from app.agents.nodes.parser import parse_cv, parser_node
+from app.agents.nodes.parser import _confidence, parse_cv, parser_node
 from app.core.config import settings
-from app.schemas.parsed_cv import Education, Experience, ParsedCV
+from app.schemas.parsed_cv import (
+    Certificate,
+    Education,
+    Experience,
+    Language,
+    OtherItem,
+    ParsedCV,
+)
 from app.tools.cv_reader import EmptyCVTextError, extract_text
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -151,3 +160,63 @@ def test_parser_node_real_when_enabled(monkeypatch) -> None:
     assert out["uncertainty_flags"] == []
     assert out["parsed_data"]["full_name"] == "Nguyễn Văn A"
     assert "[parser] OK" in out["messages"][0]
+
+
+# ── slice 01c: certificates / languages / awards / other ────────────────────────
+
+
+def _parsed_with_extras() -> ParsedCV:
+    return ParsedCV(
+        full_name="Nguyen Van C",
+        email="c@example.com",
+        skills=["Node.js"],
+        certificates=[Certificate(name="TOEIC", detail="945/990", year="2025")],
+        languages=[Language(name="English", proficiency="Professional working")],
+        awards=["First prize, University Hackathon 2022"],
+        other=[OtherItem(label="Hobbies", content="Chess, reading tech blogs, hiking")],
+    )
+
+
+def test_new_blocks_passthrough() -> None:
+    pd = parse_cv(str(FIXTURES / "cert_cv.pdf"), llm=_FakeLLM(_parsed_with_extras()))["parsed_data"]
+    assert pd["certificates"][0] == {"name": "TOEIC", "detail": "945/990", "year": "2025"}
+    assert pd["languages"][0]["name"] == "English"
+    assert pd["awards"] == ["First prize, University Hackathon 2022"]
+    assert pd["other"][0]["label"] == "Hobbies"
+
+
+def test_certificate_not_in_other_shape() -> None:
+    # Đúng SHAPE ưu tiên: chứng chỉ ở certificates, khối lạ ở other, chứng chỉ KHÔNG lẫn other.
+    pd = parse_cv(str(FIXTURES / "cert_cv.pdf"), llm=_FakeLLM(_parsed_with_extras()))["parsed_data"]
+    assert any(c["name"] == "TOEIC" for c in pd["certificates"])
+    other_blob = " ".join(f"{o['label']} {o['content']}" for o in pd["other"]).lower()
+    assert "toeic" not in other_blob
+    assert "chess" in other_blob  # khối 'Hobbies' nằm ở other
+
+
+def test_backward_compat_empty_new_blocks() -> None:
+    # CV cũ (mock không set trường mới) -> [] mặc định; confidence GIỮ NGUYÊN (5 khối lõi).
+    result = parse_cv(str(FIXTURES / "good_cv.docx"), llm=_FakeLLM(_full_parsed()))
+    pd = result["parsed_data"]
+    assert pd["certificates"] == [] and pd["languages"] == [] and pd["awards"] == [] and pd["other"] == []
+    assert result["confidence"] == 1.0
+
+
+def test_confidence_ignores_new_blocks() -> None:
+    # name + email = 2/5; certificates/languages/awards/other KHÔNG cộng vào confidence.
+    p = ParsedCV(
+        full_name="X", email="x@y.com",
+        certificates=[Certificate(name="TOEIC", detail="990")],
+        languages=[Language(name="English")], awards=["a"],
+        other=[OtherItem(label="l", content="c")],
+    )
+    assert _confidence(p) == 0.4
+
+
+@pytest.mark.skipif(not os.environ.get("RUN_PARSE_IT"), reason="cần RUN_PARSE_IT=1 + OPENAI_API_KEY")
+def test_certificates_extracted_real() -> None:
+    # LLM THẬT trên cert_cv.pdf: TOEIC vào certificates, KHÔNG lọt other (kiểm ưu tiên thật).
+    pd = parse_cv(str(FIXTURES / "cert_cv.pdf"))["parsed_data"]
+    assert "toeic" in " ".join(c["name"] for c in pd["certificates"]).lower()
+    other_blob = " ".join(f"{o['label']} {o['content']}" for o in pd["other"]).lower()
+    assert "toeic" not in other_blob

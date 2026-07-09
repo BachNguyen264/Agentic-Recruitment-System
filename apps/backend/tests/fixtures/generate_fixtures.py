@@ -45,6 +45,37 @@ employment, hiring, or resumes. Lorem ipsum dolor sit amet, consectetur adipisci
 sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
 """
 
+# CV có CHỨNG CHỈ + NGÔN NGỮ + GIẢI THƯỞNG + khối lạ (Hobbies -> other). Dùng cho slice 01c:
+# kiểm parser xếp chứng chỉ vào certificates (KHÔNG vào other), hobby vào other.
+_CERT_PDF = """NGUYEN VAN C
+Backend Developer
+Email: nguyenvanc@example.com | Phone: +84 900 111 222
+
+SKILLS
+Node.js, Express.js, MongoDB, REST API
+
+EXPERIENCE
+DevHouse - Backend Intern (2023 - 2024)
+  Built REST APIs with Node.js and Express.
+
+EDUCATION
+FPT University - B.Sc. Software Engineering (2019 - 2023)
+
+CERTIFICATES
+TOEIC 945/990 (2025)
+AWS Certified Cloud Practitioner (2024)
+
+LANGUAGES
+English - Professional working proficiency
+Japanese - Basic (N5)
+
+AWARDS
+First prize, University Hackathon 2022
+
+HOBBIES
+Chess, reading tech blogs, hiking
+"""
+
 
 def _write_pdf(name: str, text: str) -> None:
     doc = fitz.open()
@@ -76,6 +107,7 @@ def main() -> None:
     _write_pdf("good_cv.pdf", _GOOD_PDF)
     _write_pdf("sparse_cv.pdf", _SPARSE_PDF)
     _write_pdf("not_a_cv.pdf", _NOT_A_CV)
+    _write_pdf("cert_cv.pdf", _CERT_PDF)
     names = [p.name for p in sorted(FIXTURES.glob("*cv*.*")) if p.suffix in {".pdf", ".docx"}]
     print("Generated fixtures:", ", ".join(names))
 
