@@ -34,7 +34,7 @@ _PROMPT = (
     "experiences, education, certificates (chứng chỉ như TOEIC/IELTS/AWS — điểm/cấp độ để ở `detail`), "
     "languages (ngôn ngữ + trình độ), awards (giải thưởng/thành tích).\n"
     "2. `other` là LƯỚI AN TOÀN — CHỈ dùng cho khối CV KHÔNG thuộc bất kỳ trường nào ở trên "
-    "(vd: Sở thích, Người tham chiếu, Hoạt động ngoại khóa). Mỗi khối một {label, content}.\n"
+    "(vd: Sở thích, Người tham chiếu, Hoạt động ngoại khóa). Mỗi khối một {{label, content}}.\n"
     "3. TUYỆT ĐỐI KHÔNG đặt chứng chỉ/ngôn ngữ/giải thưởng vào `other` — chúng đã có trường riêng.\n\n"
     "----- CV BẮT ĐẦU -----\n{cv_text}\n----- CV KẾT THÚC -----"
 )
