@@ -1,7 +1,8 @@
 # Kiến trúc (tóm tắt) — Autonomous Recruitment System
 
 > Tài liệu này CHỈ tóm tắt để định hướng code. **Nguồn chân lý đầy đủ: [`../PRD.md`](../PRD.md).**
-> Khi mâu thuẫn → PRD đúng. Giai đoạn hiện tại: **scaffold** (node stub, UI placeholder).
+> Khi mâu thuẫn → PRD đúng. Giai đoạn: đang build từng **lát** — `parser` + `ranker` đã THẬT;
+> `screener`/`scheduler`/`human_review` còn stub. Trạng thái chi tiết: [`../CLAUDE.md`](../CLAUDE.md).
 
 ## 4 trụ cột thiết kế (PRD §5)
 
@@ -20,13 +21,13 @@ START → parser → ranker → [should_review?] ──no──→ screener → 
                                    └──yes──→ human_review → END
 ```
 
-| Node           | Vai trò (PRD)                          | Scaffold                              |
-| -------------- | -------------------------------------- | ------------------------------------- |
-| `parser`       | CV (PDF/DOCX) → JSON (§7.1)             | stub pass-through                     |
-| `ranker`       | đối sánh CV–JD + chấm điểm; **quyết định** (§7.2) | stub set confidence; đọc cờ demo |
-| `screener`     | gửi câu hỏi + magic-link, **suspend/resume** (§7.3, §10) | stub pass-through (chưa suspend) |
-| `scheduler`    | **điểm gửi email DUY NHẤT** (mời/từ chối) (§7.4) | stub pass-through              |
-| `human_review` | HR quyết, kèm **ReviewCard** (§11)      | set require_human_review + reason     |
+| Node           | Vai trò (PRD)                          | Hiện trạng                                          |
+| -------------- | -------------------------------------- | --------------------------------------------------- |
+| `parser`       | CV (PDF/DOCX) → JSON (§7.1)             | ✅ THẬT — OpenAI `gpt-4.1-mini` structured output    |
+| `ranker`       | đối sánh CV–JD + chấm điểm; **quyết định** (§7.2) | ✅ THẬT — `gpt-5-mini` chấm rubric; embedding phụ |
+| `screener`     | gửi câu hỏi + magic-link, **suspend/resume** (§7.3, §10) | ⛔ stub pass-through (chưa suspend)      |
+| `scheduler`    | **điểm gửi email DUY NHẤT** (mời/từ chối) (§7.4) | ⛔ stub pass-through                        |
+| `human_review` | HR quyết, kèm **ReviewCard** (§11)      | ⛔ stub — set require_human_review + reason          |
 
 Hai **gate** cấu hình (PRD §9, mặc định TẮT): `auto-từ-chối` (sau ranker), `auto-mời` (sau screener).
 Bất biến FR-GATE-2: ca bất định LUÔN vào `human_review`, bất kể gate.
@@ -47,17 +48,17 @@ Bất biến FR-GATE-2: ca bất định LUÔN vào `human_review`, bất kể g
 ## Bền vững & async (PRD §10, NFR-1/2)
 
 - Mỗi CV = một pipeline độc lập, chạy song song; CV chờ Screener KHÔNG nghẽn CV khác.
-- Screener **suspend/resume**: LangGraph `interrupt` + **Postgres checkpointer** (phase sau; scaffold dùng
+- Screener **suspend/resume**: LangGraph `interrupt` + **Postgres checkpointer** (lát sau; hiện dùng
   `MemorySaver`). KHÔNG worker polling Redis (giữ free-tier Upstash).
 
-## Chừa chỗ kiến trúc (đã có ở scaffold)
+## Chừa chỗ kiến trúc (đã có)
 
 - `RecruitmentState`: `confidence`, `uncertainty_flags`, `escalation_reason`, `require_human_review`,
-  `awaiting_screener`, `screener_answers`.
-- `policy.should_review()` route được; `run-demo` chạy **cả 2 nhánh**.
+  `score`, `score_breakdown`, `semantic_similarity`, `awaiting_screener`, `screener_answers`.
+- `policy.should_review()` route theo giá trị thật; `run-demo` chạy **cả 2 nhánh**.
 - `audit_log` đủ cột (node, action, confidence, uncertainty_flags, escalation_reason, detail) — PRD §16.
 
-## TODO trỏ PRD (phase sau)
+## TODO trỏ PRD (lát sau)
 
-LLM trong pipeline (`ENABLE_LLM`), parse CV thật, RAG/Qdrant, gate (§9), Screener async (§10),
+gate (§9), Screener async (§10),
 ReviewCard (§11), email/Calendar/Zalo, vòng học bán tự động (§5 trụ cột 4).

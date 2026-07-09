@@ -13,9 +13,10 @@ parser → ranker → [gate rank] → screener (suspend/resume) → [gate mời]
                       └──────────────► human_review ◄─────────────┘  (có điều kiện)
 ```
 
-> ⚠️ **Giai đoạn hiện tại = SCAFFOLD.** Node agent là *stub*, UI là *placeholder*. Chưa có logic nghiệp vụ
-> thật (không LLM, không parse CV, không RAG, không gate, không screener async, không vòng học). Khung đã
-> chừa sẵn chỗ kiến trúc cho 4 trụ cột (PRD §5) + Screener async (PRD §10).
+> **Giai đoạn: đang build từng lát.** Đã THẬT: `parser` (CV→JSON, OpenAI `gpt-4.1-mini`), `ranker` (chấm
+> rubric, `gpt-5-mini` + embedding Qdrant làm tín hiệu phụ), quản lý JD + embedding, dashboard PWA + `/cv-check`.
+> Còn **stub**: `screener`/`scheduler`/`human_review`. CHƯA làm: 2 gate (§9), Screener async (§10), ReviewCard
+> (§11), email/Calendar, vòng học. Trạng thái chi tiết + gotchas: [`CLAUDE.md`](./CLAUDE.md).
 
 ---
 
@@ -24,7 +25,7 @@ parser → ranker → [gate rank] → screener (suspend/resume) → [gate mời]
 | Lớp        | Công nghệ                                                                |
 | ---------- | ------------------------------------------------------------------------ |
 | Backend    | Python 3.12 · FastAPI · LangGraph · SQLAlchemy 2 (async) · Alembic · Pydantic v2 · `uv` |
-| Frontend   | Next.js 14 · Tailwind · shadcn/ui · TanStack Query                       |
+| Frontend   | Next.js 14 · plain Tailwind (slate) · TanStack Query (shadcn/ui chưa cài) |
 | PWA        | web dashboard cài được trên điện thoại (Add to Home Screen) — không codebase mobile riêng |
 | Hạ tầng    | Neon (Postgres) · Upstash Redis · Qdrant Cloud · (Langfuse — phase sau)  |
 | Async      | FastAPI BackgroundTasks (KHÔNG worker polling — giữ free-tier Upstash)   |
@@ -104,4 +105,4 @@ make local-infra-down
 - **[`PRD.md`](./PRD.md)** — nguồn chân lý: nghiệp vụ, 4 agent, luồng, FR/NFR, mô hình dữ liệu.
 - **[`CLAUDE.md`](./CLAUDE.md)** — quy ước code.
 - **[`docs/architecture.md`](./docs/architecture.md)** — tóm tắt kiến trúc, trỏ về PRD.
-- `plan.md` — kịch bản scaffold (dùng xong bỏ, KHÔNG phải nguồn chân lý).
+- `plan.md` — kịch bản **one-shot cho lát hiện tại** (dùng xong bỏ, KHÔNG phải nguồn chân lý).

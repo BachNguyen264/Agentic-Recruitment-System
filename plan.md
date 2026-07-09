@@ -1,15 +1,12 @@
-# SLICE 02b — Ranker chấm điểm thật (rubric có suy luận + tín hiệu embedding) · plan one-shot
+# SLICE 01c — Bổ sung certificates/languages/awards/other cho Parser + benchmark lại · plan one-shot
 
-> **Bản chất:** plan ONE-SHOT cho một lát logic. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Mục tiêu:** node `ranker` từ stub → THẬT. LLM đọc CV + JD, **suy luận theo từng tiêu chí rubric** rồi cho
-> điểm có breakdown + lý do. Embedding/Qdrant đóng vai **tín hiệu phụ** (tương đồng ngữ nghĩa để hiển thị +
-> kiểm tra chéo), KHÔNG vào điểm. Là node quyết định; wiring `should_review` theo điểm/confidence thật.
-> Tham chiếu: PRD §7.2 (Ranker), §11 (ReviewCard), §13 (trạng thái), §16 (score/score_breakdown). Tuân thủ `CLAUDE.md`.
->
-> **Hướng đã chốt (Hướng A):** rubric có suy luận = cơ sở điểm DUY NHẤT. Rubric do HR nhập (đã có ở JD từ 2a).
-> KHÔNG chunk JD, KHÔNG truy xuất theo mảnh. LLM provider: OpenAI.
-> **Model:** CHỌN SAU KHI BENCHMARK (mục 6) — so sánh một model reasoning (gpt-5-mini) và một non-reasoning
-> (gpt-4.1) trên cùng CV rồi mới quyết. Code phải hỗ trợ đổi qua lại bằng env.
+> **Bản chất:** plan ONE-SHOT, lát nhỏ sửa lỗi dữ liệu. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
+> **Bối cảnh:** benchmark end-to-end lộ ra parser bỏ sót chứng chỉ (TOEIC 945/990) vì schema `ParsedCV`
+> thiếu trường certificates → ranker chấm tiêu chí "Tiếng Anh" trên dữ liệu khuyết → benchmark model bị méo.
+> **Mục tiêu:** thêm `certificates`, `languages`, `awards` (có cấu trúc) + `other` (lưới an toàn hứng khối
+> lạ) vào ParsedCV; parser trích được chúng — ƯU TIÊN trường có cấu trúc, `other` chỉ hứng phần còn lại; rồi
+> **benchmark lại** (gpt-4.1 vs gpt-5-mini) end-to-end trên CV thật CÓ TOEIC để chọn model trên dữ liệu sạch.
+> Tham chiếu: PRD §7.1 (Parser). Tuân thủ `CLAUDE.md`. LLM parser: gpt-4.1-mini (giữ nguyên, không đổi).
 
 ---
 
@@ -17,173 +14,115 @@
 
 **In scope:**
 
-- Schema `RankResult` (điểm tổng + điểm/lý do từng tiêu chí).
-- Node `ranker` THẬT: parsed CV + JD(rubric) → (a) embed CV, lấy cosine với JD qua Qdrant (tín hiệu phụ);
-  (b) LLM chấm rubric có suy luận → điểm + breakdown; (c) confidence + uncertainty_flags; (d) lưu
-  `score`/`score_breakdown`/`semantic_similarity`; (e) audit_log.
-- **Client LLM cấu hình được reasoning/non-reasoning** (xử lý đúng `temperature` vs `reasoning_effort`).
-- Mở rộng `RecruitmentState`: `score`, `score_breakdown`, `semantic_similarity`.
-- `policy.should_review` theo điểm/confidence/flags THẬT.
-- Endpoint `rank-test` đồng bộ (dùng cho cả tinh chỉnh lẫn benchmark model).
-- **Benchmark reasoning vs non-reasoning** trên bộ CV cố định → chọn RANKER_MODEL (mục 6).
-- Dọn tồn dư 2a: `search-test` lỗi Qdrant → trả message rõ.
-- Test (mock LLM + mock embedding).
+- Mở rộng schema `ParsedCV`: `certificates`, `languages`, `awards` (có cấu trúc) + `other` (lưới an toàn), mặc định [].
+- Cập nhật prompt parser để trích các khối này (chỉ khi CÓ, KHÔNG bịa) — ƯU TIÊN xếp vào trường có cấu trúc, chỉ cái không thuộc trường nào mới cho vào `other`.
+- Cập nhật `ParsedCVResult` (UI slice 01b) hiển thị các khối mới (gồm `other`) nếu có (nhẹ).
+- Fixture có chứng chỉ + test (mock LLM).
+- **Benchmark lại** end-to-end trên CV thật có TOEIC → in bảng so sánh 2 model → chờ người dùng chọn.
 
-**Out of scope:**
+**Out of scope (KHÔNG làm):**
 
-- KHÔNG gate (auto-từ-chối/auto-mời) — chỉ chấm + route bất định sang human_review. Gate là lát sau.
-- KHÔNG đụng logic thật `screener`/`scheduler`/`human_review` (vẫn stub).
-- KHÔNG chunk JD, KHÔNG để cosine vào điểm, KHÔNG UI hiển thị điểm, KHÔNG sinh rubric bằng LLM.
+- KHÔNG đụng logic `ranker` — ranker đã đúng: nó ĐỌC TOÀN BỘ parsed_data theo dẫn dắt của rubric, nên các trường
+  mới (certificates/languages/awards/other) TỰ ĐỘNG thành bằng chứng khi một tiêu chí rubric cần. Lát này chỉ sửa _dữ liệu đầu vào_.
+- KHÔNG đổi công thức confidence (các khối mới GỒM `other` KHÔNG vào mẫu số — xem 3.3).
+- KHÔNG migration DB (parsed_data là JSONB, thêm trường không cần Alembic).
+- KHÔNG đụng gate/screener/scheduler/human_review; KHÔNG đổi model parser.
 
 ---
 
 ## 2. Prerequisites
 
-- `.env` (cấu hình model — sẽ chốt sau benchmark):
-  - `RANKER_MODEL` — model chấm điểm. Hai ứng viên benchmark: `gpt-5-mini` (reasoning) và `gpt-4.1` (non-reasoning).
-  - `RANKER_REASONING_EFFORT` — **để trống nếu model non-reasoning** (code dùng `temperature=0`); **đặt `low`/`medium`
-    nếu model reasoning** (code dùng `reasoning_effort`, KHÔNG truyền temperature). Đây là công tắc để đổi qua lại.
-  - `SCORE_PASS_THRESHOLD` (vd 60), `SCORE_NEAR_BAND` (vd 10). `CONFIDENCE_THRESHOLD` đã có.
-- `EMBEDDING_MODEL`, Qdrant, langchain-openai đã có từ 2a.
+- Không thêm dependency. `.env` giữ nguyên (parser dùng gpt-4.1-mini như slice 01).
+- Có CV thật của bạn (có TOEIC) để benchmark — cung cấp lại file cho Claude Code nếu cần.
 
 ---
 
 ## 3. Việc cần làm
 
-### 3.1 Schema `RankResult` — `app/schemas/rank.py`
+### 3.1 Mở rộng schema — `app/schemas/parsed_cv.py`
 
-- `overall_score: float` (0..100), `criteria: list[CriterionScore]` với
-  `CriterionScore = {criterion, weight, score(0..100), reasoning}`, `summary: str`.
-- Code tính lại overall từ criteria×weight để đối chiếu (không tin mù; lệch lớn → log/flag).
+Thêm (giữ NHẸ, mặc định [] để tương thích ngược):
 
-### 3.2 Mở rộng State — `app/agents/state.py`
+- `certificates: list[Certificate]` — `Certificate = {name: str, detail: str | None, year: str | None}`
+  (detail = điểm/cấp độ, vd "945/990"; ví dụ: name="TOEIC", detail="945/990", year="2023").
+- `languages: list[Language]` — `Language = {name: str, proficiency: str | None}`
+  (vd name="English", proficiency="Professional working").
+- `awards: list[str]` — mỗi phần tử một mô tả ngắn.
+- `other: list[OtherItem]` — LƯỚI AN TOÀN cho khối CV không thuộc trường nào. `OtherItem = {label: str, content: str}`
+  (vd label="Sở thích", content="đọc sách, cờ vua"; label="Người tham chiếu", content="..."). Mục đích: KHÔNG mất
+  thông tin CV. KHÔNG phải thùng rác — xem ràng buộc ưu tiên ở 3.2.
 
-Thêm `score: float | None`, `score_breakdown: list[dict] | None`, `semantic_similarity: float | None`.
+### 3.2 Cập nhật prompt parser — `app/agents/nodes/parser.py`
 
-### 3.3 Client LLM cấu hình được — `app/agents/nodes/ranker.py` (hoặc helper riêng)
+- Thêm hướng dẫn trích certificates (tên + điểm/chi tiết + năm), languages (tên + trình độ), awards, và `other`.
+- **RÀNG BUỘC ƯU TIÊN (quan trọng — để `other` không thành thùng rác):** nêu rõ trong prompt thứ tự xếp thông tin:
+  1. LUÔN ưu tiên xếp vào đúng trường có cấu trúc (name, contact, skills, experiences, education, certificates,
+     languages, awards). 2) CHỈ cho vào `other` những khối KHÔNG thuộc bất kỳ trường nào ở trên. 3) TUYỆT ĐỐI
+     không đẩy chứng chỉ/ngôn ngữ/giải thưởng vào `other` — chúng đã có trường riêng.
+- GIỮ nguyên tắc: chỉ trích thông tin CÓ THẬT trong CV, KHÔNG bịa; thiếu → để [] / None.
+- KHÔNG làm giảm chất lượng trích các trường cũ (name/skills/experiences/education). Chỉ thêm, không phá.
 
-- `build_ranker_llm()`:
-  - Nếu `settings.RANKER_REASONING_EFFORT` rỗng → `ChatOpenAI(model=RANKER_MODEL, temperature=0)` (non-reasoning).
-  - Nếu có giá trị → `ChatOpenAI(model=RANKER_MODEL, reasoning_effort=settings.RANKER_REASONING_EFFORT)` — **KHÔNG
-    truyền temperature** (reasoning model bỏ qua/không nhận temperature).
-  - `.with_structured_output(RankResult)` cho cả hai.
-- Mục đích: đổi giữa reasoning/non-reasoning chỉ bằng .env, không sửa code — phục vụ benchmark mục 6.
+### 3.3 Confidence — GIỮ NGUYÊN
 
-### 3.4 Node `ranker` THẬT
+- Mẫu số confidence vẫn là 5 khối lõi cũ `{full_name, (email or phone), skills, experiences, education}`.
+- Các khối mới (certificates/languages/awards/`other`) KHÔNG vào công thức (là bổ sung, không phải lõi — CV không có chứng chỉ/other không phải parse kém).
 
-1. Lấy `parsed_data` + JD (rubric/requirements/description) theo `job_id`.
-2. **Tín hiệu embedding (phụ):** embed text CV (skills + experiences summary) → Qdrant search lọc
-   `{job_id, type:"jd"}` → `semantic_similarity` (cosine). Lỗi Qdrant → `None` + không sập.
-3. **Chấm rubric có suy luận (điểm chính):** `build_ranker_llm()`; prompt đưa CV + JD + rubric; chấm TỪNG tiêu
-   chí kèm lý do dựa trên bằng chứng CV, KHÔNG bịa, chỉ theo đúng tiêu chí rubric (không tự thêm).
-4. **confidence + uncertainty_flags (heuristic xác định, KHÔNG hỏi LLM tự chấm):**
-   - `near_threshold`: |overall_score − SCORE_PASS_THRESHOLD| < SCORE_NEAR_BAND.
-   - `weak_match`: similarity != None và < ngưỡng thấp (vd 0.2).
-   - `score_signal_mismatch`: rubric cao nhưng similarity rất thấp (hoặc ngược lại).
-   - confidence bắt đầu 1.0, giảm theo cờ; có cờ hoặc < CONFIDENCE_THRESHOLD → vào review.
-5. Lưu score/breakdown/similarity/confidence/flags vào state; ghi audit_log (node="ranker", score, confidence, flags).
-6. LLM try/except: lỗi → cờ + escalation_reason, KHÔNG sập. `ENABLE_LLM=false` → giữ stub.
+### 3.4 UI hiển thị — `components/ParsedCVResult.tsx` (nhẹ)
 
-### 3.5 `policy.should_review`
+- Thêm mục hiển thị certificates / languages / awards / `other` (label + content) NẾU có (rỗng thì ẩn, không vỡ layout).
+- Giữ style nhất quán; đây là component thuần presentational (không tự fetch).
 
-- Route `"review"` nếu `confidence < CONFIDENCE_THRESHOLD` HOẶC `uncertainty_flags` khác rỗng HOẶC `require_human_review`.
-- Graph: `parser → ranker → [should_review] → (screener[stub] | human_review[stub])`. Không đụng screener/scheduler.
+### 3.5 Fixture + test
 
-### 3.6 Endpoint `rank-test` — `app/api/routes/agents.py`
-
-- `POST /api/agents/rank-cv` (body `{application_id}` HOẶC `{parsed_data, job_id}`) → trả
-  `{score, score_breakdown, semantic_similarity, confidence, uncertainty_flags, model_used}`.
-  (Thêm `model_used` = RANKER_MODEL + reasoning_effort để phân biệt khi benchmark.)
-
-### 3.7 Dọn tồn dư 2a
-
-- `search-test`: lỗi Qdrant → mã lỗi có message rõ (đồng bộ embedding 502), không 500 chung chung.
-
-### 3.8 Test — `app/tests/test_ranker.py`
-
-- Mock LLM + mock embedding: CV khớp → điểm cao/flags rỗng/đi tiếp; sát ngưỡng → `near_threshold` → review;
-  rubric cao + sim thấp → `score_signal_mismatch` → review; lỗi LLM → cờ/không sập; lỗi Qdrant → sim=None + vẫn chấm.
-- Kiểm overall tính lại từ criteria×weight.
-- Kiểm `build_ranker_llm`: reasoning_effort rỗng → có temperature; có giá trị → có reasoning_effort, không temperature.
+- Thêm/cập nhật một fixture CV có chứng chỉ (vd TOEIC) + mục ngôn ngữ + một khối lạ (vd "Sở thích") để thử `other`.
+- Test (mock LLM): parse CV có chứng chỉ → `certificates` không rỗng, đúng tên+điểm; languages/awards đúng.
+- Test ƯU TIÊN: mock đầu ra sao cho chứng chỉ nằm ở `certificates` (KHÔNG ở `other`); khối lạ ("Sở thích") nằm ở `other`.
+- Test tương thích ngược: CV không có các khối → chúng = []; confidence KHÔNG đổi (vẫn theo 5 khối lõi).
 
 ---
 
-## 4. Verify chức năng (chạy thật, model bất kỳ trong hai ứng viên)
+## 4. Benchmark lại (Claude Code chạy, in kết quả cho người dùng chọn)
 
-1. `make dev-backend`. Có JD từ 2a (id=2). Chuẩn bị `parsed_data` (chạy `parse-cv` một CV backend, copy JSON).
-2. `POST /api/agents/rank-cv` (parsed_data + job_id=2) → điểm hợp lý, breakdown từng tiêu chí có lý do, similarity cao, confidence cao, flags rỗng.
-3. CV lệch ngành (kế toán) + job_id=2 → điểm thấp, sim thấp, cờ `weak_match`/`score_signal_mismatch` → review.
-4. CV tàm tạm → điểm quanh ngưỡng → cờ `near_threshold` → review.
-5. Pipeline đầy đủ (application kèm CV cho job_id=2) → parser thật → ranker thật → should_review route đúng; audit_log có dòng ranker.
-6. `make test` xanh. `search-test` lỗi Qdrant trả message rõ.
+> Giờ parser trích được TOEIC nên tiêu chí "Tiếng Anh" có bằng chứng — benchmark model mới công bằng.
 
----
-
-## 5. (đã gộp vào 6)
-
-## 6. BENCHMARK & CHỌN MODEL (reasoning vs non-reasoning) — mục bạn yêu cầu
-
-> Mục tiêu: quyết `RANKER_MODEL` dựa trên OUTPUT THẬT, không đoán. Chất lượng chấm là thứ hội đồng soi nhất.
-
-**Bộ CV cố định (3 cái, dùng chung cho cả hai model):**
-
-- CV-A: khớp tốt (CV backend cho JD backend id=2).
-- CV-B: lệch ngành (CV kế toán cho JD backend id=2).
-- CV-C: tàm tạm / quanh ngưỡng (CV có một phần kỹ năng khớp).
-
-**Hai cấu hình model (đổi bằng .env, không sửa code):**
-
-- M1 non-reasoning: `RANKER_MODEL=gpt-4.1`, `RANKER_REASONING_EFFORT=` (trống).
-- M2 reasoning: `RANKER_MODEL=gpt-5-mini`, `RANKER_REASONING_EFFORT=low`.
-
-**Quy trình (Claude Code chạy, in kết quả cho người dùng đọc):**
-
-1. Với MỖI model, chạy `rank-cv` trên CV-A, CV-B, CV-C.
-2. Chạy CV-A **hai lần** với mỗi model → kiểm tính nhất quán (điểm/breakdown có ổn định không).
-3. Ghi lại cho mỗi lần: `overall_score`, điểm+lý do từng tiêu chí, similarity, flags, và cảm nhận độ trễ.
-4. In **bảng so sánh song song**: hàng = CV-A/B/C (+ lần chạy lặp), cột = M1 vs M2 → mỗi ô: overall_score + tóm tắt breakdown.
-
-**Tiêu chí người dùng đánh giá để chọn:**
-
-- Điểm có hợp lý theo trực giác không (A cao, B thấp, C ở giữa)?
-- Lý do từng tiêu chí có sâu, đúng bằng chứng trong CV, thuyết phục không?
-- Nhất quán giữa 2 lần chạy CV-A (điểm không nhảy lung tung)?
-- Độ trễ/chi phí có chấp nhận được không (reasoning thường chậm hơn)?
-
-**Sau khi chọn:** đặt `RANKER_MODEL` (+ `RANKER_REASONING_EFFORT` nếu reasoning) vào `.env` + `.env.example`;
-ghi 1–2 dòng lý do chọn (dùng cho báo cáo Chương 4 — "vì sao chọn model này cho chấm điểm").
-
-> Lưu ý: `make test` mock LLM nên KHÔNG phụ thuộc model — benchmark là bước thủ công riêng, không nằm trong test tự động.
+1. Chạy `parse-cv` trên CV thật (có TOEIC) → **xác nhận** parsed_data giờ CHỨA certificates (TOEIC 945/990).
+2. Chạy end-to-end (parser thật → `rank-cv`) trên CV đó với JD id=2, cho CẢ HAI model, mỗi model 2 lần:
+   - M1 non-reasoning: `RANKER_MODEL=gpt-4.1`, `RANKER_REASONING_EFFORT=` (trống).
+   - M2 reasoning: `RANKER_MODEL=gpt-5-mini`, `RANKER_REASONING_EFFORT=low`.
+3. In **bảng so sánh song song**: overall + breakdown từng tiêu chí (đặc biệt tiêu chí Tiếng Anh — giờ phải phản ánh TOEIC) + similarity + flags + độ trễ + độ nhất quán 2 lần.
+4. So với benchmark cũ (CV khuyết TOEIC): chỉ ra English của cả hai model giờ thay đổi ra sao khi có bằng chứng.
+5. **Không tự chọn model** — trình bày để người dùng quyết. Sau khi chọn: ghi `RANKER_MODEL` (+ effort) vào `.env`/`.env.example` + 1–2 dòng lý do cho báo cáo Chương 4.
 
 ---
 
-## 7. Definition of Done
+## 5. Verify
 
-- [ ] `rank-cv` trả điểm + breakdown từng tiêu chí (lý do) + similarity + confidence + flags + `model_used`.
-- [ ] Điểm dựa trên rubric có suy luận; cosine KHÔNG vào điểm.
-- [ ] `build_ranker_llm` xử lý đúng: non-reasoning → temperature; reasoning → reasoning_effort (không temperature).
-- [ ] Cờ đúng (`near_threshold`/`weak_match`/`score_signal_mismatch`); should_review route theo confidence/flags thật.
-- [ ] State có score/score_breakdown/semantic_similarity; audit_log ghi dòng ranker.
-- [ ] Lỗi LLM/Qdrant không sập pipeline; `ENABLE_LLM=false` giữ stub.
-- [ ] **Benchmark M1 (gpt-4.1) vs M2 (gpt-5-mini) chạy xong, có bảng so sánh; RANKER_MODEL được chọn + ghi lý do.**
-- [ ] screener/scheduler/human_review KHÔNG bị đụng; KHÔNG gate; KHÔNG chunk JD.
-- [ ] `search-test` lỗi Qdrant có message rõ; `make test` xanh (mock).
+1. `make dev-backend`; `parse-cv` một CV có chứng chỉ → JSON có `certificates`/`languages`/`awards` đúng.
+2. CV không có ba khối → chúng = [], confidence không đổi.
+3. `/cv-check` (UI) hiển thị ba khối khi có, ẩn khi rỗng, layout không vỡ.
+4. `make test` xanh (gồm test mới + test cũ vẫn pass).
+5. Benchmark mục 4 chạy xong, có bảng so sánh trên CV có TOEIC.
 
 ---
 
-## 8. Ranh giới & quy ước (theo CLAUDE.md)
+## 6. Definition of Done
 
-- CHỈ động vào ranker + policy(routing) + rank-test + fix search-test. KHÔNG screener/scheduler/human_review logic, KHÔNG gate.
-- Async-first; cấu hình từ env (RANKER*MODEL, RANKER_REASONING_EFFORT, SCORE*\*); không hardcode.
-- Đơn giản trước: confidence/flags heuristic xác định; code tính lại overall; không thêm dep.
-- Embedding CHỈ tín hiệu phụ (similarity + cờ mismatch), KHÔNG vào điểm, KHÔNG chunk JD.
-- Đổi model chỉ qua env (build_ranker_llm) — đừng hardcode tham số riêng cho một model.
-- Commit nhỏ (vd `feat(ranker): RankResult + state`, `feat(ranker): build_ranker_llm (reasoning/non-reasoning) + node`, `feat(ranker): should_review + rank-test`, `fix(qdrant): search-test message`, `test(ranker): mocked`).
-- Nghiệp vụ chưa rõ → tra **PRD.md**. PRD chưa đủ → DỪNG, hỏi.
+- [ ] `ParsedCV` có `certificates`/`languages`/`awards`/`other` (mặc định []); parser trích đúng khi CV có.
+- [ ] ƯU TIÊN đúng: chứng chỉ/ngôn ngữ/giải thưởng vào trường riêng, KHÔNG lọt `other`; `other` chỉ hứng khối thật sự lạ.
+- [ ] Parser không bịa (thiếu → []); chất lượng trích các trường cũ không giảm.
+- [ ] Confidence GIỮ NGUYÊN công thức (5 khối lõi); các khối mới (gồm `other`) không vào mẫu số.
+- [ ] Không migration DB (JSONB); test cũ vẫn pass (tương thích ngược).
+- [ ] `ParsedCVResult` hiển thị ba khối mới khi có; `make test` xanh.
+- [ ] Benchmark lại trên CV có TOEIC xong, có bảng so sánh gpt-4.1 vs gpt-5-mini — chờ người dùng chọn.
+- [ ] `ranker` KHÔNG bị đụng logic; gate/screener/scheduler/human_review KHÔNG bị đụng.
+
+---
+
+## 7. Ranh giới & quy ước (theo CLAUDE.md)
+
+- CHỈ động vào: schema ParsedCV + prompt parser + ParsedCVResult (hiển thị) + fixture/test + chạy benchmark.
+- KHÔNG đụng ranker/policy/graph logic (ranker đã đúng — nó đọc toàn bộ parsed_data theo rubric; các trường mới tự thành bằng chứng khi tiêu chí cần). Lát này sửa DỮ LIỆU đầu vào, không sửa cách chấm.
+- Đơn giản trước: các khối giữ nhẹ; `other` là lưới an toàn có ràng buộc ưu tiên, KHÔNG phải thùng rác; không thêm dep.
+- Commit nhỏ (vd `feat(parser): thêm certificates/languages/awards/other vào ParsedCV + prompt (ưu tiên có cấu trúc)`, `feat(ui): hiển thị các khối mới`, `test(parser): fixture chứng chỉ + other + backward-compat`).
+- Nghiệp vụ chưa rõ → tra **PRD.md** §7.1. PRD chưa đủ → DỪNG, hỏi.
 - Kết thúc: in tóm tắt thay đổi, verify, bảng benchmark, checklist DoD.
-
----
-
-## 9. Lát kế tiếp (KHÔNG làm bây giờ)
-
-Gate rank (auto-từ-chối dùng score + gate_config, PRD §9), hoặc UI hiển thị điểm cho HR, rồi Screener async (PRD §10).
