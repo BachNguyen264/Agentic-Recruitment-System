@@ -157,6 +157,8 @@ async def test_embedding_error_similarity_none_still_scores(monkeypatch) -> None
 
 
 def test_build_ranker_chat_non_reasoning(monkeypatch) -> None:
+    # Pin model non-reasoning: nhánh effort rỗng phải truyền temperature=0.
+    monkeypatch.setattr(settings, "ranker_model", "gpt-4.1")
     monkeypatch.setattr(settings, "ranker_reasoning_effort", None)
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")
     chat = ranker.build_ranker_chat()
@@ -164,11 +166,13 @@ def test_build_ranker_chat_non_reasoning(monkeypatch) -> None:
 
 
 def test_build_ranker_chat_reasoning(monkeypatch) -> None:
+    # Pin model reasoning: nhánh có effort phải đặt reasoning_effort, KHÔNG temperature=0.
+    monkeypatch.setattr(settings, "ranker_model", "gpt-5-mini")
     monkeypatch.setattr(settings, "ranker_reasoning_effort", "low")
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")
     chat = ranker.build_ranker_chat()
     assert chat.reasoning_effort == "low"
-    assert chat.temperature != 0  # KHÔNG truyền temperature cho reasoning model
+    assert chat.temperature != 0  # reasoning model: temperature bị bỏ (None), không phải 0
 
 
 # ── node stub khi ENABLE_LLM=false ──────────────────────────────────────────

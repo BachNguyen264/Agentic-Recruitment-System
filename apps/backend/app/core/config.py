@@ -43,10 +43,11 @@ class Settings(BaseSettings):
     embedding_dim: int = 1536
 
     # ── Ranker (slice-02b — PRD §7.2 chấm rubric có suy luận) ─────────
-    # Model CHỌN SAU BENCHMARK (plan §6). RANKER_REASONING_EFFORT rỗng → non-reasoning
-    # (temperature=0); có giá trị (low/medium/high) → reasoning (KHÔNG truyền temperature).
-    ranker_model: str = "gpt-4.1"
-    ranker_reasoning_effort: str | None = None
+    # ĐÃ CHỌN qua benchmark (slice 01c): gpt-5-mini + reasoning_effort=low — chấm bám BẰNG CHỨNG,
+    # nhất quán trên dữ liệu sạch (vd điểm Tiếng Anh khớp TOEIC thay vì suy diễn). RANKER_REASONING_EFFORT
+    # rỗng → non-reasoning (temperature=0); có giá trị (low/medium/high) → reasoning (KHÔNG truyền temperature).
+    ranker_model: str = "gpt-5-mini"
+    ranker_reasoning_effort: str | None = "low"
     # Ngưỡng điểm đạt (0..100) + dải "sát ngưỡng" cho cờ near_threshold. PRD §8.3, §18.
     score_pass_threshold: float = 60.0
     score_near_band: float = 10.0
