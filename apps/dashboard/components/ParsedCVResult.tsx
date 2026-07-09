@@ -73,7 +73,8 @@ export function ParsedCVResult({
               "Có thể là ảnh scan hoặc định dạng không hỗ trợ — chưa trích được văn bản."}
           </p>
         </div>
-      ) : parsed_data == null ? (
+      ) : parsed_data == null || Object.keys(parsed_data).length === 0 ? (
+        // parsed_data có thể là {} (row scaffold/legacy chưa qua parser) — coi như chưa có dữ liệu.
         <p className="text-sm text-slate-500">Không có dữ liệu bóc tách.</p>
       ) : (
         <div className="space-y-4">
@@ -106,8 +107,8 @@ export function ParsedCVResult({
             </div>
           )}
 
-          {/* Kỹ năng */}
-          {parsed_data.skills.length > 0 && (
+          {/* Kỹ năng (?? [] — JSONB có thể thiếu trường ở row cũ/partial) */}
+          {(parsed_data.skills ?? []).length > 0 && (
             <div className="space-y-1.5">
               <h3 className="text-sm font-semibold text-slate-700">
                 Kỹ năng ({parsed_data.skills.length})
@@ -121,7 +122,7 @@ export function ParsedCVResult({
           )}
 
           {/* Kinh nghiệm */}
-          {parsed_data.experiences.length > 0 && (
+          {(parsed_data.experiences ?? []).length > 0 && (
             <div className="space-y-2">
               <h3 className="text-sm font-semibold text-slate-700">
                 Kinh nghiệm ({parsed_data.experiences.length})
@@ -153,7 +154,7 @@ export function ParsedCVResult({
           )}
 
           {/* Học vấn */}
-          {parsed_data.education.length > 0 && (
+          {(parsed_data.education ?? []).length > 0 && (
             <div className="space-y-2">
               <h3 className="text-sm font-semibold text-slate-700">
                 Học vấn ({parsed_data.education.length})
