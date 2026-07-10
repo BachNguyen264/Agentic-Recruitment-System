@@ -13,8 +13,6 @@ export interface HealthStatus {
   };
 }
 
-export type PipelineBranch = "auto" | "human_review";
-
 // Trạng thái CV — khớp state machine PRD §13.
 export type ApplicationStatus =
   | "SUBMITTED"
@@ -27,24 +25,6 @@ export type ApplicationStatus =
   | "PENDING_REVIEW"
   | "INTERVIEW_SCHEDULED"
   | "REJECTED";
-
-export interface AgentTraceStep {
-  node: string;
-  status: string | null;
-  confidence: number | null;
-  uncertainty_flags: string[];
-  require_human_review: boolean;
-}
-
-export interface RunDemoResponse {
-  branch: PipelineBranch;
-  final_status: string;
-  confidence: number | null;
-  require_human_review: boolean;
-  escalation_reason: string | null;
-  trace: AgentTraceStep[];
-  messages: string[];
-}
 
 export interface Application {
   id: number;

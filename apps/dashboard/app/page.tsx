@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { AgentTracePanel } from "@/components/AgentTracePanel";
 import { ServiceStatus } from "@/components/ServiceStatus";
 
 export default function Home() {
@@ -23,7 +22,6 @@ export default function Home() {
       </header>
 
       <ServiceStatus />
-      <AgentTracePanel />
 
       <footer className="border-t border-slate-200 pt-4 text-xs text-slate-400">
         Placeholder giai đoạn scaffold — node agent là stub, chưa có logic nghiệp vụ thật.

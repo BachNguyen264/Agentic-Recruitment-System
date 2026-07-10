@@ -55,7 +55,7 @@ Bất biến FR-GATE-2: ca bất định LUÔN vào `human_review`, bất kể g
 
 - `RecruitmentState`: `confidence`, `uncertainty_flags`, `escalation_reason`, `require_human_review`,
   `score`, `score_breakdown`, `semantic_similarity`, `awaiting_screener`, `screener_answers`.
-- `policy.should_review()` route theo giá trị thật; `run-demo` chạy **cả 2 nhánh**.
+- `policy.should_review()` route theo giá trị thật; test `test_graph` phủ **cả 2 nhánh** (`force_review`).
 - `audit_log` đủ cột (node, action, confidence, uncertainty_flags, escalation_reason, detail) — PRD §16.
 
 ## TODO trỏ PRD (lát sau)

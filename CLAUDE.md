@@ -45,9 +45,10 @@ Kiến trúc đã chốt: **pipeline cố định, KHÔNG Supervisor** — có c
 | `human_review` | ⛔ STUB     | set require_human_review + reason — ReviewCard là lát sau (PRD §11)                 |
 
 Đã THẬT thêm: quản lý JD + embedding vào Qdrant (`text-embedding-3-small`, 1536 chiều); dashboard **PWA** +
-trang `/cv-check`. **CHƯA làm:** 2 gate (§9), Screener async (§10), ReviewCard (§11), email/Calendar, vòng học.
+trang `/cv-check` + màn ứng viên `/applications` (danh sách + chi tiết điểm, **chỉ đọc**). **CHƯA làm:** 2 gate
+(§9), Screener async (§10), ReviewCard (§11), email/Calendar, vòng học.
 
-`ENABLE_LLM=true` bật parser+ranker THẬT; `false` → giữ stub (cho `test_graph`/`run-demo`).
+`ENABLE_LLM=true` bật parser+ranker THẬT; `false` → giữ stub (cho `test_graph`).
 
 ---
 

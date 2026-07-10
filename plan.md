@@ -1,12 +1,9 @@
-# SLICE 01c — Bổ sung certificates/languages/awards/other cho Parser + benchmark lại · plan one-shot
+# SLICE 03a — Màn HR: danh sách ứng viên + chi tiết điểm (chỉ đọc) · plan one-shot
 
-> **Bản chất:** plan ONE-SHOT, lát nhỏ sửa lỗi dữ liệu. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Bối cảnh:** benchmark end-to-end lộ ra parser bỏ sót chứng chỉ (TOEIC 945/990) vì schema `ParsedCV`
-> thiếu trường certificates → ranker chấm tiêu chí "Tiếng Anh" trên dữ liệu khuyết → benchmark model bị méo.
-> **Mục tiêu:** thêm `certificates`, `languages`, `awards` (có cấu trúc) + `other` (lưới an toàn hứng khối
-> lạ) vào ParsedCV; parser trích được chúng — ƯU TIÊN trường có cấu trúc, `other` chỉ hứng phần còn lại; rồi
-> **benchmark lại** (gpt-4.1 vs gpt-5-mini) end-to-end trên CV thật CÓ TOEIC để chọn model trên dữ liệu sạch.
-> Tham chiếu: PRD §7.1 (Parser). Tuân thủ `CLAUDE.md`. LLM parser: gpt-4.1-mini (giữ nguyên, không đổi).
+> **Bản chất:** plan ONE-SHOT cho một lát UI (chủ yếu frontend). Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
+> **Mục tiêu:** làm pipeline HỮU HÌNH — HR thấy danh sách ứng viên kèm điểm + trạng thái, và màn chi tiết hiện
+> breakdown điểm (tái dùng `ParsedCVResult` + thêm phần điểm). CHỈ ĐỌC, chưa có duyệt/từ chối (lát human_review sau).
+> Tham chiếu: PRD §11 (breakdown điểm), §13 (trạng thái/ba rổ), §14 (web HR). Tuân thủ `CLAUDE.md` + skill frontend-design.
 
 ---
 
@@ -14,115 +11,118 @@
 
 **In scope:**
 
-- Mở rộng schema `ParsedCV`: `certificates`, `languages`, `awards` (có cấu trúc) + `other` (lưới an toàn), mặc định [].
-- Cập nhật prompt parser để trích các khối này (chỉ khi CÓ, KHÔNG bịa) — ƯU TIÊN xếp vào trường có cấu trúc, chỉ cái không thuộc trường nào mới cho vào `other`.
-- Cập nhật `ParsedCVResult` (UI slice 01b) hiển thị các khối mới (gồm `other`) nếu có (nhẹ).
-- Fixture có chứng chỉ + test (mock LLM).
-- **Benchmark lại** end-to-end trên CV thật có TOEIC → in bảng so sánh 2 model → chờ người dùng chọn.
+- Backend (TỐI THIỂU): đảm bảo endpoint list + detail trả đủ trường cần (score/status/flags…); CHỈ thêm nếu thiếu.
+- shared-types: kiểu `Application` (list + detail) + `ScoreBreakdown`.
+- Component `ScoreBreakdown` (thuần presentational, tái dùng sau ở ReviewCard).
+- Trang danh sách ứng viên (`/applications`) + bộ lọc theo ba rổ trạng thái (đang xử lý / chờ HR / passed / rejected).
+- Trang chi tiết ứng viên (`/applications/[id]`): thông tin + `ParsedCVResult` + `ScoreBreakdown` + ngữ cảnh JD (tiêu chí rubric).
+- Link điều hướng từ trang chủ tới `/applications`.
 
-**Out of scope (KHÔNG làm):**
+**Out of scope (KHÔNG làm ở lát này):**
 
-- KHÔNG đụng logic `ranker` — ranker đã đúng: nó ĐỌC TOÀN BỘ parsed_data theo dẫn dắt của rubric, nên các trường
-  mới (certificates/languages/awards/other) TỰ ĐỘNG thành bằng chứng khi một tiêu chí rubric cần. Lát này chỉ sửa _dữ liệu đầu vào_.
-- KHÔNG đổi công thức confidence (các khối mới GỒM `other` KHÔNG vào mẫu số — xem 3.3).
-- KHÔNG migration DB (parsed_data là JSONB, thêm trường không cần Alembic).
-- KHÔNG đụng gate/screener/scheduler/human_review; KHÔNG đổi model parser.
+- KHÔNG có duyệt/từ chối (mutation) — đó là lát human_review kế tiếp.
+- KHÔNG gate, KHÔNG đụng logic agent/pipeline/policy.
+- KHÔNG hiển thị timeline agent-trace/audit chi tiết (có thể thêm sau; lát này tập trung danh sách + điểm).
+- KHÔNG thêm thư viện UI mới ngoài shadcn/ui đã có.
 
 ---
 
 ## 2. Prerequisites
 
-- Không thêm dependency. `.env` giữ nguyên (parser dùng gpt-4.1-mini như slice 01).
-- Có CV thật của bạn (có TOEIC) để benchmark — cung cấp lại file cho Claude Code nếu cần.
+- Có dữ liệu để xem: vài application đã chạy parser+ranker (upload CV cho job_id=2). Nếu DB trống → tạo vài cái trước khi verify.
+- `NEXT_PUBLIC_API_URL` đã có. Lệnh Node chạy PowerShell.
 
 ---
 
 ## 3. Việc cần làm
 
-### 3.1 Mở rộng schema — `app/schemas/parsed_cv.py`
+### 3.1 Backend — kiểm tra trước, chỉ sửa nếu thiếu (sửa có phẫu thuật)
 
-Thêm (giữ NHẸ, mặc định [] để tương thích ngược):
+- **ĐỌC** `app/api/routes/applications.py` + schema hiện có. Xác nhận:
+  - `GET /api/applications` (list) trả mỗi item gồm: `id, applicant_email, job_id, status, score, confidence,
+uncertainty_flags, created_at`. (KHÔNG cần trả `parsed_data` đầy đủ trong list — giữ nhẹ.) Thiếu trường nào → thêm vào response schema.
+  - `GET /api/applications/{id}` (detail) trả đầy đủ: `parsed_data, score, score_breakdown, semantic_similarity,
+confidence, uncertainty_flags, status, job_id, applicant_email, created_at`. Thiếu → thêm.
+- Lọc theo trạng thái: làm **client-side** (frontend lọc theo rổ) để khỏi đụng backend. (Tùy chọn: thêm `?status=` nếu muốn, không bắt buộc.)
+- KHÔNG đụng logic tạo/chấm; chỉ đảm bảo READ trả đủ.
 
-- `certificates: list[Certificate]` — `Certificate = {name: str, detail: str | None, year: str | None}`
-  (detail = điểm/cấp độ, vd "945/990"; ví dụ: name="TOEIC", detail="945/990", year="2023").
-- `languages: list[Language]` — `Language = {name: str, proficiency: str | None}`
-  (vd name="English", proficiency="Professional working").
-- `awards: list[str]` — mỗi phần tử một mô tả ngắn.
-- `other: list[OtherItem]` — LƯỚI AN TOÀN cho khối CV không thuộc trường nào. `OtherItem = {label: str, content: str}`
-  (vd label="Sở thích", content="đọc sách, cờ vua"; label="Người tham chiếu", content="..."). Mục đích: KHÔNG mất
-  thông tin CV. KHÔNG phải thùng rác — xem ràng buộc ưu tiên ở 3.2.
+### 3.2 shared-types — `packages/shared-types/src/index.ts`
 
-### 3.2 Cập nhật prompt parser — `app/agents/nodes/parser.py`
+- `ApplicationListItem = {id, applicant_email, job_id, status, score, confidence, uncertainty_flags, created_at}`.
+- `ApplicationDetail` = list item + `parsed_data (ParsedCV), score_breakdown, semantic_similarity`.
+- `ScoreBreakdownData = {overall_score, criteria: [{criterion, weight, score, reasoning}], semantic_similarity, confidence, uncertainty_flags}`.
 
-- Thêm hướng dẫn trích certificates (tên + điểm/chi tiết + năm), languages (tên + trình độ), awards, và `other`.
-- **RÀNG BUỘC ƯU TIÊN (quan trọng — để `other` không thành thùng rác):** nêu rõ trong prompt thứ tự xếp thông tin:
-  1. LUÔN ưu tiên xếp vào đúng trường có cấu trúc (name, contact, skills, experiences, education, certificates,
-     languages, awards). 2) CHỈ cho vào `other` những khối KHÔNG thuộc bất kỳ trường nào ở trên. 3) TUYỆT ĐỐI
-     không đẩy chứng chỉ/ngôn ngữ/giải thưởng vào `other` — chúng đã có trường riêng.
-- GIỮ nguyên tắc: chỉ trích thông tin CÓ THẬT trong CV, KHÔNG bịa; thiếu → để [] / None.
-- KHÔNG làm giảm chất lượng trích các trường cũ (name/skills/experiences/education). Chỉ thêm, không phá.
+### 3.3 `lib/api.ts`
 
-### 3.3 Confidence — GIỮ NGUYÊN
+- `getApplications(): Promise<ApplicationListItem[]>` → GET /api/applications.
+- `getApplication(id): Promise<ApplicationDetail>` → GET /api/applications/{id}.
+- `getJob(id)` → GET /api/jobs/{id} (để hiển thị tiêu đề JD + rubric ở trang chi tiết).
 
-- Mẫu số confidence vẫn là 5 khối lõi cũ `{full_name, (email or phone), skills, experiences, education}`.
-- Các khối mới (certificates/languages/awards/`other`) KHÔNG vào công thức (là bổ sung, không phải lõi — CV không có chứng chỉ/other không phải parse kém).
+### 3.4 Component `ScoreBreakdown` — `components/ScoreBreakdown.tsx`
 
-### 3.4 UI hiển thị — `components/ParsedCVResult.tsx` (nhẹ)
+- **Thuần presentational** (nhận prop `ScoreBreakdownData`), để TÁI DÙNG ở ReviewCard (lát human_review sau).
+- Hiển thị: `overall_score` nổi bật; mỗi tiêu chí một dòng (tên + trọng số + điểm + lý do); `semantic_similarity`
+  (nhãn "độ tương đồng ngữ nghĩa — tham khảo, không tính điểm"); `confidence`; `uncertainty_flags` dạng badge
+  (vd `score_signal_mismatch` → badge cảnh báo). Dùng shadcn (Card/Badge/Progress…).
 
-- Thêm mục hiển thị certificates / languages / awards / `other` (label + content) NẾU có (rỗng thì ẩn, không vỡ layout).
-- Giữ style nhất quán; đây là component thuần presentational (không tự fetch).
+### 3.5 Trang danh sách — `app/applications/page.tsx`
 
-### 3.5 Fixture + test
+- Bảng/list ứng viên: applicant_email, JD (job_id — hoặc tiêu đề nếu tiện), score, status (badge màu theo rổ),
+  flags, created_at. Bấm dòng → sang chi tiết.
+- **Bộ lọc theo ba rổ (PRD §13):** tab/filter: Tất cả / Đang xử lý (SUBMITTED,PARSING,RANKING,SCREENING,AWAITING_SCREENER,SCHEDULING)
+  / Chờ HR (PENDING_REVIEW) / Passed (INTERVIEW_SCHEDULED) / Rejected (REJECTED). Map status→rổ ở frontend.
+- Dùng TanStack Query `getApplications`. Loading/empty/error state gọn.
 
-- Thêm/cập nhật một fixture CV có chứng chỉ (vd TOEIC) + mục ngôn ngữ + một khối lạ (vd "Sở thích") để thử `other`.
-- Test (mock LLM): parse CV có chứng chỉ → `certificates` không rỗng, đúng tên+điểm; languages/awards đúng.
-- Test ƯU TIÊN: mock đầu ra sao cho chứng chỉ nằm ở `certificates` (KHÔNG ở `other`); khối lạ ("Sở thích") nằm ở `other`.
-- Test tương thích ngược: CV không có các khối → chúng = []; confidence KHÔNG đổi (vẫn theo 5 khối lõi).
+### 3.6 Trang chi tiết — `app/applications/[id]/page.tsx`
 
----
+- Header: applicant_email + status badge + JD (tiêu đề, lấy qua `getJob`).
+- `ParsedCVResult` (tái dùng, hiển thị parsed_data — gồm certificates/languages/awards/other đã có từ 01c).
+- `ScoreBreakdown` (điểm + từng tiêu chí + lý do + similarity + confidence + flags).
+- (Tùy chọn nhẹ) hiển thị rubric của JD cạnh breakdown để thấy "chấm theo tiêu chí nào".
+- Loading/error state gọn.
 
-## 4. Benchmark lại (Claude Code chạy, in kết quả cho người dùng chọn)
+### 3.7 Điều hướng
 
-> Giờ parser trích được TOEIC nên tiêu chí "Tiếng Anh" có bằng chứng — benchmark model mới công bằng.
-
-1. Chạy `parse-cv` trên CV thật (có TOEIC) → **xác nhận** parsed_data giờ CHỨA certificates (TOEIC 945/990).
-2. Chạy end-to-end (parser thật → `rank-cv`) trên CV đó với JD id=2, cho CẢ HAI model, mỗi model 2 lần:
-   - M1 non-reasoning: `RANKER_MODEL=gpt-4.1`, `RANKER_REASONING_EFFORT=` (trống).
-   - M2 reasoning: `RANKER_MODEL=gpt-5-mini`, `RANKER_REASONING_EFFORT=low`.
-3. In **bảng so sánh song song**: overall + breakdown từng tiêu chí (đặc biệt tiêu chí Tiếng Anh — giờ phải phản ánh TOEIC) + similarity + flags + độ trễ + độ nhất quán 2 lần.
-4. So với benchmark cũ (CV khuyết TOEIC): chỉ ra English của cả hai model giờ thay đổi ra sao khi có bằng chứng.
-5. **Không tự chọn model** — trình bày để người dùng quyết. Sau khi chọn: ghi `RANKER_MODEL` (+ effort) vào `.env`/`.env.example` + 1–2 dòng lý do cho báo cáo Chương 4.
+- Thêm link tới `/applications` từ trang chủ (giữ trang chủ nguyên trạng: ServiceStatus + demo). Đơn giản.
 
 ---
 
-## 5. Verify
+## 4. Verify (chạy thật)
 
-1. `make dev-backend`; `parse-cv` một CV có chứng chỉ → JSON có `certificates`/`languages`/`awards` đúng.
-2. CV không có ba khối → chúng = [], confidence không đổi.
-3. `/cv-check` (UI) hiển thị ba khối khi có, ẩn khi rỗng, layout không vỡ.
-4. `make test` xanh (gồm test mới + test cũ vẫn pass).
-5. Benchmark mục 4 chạy xong, có bảng so sánh trên CV có TOEIC.
-
----
-
-## 6. Definition of Done
-
-- [ ] `ParsedCV` có `certificates`/`languages`/`awards`/`other` (mặc định []); parser trích đúng khi CV có.
-- [ ] ƯU TIÊN đúng: chứng chỉ/ngôn ngữ/giải thưởng vào trường riêng, KHÔNG lọt `other`; `other` chỉ hứng khối thật sự lạ.
-- [ ] Parser không bịa (thiếu → []); chất lượng trích các trường cũ không giảm.
-- [ ] Confidence GIỮ NGUYÊN công thức (5 khối lõi); các khối mới (gồm `other`) không vào mẫu số.
-- [ ] Không migration DB (JSONB); test cũ vẫn pass (tương thích ngược).
-- [ ] `ParsedCVResult` hiển thị ba khối mới khi có; `make test` xanh.
-- [ ] Benchmark lại trên CV có TOEIC xong, có bảng so sánh gpt-4.1 vs gpt-5-mini — chờ người dùng chọn.
-- [ ] `ranker` KHÔNG bị đụng logic; gate/screener/scheduler/human_review KHÔNG bị đụng.
+1. Đảm bảo có dữ liệu: upload 2–3 CV cho job_id=2 (một khớp, một lệch ngành) → chúng chạy parser+ranker.
+2. `make dev-backend` + `make dev-dashboard`; mở `/applications` → thấy danh sách kèm score + status + flags.
+3. Bấm bộ lọc: "Chờ HR" hiện đúng các PENDING_REVIEW; "Passed" hiện INTERVIEW_SCHEDULED; v.v.
+4. Bấm một ứng viên → chi tiết: thông tin + parsed_data (ParsedCVResult) + breakdown điểm từng tiêu chí (có lý do) + similarity + confidence + flags + tiêu đề JD.
+5. Ứng viên có cờ `score_signal_mismatch` → badge cảnh báo hiện rõ ở breakdown.
+6. `pnpm --filter dashboard build` PASS.
 
 ---
 
-## 7. Ranh giới & quy ước (theo CLAUDE.md)
+## 5. Definition of Done
 
-- CHỈ động vào: schema ParsedCV + prompt parser + ParsedCVResult (hiển thị) + fixture/test + chạy benchmark.
-- KHÔNG đụng ranker/policy/graph logic (ranker đã đúng — nó đọc toàn bộ parsed_data theo rubric; các trường mới tự thành bằng chứng khi tiêu chí cần). Lát này sửa DỮ LIỆU đầu vào, không sửa cách chấm.
-- Đơn giản trước: các khối giữ nhẹ; `other` là lưới an toàn có ràng buộc ưu tiên, KHÔNG phải thùng rác; không thêm dep.
-- Commit nhỏ (vd `feat(parser): thêm certificates/languages/awards/other vào ParsedCV + prompt (ưu tiên có cấu trúc)`, `feat(ui): hiển thị các khối mới`, `test(parser): fixture chứng chỉ + other + backward-compat`).
-- Nghiệp vụ chưa rõ → tra **PRD.md** §7.1. PRD chưa đủ → DỪNG, hỏi.
-- Kết thúc: in tóm tắt thay đổi, verify, bảng benchmark, checklist DoD.
+- [ ] `GET /api/applications` + `/{id}` trả đủ trường (score/status/flags/breakdown…); chỉ thêm nếu thiếu, không refactor.
+- [ ] `/applications` hiển thị danh sách ứng viên kèm điểm + trạng thái; bộ lọc ba rổ (PRD §13) hoạt động.
+- [ ] `/applications/[id]` hiển thị parsed_data (ParsedCVResult tái dùng) + ScoreBreakdown (từng tiêu chí + lý do) + JD.
+- [ ] `ScoreBreakdown` là component thuần presentational (nhận prop), tái dùng được.
+- [ ] similarity hiển thị kèm nhãn "tham khảo, không tính điểm"; flags hiển thị dạng badge.
+- [ ] KHÔNG có mutation (duyệt/từ chối); KHÔNG đụng agent/pipeline/gate.
+- [ ] Không thêm thư viện UI ngoài shadcn; `pnpm build` PASS.
+
+---
+
+## 6. Ranh giới & quy ước (theo CLAUDE.md + frontend-design)
+
+- CHỈ động vào: read endpoints (nếu thiếu trường) + shared-types + lib/api + ScoreBreakdown + 2 trang + link. KHÔNG đụng logic agent/policy/gate.
+- Backend: sửa có phẫu thuật — ĐỌC trước, chỉ thêm trường response còn thiếu, không đổi logic tạo/chấm.
+- Component tách bạch, thuần presentational (ScoreBreakdown, và ParsedCVResult đã có) để tái dùng ở human_review.
+- Style nhất quán với /cv-check + ServiceStatus; sạch, đủ dùng, không polish quá mức; đừng đẻ tính năng ngoài mục 3.
+- Commit nhỏ (vd `feat(api): list/detail trả đủ score+status (nếu thiếu)`, `feat(ui): ScoreBreakdown + shared-types`, `feat(ui): trang /applications danh sách + lọc`, `feat(ui): trang chi tiết ứng viên`).
+- Nghiệp vụ/hiển thị chưa rõ → tra **PRD.md** (§11, §13, §14). PRD chưa đủ → DỪNG, hỏi.
+- Kết thúc: in tóm tắt thay đổi, lệnh verify, checklist DoD.
+
+---
+
+## 7. Lát kế tiếp (KHÔNG làm bây giờ)
+
+**human_review THẬT:** ReviewCard (tái dùng ScoreBreakdown + tóm tắt + lý do leo thang) + nút Duyệt/Từ chối →
+delegate scheduler (PRD §11). Đây là lát biến điểm đến "human_review" từ stub thành khâu thật. Rồi tới gate rank (§9).
