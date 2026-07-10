@@ -1,4 +1,4 @@
-"""Routes agent — run-demo + parse-cv (Parser đồng bộ) + rank-cv (Ranker đồng bộ, benchmark)."""
+"""Routes agent — parse-cv (Parser đồng bộ) + rank-cv (Ranker đồng bộ, benchmark)."""
 
 from __future__ import annotations
 
@@ -11,31 +11,13 @@ from fastapi.concurrency import run_in_threadpool
 
 from app.agents.nodes.parser import parse_cv
 from app.agents.nodes.ranker import rank_cv
-from app.agents.runner import run_with_trace
 from app.api.deps import DBSession
 from app.models.application import Application
-from app.schemas.agent import AgentTraceStep, ParseCVResponse, RunDemoRequest, RunDemoResponse
+from app.schemas.agent import ParseCVResponse
 from app.schemas.rank import RankCvRequest, RankCvResponse
 from app.services import job_service
 
 router = APIRouter(prefix="/agents", tags=["agents"])
-
-
-@router.post("/run-demo", response_model=RunDemoResponse, summary="Chạy pipeline demo (ép nhánh được)")
-async def run_demo(payload: RunDemoRequest) -> RunDemoResponse:
-    out = await run_with_trace(
-        force_review=payload.force_review, applicant_email=payload.applicant_email
-    )
-    final = out["final"]
-    return RunDemoResponse(
-        branch=out["branch"],
-        final_status=final.get("status", "UNKNOWN"),
-        confidence=final.get("confidence"),
-        require_human_review=bool(final.get("require_human_review", False)),
-        escalation_reason=final.get("escalation_reason"),
-        trace=[AgentTraceStep(**step) for step in out["trace"]],
-        messages=final.get("messages", []),
-    )
 
 
 @router.post("/parse-cv", response_model=ParseCVResponse, summary="Parse CV đồng bộ (iterate chất lượng)")

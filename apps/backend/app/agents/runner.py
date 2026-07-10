@@ -1,6 +1,6 @@
-"""runner — chạy pipeline và thu thập trace (dùng chung cho API run-demo và tests).
+"""runner — chạy pipeline và thu thập trace (dùng chung cho background task và tests).
 
-Tách khỏi route để test gọi trực tiếp không cần HTTP.
+Tách khỏi route để test/background gọi trực tiếp không cần HTTP.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ async def run_with_trace(*, force_review: bool = False, applicant_email: str | N
                          application_id: int | None = None,
                          cv_path: str | None = None,
                          jd: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Chạy bất đồng bộ, thu trace từng node (cho API run-demo + background)."""
+    """Chạy bất đồng bộ, thu trace từng node (cho background task xử lý mỗi CV)."""
     config = _thread_config()
     state = initial_state(
         force_review=force_review, applicant_email=applicant_email,
