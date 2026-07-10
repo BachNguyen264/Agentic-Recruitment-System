@@ -3,24 +3,11 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import type { ApplicationDetail, JobPosting, ScoreBreakdownData } from "@ars/shared-types";
+import type { ApplicationDetail, JobPosting } from "@ars/shared-types";
 import { ParsedCVResult } from "@/components/ParsedCVResult";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { getApplication, getJob } from "@/lib/api";
-import { statusBadgeClass, statusLabel } from "@/lib/applications";
-
-// Gộp các trường của ApplicationDetail thành prop cho ScoreBreakdown (semantic_similarity nằm
-// trong score_breakdown; overall = score cột riêng).
-function toBreakdown(app: ApplicationDetail): ScoreBreakdownData {
-  return {
-    overall_score: app.score,
-    criteria: app.score_breakdown?.criteria ?? [],
-    semantic_similarity: app.score_breakdown?.semantic_similarity ?? null,
-    confidence: app.confidence,
-    uncertainty_flags: app.uncertainty_flags ?? [],
-    summary: app.score_breakdown?.summary ?? null,
-  };
-}
+import { statusBadgeClass, statusLabel, toBreakdown } from "@/lib/applications";
 
 export default function ApplicationDetailPage() {
   const params = useParams<{ id: string }>();

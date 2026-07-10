@@ -71,11 +71,23 @@ export interface ScoreBreakdownRaw {
   semantic_similarity: number | null;
 }
 
-// Chi tiết: list item + parsed_data + breakdown. escalation_reason kèm để hiển thị lý do leo thang.
+// Gợi ý hiển thị cho ReviewCard (PRD §11) — dẫn xuất từ score+flags, KHÔNG tự quyết. Khớp backend.
+export type Recommendation = "invite" | "consider_reject" | "review_carefully";
+
+// Chi tiết: list item + parsed_data + breakdown. escalation_reason + recommendation cho ReviewCard.
 export interface ApplicationDetail extends ApplicationListItem {
   parsed_data: ParsedCV | null;
   score_breakdown: ScoreBreakdownRaw;
   escalation_reason: string | null;
+  recommendation: Recommendation;
+}
+
+// human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.
+export type ReviewDecision = "approve" | "reject";
+
+export interface ReviewRequest {
+  decision: ReviewDecision;
+  note?: string | null;
 }
 
 // Prop cho component ScoreBreakdown (thuần presentational — tái dùng ở ReviewCard, lát human_review).

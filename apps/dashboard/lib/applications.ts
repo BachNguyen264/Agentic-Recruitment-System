@@ -1,4 +1,21 @@
-import type { ApplicationStatus } from "@ars/shared-types";
+import type {
+  ApplicationDetail,
+  ApplicationStatus,
+  ScoreBreakdownData,
+} from "@ars/shared-types";
+
+// Gộp các trường ApplicationDetail thành prop cho ScoreBreakdown (semantic_similarity nằm trong
+// score_breakdown; overall = cột score). Dùng chung: trang chi tiết + ReviewCard.
+export function toBreakdown(app: ApplicationDetail): ScoreBreakdownData {
+  return {
+    overall_score: app.score,
+    criteria: app.score_breakdown?.criteria ?? [],
+    semantic_similarity: app.score_breakdown?.semantic_similarity ?? null,
+    confidence: app.confidence,
+    uncertainty_flags: app.uncertainty_flags ?? [],
+    summary: app.score_breakdown?.summary ?? null,
+  };
+}
 
 // Ba rổ dashboard (PRD §13): đang xử lý / chờ HR / kết thúc (passed | rejected).
 // "passed" & "rejected" tách riêng cho bộ lọc (plan §3.5) dù PRD gộp chung rổ "kết thúc".

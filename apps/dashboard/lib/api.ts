@@ -3,6 +3,7 @@ import type {
   ApplicationListItem,
   JobPosting,
   ParseCvResponse,
+  ReviewDecision,
 } from "@ars/shared-types";
 
 // Base URL backend — đọc từ env (NEXT_PUBLIC_API_BASE), mặc định localhost:8000.
@@ -33,6 +34,10 @@ export const getApplication = (id: number) =>
 
 // JD của ứng viên (tiêu đề + rubric) để hiển thị ngữ cảnh chấm điểm ở trang chi tiết.
 export const getJob = (id: number) => getJson<JobPosting>(`/api/jobs/${id}`);
+
+// MUTATION human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.
+export const submitReview = (id: number, decision: ReviewDecision, note: string | null) =>
+  postJson<ApplicationDetail>(`/api/applications/${id}/review`, { decision, note });
 
 // Upload CV -> POST /api/agents/parse-cv (multipart). KHÔNG tự set Content-Type:
 // để browser tự thêm boundary cho FormData.
