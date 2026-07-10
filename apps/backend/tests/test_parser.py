@@ -144,8 +144,9 @@ def test_extract_text_short_raises(tmp_path: Path) -> None:
 # ── parser_node: stub khi ENABLE_LLM=false; thật khi bật + có cv_path ───────────
 
 
-def test_parser_node_stub_when_llm_disabled() -> None:
-    # Mặc định enable_llm=False -> giữ stub (không phá flow cũ).
+def test_parser_node_stub_when_llm_disabled(monkeypatch) -> None:
+    # Ép enable_llm=False (độc lập .env) -> giữ stub (không phá flow cũ).
+    monkeypatch.setattr(settings, "enable_llm", False)
     out = parser_node({"input": {"cv_path": str(FIXTURES / "good_cv.docx")}, "scratchpad": {}})
     assert out["confidence"] == 1.0
     assert "[parser] stub" in out["messages"][0]

@@ -178,8 +178,9 @@ def test_build_ranker_chat_reasoning(monkeypatch) -> None:
 # ── node stub khi ENABLE_LLM=false ──────────────────────────────────────────
 
 
-async def test_ranker_node_stub_when_llm_disabled() -> None:
-    # Mặc định enable_llm=False → giữ stub cũ (test_graph không vỡ).
+async def test_ranker_node_stub_when_llm_disabled(monkeypatch) -> None:
+    # Ép enable_llm=False (độc lập .env) → giữ stub cũ (test_graph không vỡ).
+    monkeypatch.setattr(settings, "enable_llm", False)
     out = await ranker.ranker_node({"input": {"jd": _JD}, "parsed_data": _PARSED, "scratchpad": {}})
     assert out["confidence"] == 1.0
     assert "[ranker] stub" in out["messages"][0]
