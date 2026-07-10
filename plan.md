@@ -1,9 +1,9 @@
-# SLICE 03a — Màn HR: danh sách ứng viên + chi tiết điểm (chỉ đọc) · plan one-shot
+# SLICE — Dọn dẹp: xóa data demo + gỡ Run demo · plan one-shot
 
-> **Bản chất:** plan ONE-SHOT cho một lát UI (chủ yếu frontend). Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Mục tiêu:** làm pipeline HỮU HÌNH — HR thấy danh sách ứng viên kèm điểm + trạng thái, và màn chi tiết hiện
-> breakdown điểm (tái dùng `ParsedCVResult` + thêm phần điểm). CHỈ ĐỌC, chưa có duyệt/từ chối (lát human_review sau).
-> Tham chiếu: PRD §11 (breakdown điểm), §13 (trạng thái/ba rổ), §14 (web HR). Tuân thủ `CLAUDE.md` + skill frontend-design.
+> **Bản chất:** plan ONE-SHOT dọn dẹp. Xong thì bỏ. Nguồn chân lý: **`PRD.md`**.
+> **Mục tiêu:** (1) xóa dữ liệu demo/test còn sót trong Neon để danh sách ứng viên sạch; (2) gỡ tính năng
+> "Run demo" (nút + endpoint) giờ đã thừa, vì luồng thật (upload CV → parser+ranker → /applications) đã thay thế.
+> Tuân thủ `CLAUDE.md`.
 
 ---
 
@@ -11,118 +11,69 @@
 
 **In scope:**
 
-- Backend (TỐI THIỂU): đảm bảo endpoint list + detail trả đủ trường cần (score/status/flags…); CHỈ thêm nếu thiếu.
-- shared-types: kiểu `Application` (list + detail) + `ScoreBreakdown`.
-- Component `ScoreBreakdown` (thuần presentational, tái dùng sau ở ReviewCard).
-- Trang danh sách ứng viên (`/applications`) + bộ lọc theo ba rổ trạng thái (đang xử lý / chờ HR / passed / rejected).
-- Trang chi tiết ứng viên (`/applications/[id]`): thông tin + `ParsedCVResult` + `ScoreBreakdown` + ngữ cảnh JD (tiêu chí rubric).
-- Link điều hướng từ trang chủ tới `/applications`.
+- Xóa dữ liệu demo/test trong Neon (application, job_posting test, audit_log).
+- Gỡ Run demo GỌN CẢ HAI ĐẦU: frontend `AgentTracePanel` + backend endpoint `run-demo` (+ schema demo nếu có).
 
-**Out of scope (KHÔNG làm ở lát này):**
+**Out of scope (KHÔNG đụng — GIỮ LẠI):**
 
-- KHÔNG có duyệt/từ chối (mutation) — đó là lát human_review kế tiếp.
-- KHÔNG gate, KHÔNG đụng logic agent/pipeline/policy.
-- KHÔNG hiển thị timeline agent-trace/audit chi tiết (có thể thêm sau; lát này tập trung danh sách + điểm).
-- KHÔNG thêm thư viện UI mới ngoài shadcn/ui đã có.
+- GIỮ `ServiceStatus` ở trang chủ (khác Run demo; vẫn hữu ích xem hạ tầng sống).
+- GIỮ `agent_graph`, `should_review`, các node (parser/ranker/…), endpoint `parse-cv`, `rank-cv` — hạ tầng thật.
+- KHÔNG đụng logic agent/pipeline/policy; KHÔNG xóa schema/bảng DB (chỉ xóa DỮ LIỆU, không đổi cấu trúc).
+- KHÔNG xóa dữ liệu JD "thật" nếu bạn muốn giữ để test tiếp (xem mục 2 — hỏi trước nếu không chắc).
 
 ---
 
-## 2. Prerequisites
+## 2. Xóa dữ liệu demo (Neon)
 
-- Có dữ liệu để xem: vài application đã chạy parser+ranker (upload CV cho job_id=2). Nếu DB trống → tạo vài cái trước khi verify.
-- `NEXT_PUBLIC_API_URL` đã có. Lệnh Node chạy PowerShell.
+- Xác định phạm vi xóa: các application + audit_log từ bước verify. Với job_posting: giữ hay xóa tùy — nếu bạn
+  còn dùng JD id=2 (Backend Intern) để test lát sau thì GIỮ; chỉ xóa JD test/rác (vd row legacy id=1, JD "Kế toán" nếu không cần).
+- **QUAN TRỌNG:** nếu xóa job_posting, phải dọn kèm **vector JD trong Qdrant** (điểm có payload `{job_id}` tương ứng)
+  để Qdrant không còn vector mồ côi. Nếu chỉ xóa DB mà để vector lại → lệch dữ liệu.
+- Cách làm: viết một script nhỏ (`scripts/reset_demo_data.py`) xóa có kiểm soát (theo id hoặc theo điều kiện),
+  HOẶC dùng Neon SQL editor xóa tay. Ưu tiên script để lặp lại được + kèm bước xóa vector Qdrant tương ứng.
+- Nếu KHÔNG chắc row nào nên giữ/xóa → DỪNG, liệt kê cho người dùng xác nhận trước khi xóa.
 
----
+## 3. Gỡ Run demo
 
-## 3. Việc cần làm
+**Frontend:**
 
-### 3.1 Backend — kiểm tra trước, chỉ sửa nếu thiếu (sửa có phẫu thuật)
+- Xóa `components/AgentTracePanel.tsx` và mọi chỗ import/dùng nó (chủ yếu trang chủ `app/page.tsx`).
+- Xóa hàm gọi `run-demo` trong `lib/api.ts` (nếu có) + kiểu liên quan trong `shared-types` (nếu chỉ dùng cho demo).
+- Trang chủ sau khi gỡ: GIỮ `ServiceStatus`; bố cục còn lại gọn gàng, không để khoảng trống vỡ.
 
-- **ĐỌC** `app/api/routes/applications.py` + schema hiện có. Xác nhận:
-  - `GET /api/applications` (list) trả mỗi item gồm: `id, applicant_email, job_id, status, score, confidence,
-uncertainty_flags, created_at`. (KHÔNG cần trả `parsed_data` đầy đủ trong list — giữ nhẹ.) Thiếu trường nào → thêm vào response schema.
-  - `GET /api/applications/{id}` (detail) trả đầy đủ: `parsed_data, score, score_breakdown, semantic_similarity,
-confidence, uncertainty_flags, status, job_id, applicant_email, created_at`. Thiếu → thêm.
-- Lọc theo trạng thái: làm **client-side** (frontend lọc theo rổ) để khỏi đụng backend. (Tùy chọn: thêm `?status=` nếu muốn, không bắt buộc.)
-- KHÔNG đụng logic tạo/chấm; chỉ đảm bảo READ trả đủ.
+**Backend:**
 
-### 3.2 shared-types — `packages/shared-types/src/index.ts`
+- Xóa endpoint `POST /api/agents/run-demo` trong `app/api/routes/agents.py` + schema demo riêng (nếu có, vd trong `schemas/agent.py`).
+- GIỮ `parse-cv`, `rank-cv` và mọi thứ khác trong file.
+- Dọn import thừa do việc xóa tạo ra (chỉ phần mình xóa).
 
-- `ApplicationListItem = {id, applicant_email, job_id, status, score, confidence, uncertainty_flags, created_at}`.
-- `ApplicationDetail` = list item + `parsed_data (ParsedCV), score_breakdown, semantic_similarity`.
-- `ScoreBreakdownData = {overall_score, criteria: [{criterion, weight, score, reasoning}], semantic_similarity, confidence, uncertainty_flags}`.
+**Test:**
 
-### 3.3 `lib/api.ts`
-
-- `getApplications(): Promise<ApplicationListItem[]>` → GET /api/applications.
-- `getApplication(id): Promise<ApplicationDetail>` → GET /api/applications/{id}.
-- `getJob(id)` → GET /api/jobs/{id} (để hiển thị tiêu đề JD + rubric ở trang chi tiết).
-
-### 3.4 Component `ScoreBreakdown` — `components/ScoreBreakdown.tsx`
-
-- **Thuần presentational** (nhận prop `ScoreBreakdownData`), để TÁI DÙNG ở ReviewCard (lát human_review sau).
-- Hiển thị: `overall_score` nổi bật; mỗi tiêu chí một dòng (tên + trọng số + điểm + lý do); `semantic_similarity`
-  (nhãn "độ tương đồng ngữ nghĩa — tham khảo, không tính điểm"); `confidence`; `uncertainty_flags` dạng badge
-  (vd `score_signal_mismatch` → badge cảnh báo). Dùng shadcn (Card/Badge/Progress…).
-
-### 3.5 Trang danh sách — `app/applications/page.tsx`
-
-- Bảng/list ứng viên: applicant_email, JD (job_id — hoặc tiêu đề nếu tiện), score, status (badge màu theo rổ),
-  flags, created_at. Bấm dòng → sang chi tiết.
-- **Bộ lọc theo ba rổ (PRD §13):** tab/filter: Tất cả / Đang xử lý (SUBMITTED,PARSING,RANKING,SCREENING,AWAITING_SCREENER,SCHEDULING)
-  / Chờ HR (PENDING_REVIEW) / Passed (INTERVIEW_SCHEDULED) / Rejected (REJECTED). Map status→rổ ở frontend.
-- Dùng TanStack Query `getApplications`. Loading/empty/error state gọn.
-
-### 3.6 Trang chi tiết — `app/applications/[id]/page.tsx`
-
-- Header: applicant_email + status badge + JD (tiêu đề, lấy qua `getJob`).
-- `ParsedCVResult` (tái dùng, hiển thị parsed_data — gồm certificates/languages/awards/other đã có từ 01c).
-- `ScoreBreakdown` (điểm + từng tiêu chí + lý do + similarity + confidence + flags).
-- (Tùy chọn nhẹ) hiển thị rubric của JD cạnh breakdown để thấy "chấm theo tiêu chí nào".
-- Loading/error state gọn.
-
-### 3.7 Điều hướng
-
-- Thêm link tới `/applications` từ trang chủ (giữ trang chủ nguyên trạng: ServiceStatus + demo). Đơn giản.
+- Xóa/không còn test cho run-demo (vd trong `test_graph.py` nếu có test gọi run-demo endpoint). GIỮ test compile graph +
+  test parser/ranker. `make test` phải vẫn xanh sau khi gỡ.
 
 ---
 
-## 4. Verify (chạy thật)
+## 4. Verify
 
-1. Đảm bảo có dữ liệu: upload 2–3 CV cho job_id=2 (một khớp, một lệch ngành) → chúng chạy parser+ranker.
-2. `make dev-backend` + `make dev-dashboard`; mở `/applications` → thấy danh sách kèm score + status + flags.
-3. Bấm bộ lọc: "Chờ HR" hiện đúng các PENDING_REVIEW; "Passed" hiện INTERVIEW_SCHEDULED; v.v.
-4. Bấm một ứng viên → chi tiết: thông tin + parsed_data (ParsedCVResult) + breakdown điểm từng tiêu chí (có lý do) + similarity + confidence + flags + tiêu đề JD.
-5. Ứng viên có cờ `score_signal_mismatch` → badge cảnh báo hiện rõ ở breakdown.
-6. `pnpm --filter dashboard build` PASS.
-
----
+1. `make dev-backend` + `make dev-dashboard`; trang chủ hiện `ServiceStatus` (3 dịch vụ xanh), KHÔNG còn Run demo, bố cục không vỡ.
+2. `GET /docs`: KHÔNG còn `run-demo`; `parse-cv` + `rank-cv` vẫn còn.
+3. `/applications`: danh sách sạch (không còn data demo/test rác).
+4. Nếu giữ JD id=2: `search-test`/rank vẫn chạy (JD + vector còn nguyên).
+5. `make test` xanh; `pnpm --filter dashboard build` PASS.
 
 ## 5. Definition of Done
 
-- [ ] `GET /api/applications` + `/{id}` trả đủ trường (score/status/flags/breakdown…); chỉ thêm nếu thiếu, không refactor.
-- [ ] `/applications` hiển thị danh sách ứng viên kèm điểm + trạng thái; bộ lọc ba rổ (PRD §13) hoạt động.
-- [ ] `/applications/[id]` hiển thị parsed_data (ParsedCVResult tái dùng) + ScoreBreakdown (từng tiêu chí + lý do) + JD.
-- [ ] `ScoreBreakdown` là component thuần presentational (nhận prop), tái dùng được.
-- [ ] similarity hiển thị kèm nhãn "tham khảo, không tính điểm"; flags hiển thị dạng badge.
-- [ ] KHÔNG có mutation (duyệt/từ chối); KHÔNG đụng agent/pipeline/gate.
-- [ ] Không thêm thư viện UI ngoài shadcn; `pnpm build` PASS.
+- [ ] Data demo/test đã xóa trong Neon; nếu xóa JD thì vector Qdrant tương ứng cũng đã xóa (không mồ côi).
+- [ ] `AgentTracePanel` + endpoint `run-demo` (+ schema demo) đã gỡ gọn cả hai đầu.
+- [ ] `ServiceStatus`, `agent_graph`, các node, `parse-cv`, `rank-cv` GIỮ NGUYÊN.
+- [ ] Trang chủ không vỡ bố cục; `/docs` không còn run-demo; `/applications` sạch.
+- [ ] `make test` xanh; `pnpm build` PASS; không đụng schema/bảng DB (chỉ xóa dữ liệu).
 
----
+## 6. Ranh giới & quy ước (theo CLAUDE.md)
 
-## 6. Ranh giới & quy ước (theo CLAUDE.md + frontend-design)
-
-- CHỈ động vào: read endpoints (nếu thiếu trường) + shared-types + lib/api + ScoreBreakdown + 2 trang + link. KHÔNG đụng logic agent/policy/gate.
-- Backend: sửa có phẫu thuật — ĐỌC trước, chỉ thêm trường response còn thiếu, không đổi logic tạo/chấm.
-- Component tách bạch, thuần presentational (ScoreBreakdown, và ParsedCVResult đã có) để tái dùng ở human_review.
-- Style nhất quán với /cv-check + ServiceStatus; sạch, đủ dùng, không polish quá mức; đừng đẻ tính năng ngoài mục 3.
-- Commit nhỏ (vd `feat(api): list/detail trả đủ score+status (nếu thiếu)`, `feat(ui): ScoreBreakdown + shared-types`, `feat(ui): trang /applications danh sách + lọc`, `feat(ui): trang chi tiết ứng viên`).
-- Nghiệp vụ/hiển thị chưa rõ → tra **PRD.md** (§11, §13, §14). PRD chưa đủ → DỪNG, hỏi.
-- Kết thúc: in tóm tắt thay đổi, lệnh verify, checklist DoD.
-
----
-
-## 7. Lát kế tiếp (KHÔNG làm bây giờ)
-
-**human_review THẬT:** ReviewCard (tái dùng ScoreBreakdown + tóm tắt + lý do leo thang) + nút Duyệt/Từ chối →
-delegate scheduler (PRD §11). Đây là lát biến điểm đến "human_review" từ stub thành khâu thật. Rồi tới gate rank (§9).
+- CHỈ xóa data + gỡ Run demo (nút + endpoint + schema/test của riêng nó). KHÔNG đụng hạ tầng thật hay logic agent.
+- Xóa có phẫu thuật: chỉ dọn import/kiểu do việc xóa tạo ra; không refactor lan man.
+- Nếu không chắc row DB nào nên giữ → DỪNG, hỏi trước khi xóa.
+- Commit nhỏ (vd `chore(db): script reset_demo_data + dọn data test (kèm vector Qdrant)`, `chore(ui): gỡ AgentTracePanel khỏi trang chủ`, `chore(api): gỡ endpoint run-demo`).
+- Kết thúc: in tóm tắt thay đổi + xác nhận DoD.
