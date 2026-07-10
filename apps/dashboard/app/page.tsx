@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ReviewNavLink } from "@/components/ReviewNavLink";
 import { ServiceStatus } from "@/components/ServiceStatus";
 
 export default function Home() {
@@ -15,6 +16,7 @@ export default function Home() {
           <Link href="/applications" className="text-slate-700 underline hover:text-slate-900">
             → Danh sách ứng viên
           </Link>
+          <ReviewNavLink />
           <Link href="/cv-check" className="text-slate-700 underline hover:text-slate-900">
             → Kiểm tra bóc tách CV
           </Link>
