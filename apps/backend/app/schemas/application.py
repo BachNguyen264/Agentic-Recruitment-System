@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field
+
+from app.services.review import recommendation as _recommendation
 
 
 class ApplicationCreate(BaseModel):
@@ -13,6 +16,13 @@ class ApplicationCreate(BaseModel):
     job_id: int | None = None
     applicant_email: EmailStr
     cv_file_ref: str | None = None
+
+
+class ReviewRequest(BaseModel):
+    """HR quyết định một ca PENDING_REVIEW (PRD §11 FR-HR-4)."""
+
+    decision: Literal["approve", "reject"]
+    note: str | None = None
 
 
 class ApplicationRead(BaseModel):
@@ -35,3 +45,8 @@ class ApplicationRead(BaseModel):
     screener_deadline: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    @computed_field  # gợi ý hiển thị cho ReviewCard (PRD §11) — dẫn xuất, KHÔNG tự quyết.
+    @property
+    def recommendation(self) -> str:
+        return _recommendation(self.score, self.uncertainty_flags)

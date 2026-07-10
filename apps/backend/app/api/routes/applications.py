@@ -12,8 +12,9 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Uploa
 from pydantic import ValidationError
 
 from app.api.deps import DBSession
-from app.schemas.application import ApplicationCreate, ApplicationRead
+from app.schemas.application import ApplicationCreate, ApplicationRead, ReviewRequest
 from app.services import application_service
+from app.services import review as review_service
 from app.tasks.background import process_application
 from app.tools import cv_storage
 
@@ -60,4 +61,24 @@ async def get_application(application_id: int, session: DBSession) -> Applicatio
     app_row = await application_service.get_application(session, application_id)
     if app_row is None:
         raise HTTPException(status_code=404, detail="Application không tồn tại")
+    return ApplicationRead.model_validate(app_row)
+
+
+@router.post(
+    "/{application_id}/review",
+    response_model=ApplicationRead,
+    summary="HR duyệt/từ chối ca PENDING_REVIEW (PRD §11)",
+)
+async def review_application(
+    application_id: int, payload: ReviewRequest, session: DBSession
+) -> ApplicationRead:
+    """MUTATION: chỉ ca PENDING_REVIEW mới quyết được (else 409). Delegate scheduler (stub log)."""
+    try:
+        app_row = await review_service.review_decision(
+            session, application_id, payload.decision, payload.note
+        )
+    except review_service.ApplicationNotFound:
+        raise HTTPException(status_code=404, detail="Application không tồn tại") from None
+    except review_service.InvalidReviewState as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     return ApplicationRead.model_validate(app_row)
