@@ -98,10 +98,12 @@ async def update_job(
     await session.refresh(job)
 
     if new_text == old_text:
-        return job, None  # văn bản embed KHÔNG đổi → bỏ qua re-embed
+        logger.info("update JD id=%s: văn bản embed KHÔNG đổi → BỎ QUA re-embed", job.id)
+        return job, None  # chỉ rubric/gate/screener đổi → không tốn API embedding
 
     warning: str | None = None
     try:
+        logger.info("update JD id=%s: title/description/requirements đổi → re-embed", job.id)
         vector = await embed_text(new_text)
         job.embedding_ref = await qdrant_service.upsert_jd(job.id, vector, title=job.title)
         await session.commit()

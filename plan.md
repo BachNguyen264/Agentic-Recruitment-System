@@ -1,14 +1,11 @@
-# SLICE 03c — Gate rank (auto-từ-chối, cấu hình theo JD) · plan one-shot
+# SLICE 05 — UI quản lý JD (tạo/sửa/đóng) + toggle gate · plan one-shot
 
 > **Bản chất:** plan ONE-SHOT. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Mục tiêu:** thêm cổng auto-từ-chối SAU ranker — khi HR bật gate cho một JD, ca điểm thấp RÕ RÀNG (tự tin,
-> không cờ bất định) tự động bị từ chối + gửi thư từ chối THẬT (qua scheduler); khi tắt, mọi từ chối vẫn qua
-> human_review. Ca BẤT ĐỊNH luôn về human_review bất kể gate. Hoàn thiện Giai đoạn 1 (vòng lặp HITL cốt lõi).
-> Tham chiếu: PRD §9 (hai gate + FR-GATE), §8.3 (định tuyến sau ranker), §13 (trạng thái). Tuân thủ `CLAUDE.md`.
+> **Mục tiêu:** HR quản lý tin tuyển dụng (JD) qua giao diện web — tạo, xem danh sách, sửa, đóng/mở — thay cho
+> gọi API tay. Toggle gate auto-reject (hoãn từ 03c) nằm trong form này. Mở đường cho lát 07 (nộp CV công khai).
+> Tham chiếu: PRD §12.1 (FR-HR-JD), §9 (gate_config), §7.2 (rubric). Tuân thủ `CLAUDE.md` + skill frontend-design.
 >
-> **Quyết định phạm vi:** CHỈ auto-từ-chối (sau ranker). KHÔNG làm auto-mời (sau screener — lát 08d). Cấu hình
-> **theo từng JD** (`gate_config` đã có trên JD từ 02a — không đổi schema). **UI toggle HOÃN** (đi kèm UI quản lý
-> JD, lát 05); lát này bật/tắt qua API. Backend-only.
+> **Rubric = HR NHẬP TAY** (LLM gợi ý rubric ở §17 — KHÔNG làm ở đây). Bắt đầu GĐ2.
 
 ---
 
@@ -16,109 +13,115 @@
 
 **In scope:**
 
-- Định tuyến sau ranker có ý thức về gate: uncertain → human_review (LUÔN); confident + điểm thấp → (gate ON) auto-reject / (OFF) human_review; confident + đạt → tiếp tục (giữ nguyên).
-- Nhánh/logic auto-reject: delegate `scheduler.notify_decision(reject)` (gửi thư từ chối THẬT) → REJECTED → audit. Chạy trong pipeline (async), KHÔNG cần HR.
-- Endpoint nhỏ bật/tắt `gate_config` trên JD có sẵn (phục vụ test/dùng thật qua API).
-- Test (mock scheduler/email) + verify thật (gửi thư từ chối tự động tới email của bạn).
+- Backend (bổ sung, có phẫu thuật): sửa JD (`PUT/PATCH /api/jobs/{id}`) — **re-embed CHỈ khi title/description/
+  requirements đổi**; đóng/mở JD (status). (Tạo/đọc/gate đã có từ 02a/03c — tái dùng.)
+- Trang danh sách JD (`/jobs`).
+- Form JD dùng chung cho TẠO + SỬA: title, description, requirements (danh sách động), rubric (danh sách động
+  {tiêu chí, trọng số} + hiển thị tổng trọng số), screener_questions (danh sách động), gate_config (toggle auto_reject).
+- Toggle gate (nợ từ 03c) đặt trong form.
 
 **Out of scope (KHÔNG làm):**
 
-- KHÔNG auto-mời (gate sau screener — lát 08d). KHÔNG đụng nhánh "đạt → tiếp tục".
-- KHÔNG UI toggle (hoãn tới UI quản lý JD, lát 05). KHÔNG đổi schema (gate_config đã có).
-- KHÔNG đụng logic chấm điểm của ranker; KHÔNG build screener; KHÔNG checkpointer.
-- KHÔNG auto-reject ca bất định (an toàn — xem quy tắc §3.1).
+- KHÔNG nộp CV công khai (lát 07). KHÔNG object storage (lát 06). KHÔNG LLM gợi ý rubric (§17).
+- KHÔNG re-chấm điểm các application cũ khi sửa rubric (chỉ ảnh hưởng application MỚI — ghi chú §3.1).
+- KHÔNG đụng pipeline/agents/ranker logic. KHÔNG auto-invite UI (gate mời — lát sau).
+- KHÔNG thêm thư viện UI ngoài shadcn.
 
 ---
 
 ## 2. Prerequisites
 
-- Lát 04 xong (scheduler gửi email thật) — auto-reject sẽ tái dùng scheduler để gửi thư từ chối thật.
-- `SCORE_PASS_THRESHOLD`, `CONFIDENCE_THRESHOLD` đã có. `gate_config` (`auto_reject`, `auto_invite`) đã có trên JD.
-- Có JD (id=2) để test. Có email của bạn để nhận thư từ chối tự động khi verify.
+- Endpoint đã có: `POST /api/jobs` (tạo + embed), `GET /api/jobs` (list), `GET /api/jobs/{id}`, `PATCH /api/jobs/{id}/gate`.
+- Dịch vụ có sẵn: `embedding_service`, `qdrant_service` (upsert). shadcn/ui, TanStack Query, lib/api.ts. Node chạy PowerShell.
 
 ---
 
 ## 3. Việc cần làm
 
-### 3.1 Định tuyến có gate sau ranker — `app/agents/policy.py` (+ graph)
+### 3.1 Backend — sửa JD + đóng/mở · `app/api/routes/jobs.py` + `job_service.py`
 
-Thay quyết định 2 nhánh hiện tại bằng quyết định 3 nhánh, **theo đúng thứ tự ưu tiên (an toàn trước)**:
+- `PUT /api/jobs/{id}` (hoặc PATCH) nhận các trường JD (title, description, requirements, rubric, screener_questions, gate_config):
+  - Cập nhật DB.
+  - **Re-embed CÓ ĐIỀU KIỆN:** nếu title/description/requirements THAY ĐỔI → `build_jd_text` → `embed_text` →
+    `qdrant.upsert_jd` (ghi đè vector cùng job_id). Nếu CHỈ rubric/screener_questions/gate_config đổi → KHÔNG re-embed.
+    (So sánh giá trị cũ/mới để quyết định; tránh gọi embedding thừa.)
+  - Lỗi embedding không làm sập cập nhật (giữ pattern 02a: cập nhật DB vẫn xong + cảnh báo).
+- Đóng/mở JD: `PATCH /api/jobs/{id}/status` (hoặc field `status` trong PUT) — vd `OPEN`/`CLOSED`. JD `CLOSED` sẽ
+  không nhận CV mới (dùng ở lát 07). Không xóa JD.
+- **Ghi chú (không code):** sửa rubric CHỈ ảnh hưởng application chấm SAU đó; application cũ giữ điểm cũ (không tự re-chấm).
 
-1. **Uncertain trước hết** — nếu `confidence < CONFIDENCE_THRESHOLD` HOẶC `uncertainty_flags` khác rỗng HOẶC
-   `require_human_review` → **`human_review`**. (Gate KHÔNG được xét ở đây — ca không chắc LUÔN về người, dù gate bật.)
-2. **Nếu confident (không rơi vào (1))**:
-   - `score >= SCORE_PASS_THRESHOLD` → **`continue`** (đạt ngưỡng — giữ nguyên luồng hiện tại, KHÔNG đụng).
-   - `score < SCORE_PASS_THRESHOLD` (từ chối rõ ràng, confident):
-     - JD.`gate_config.auto_reject == True` → **`auto_reject`**.
-     - ngược lại → **`human_review`**.
+### 3.2 shared-types · `packages/shared-types`
 
-- Hàm đọc `gate_config` của JD theo `job_id`. Log/ghi rõ nhánh đã chọn + lý do (score, gate) để audit.
-- **Mặc định gate TẮT** → hành vi mặc định KHÔNG đổi so với hiện tại (mọi điểm thấp vẫn về human_review).
+- `JobPosting` (read: id, title, description, requirements[], rubric[{criterion,weight}], screener_questions[],
+  gate_config{auto_reject,auto_invite}, status, created_at); `JobPostingInput` (create/edit payload).
 
-> Lưu ý precedence (quan trọng): ca điểm thấp NHƯNG có cờ (`score_signal_mismatch`…) là _uncertain_ → về
-> human_review dù gate bật. CHỈ ca điểm thấp SẠCH (confident, không cờ) mới được auto-reject.
+### 3.3 `lib/api.ts`
 
-### 3.2 Nhánh auto-reject — node/logic
+- `getJobs()`, `getJob(id)`, `createJob(input)`, `updateJob(id, input)`, `setJobStatus(id, status)`,
+  `toggleGate(id, {auto_reject})` (đã có PATCH /gate — tái dùng, hoặc gộp vào updateJob). Chọn một, ưu tiên gọn.
 
-- Khi route = `auto_reject`: delegate `scheduler.notify_decision(mode="reject")` (điểm phát email DUY NHẤT →
-  gửi thư từ chối THẬT) → set status `REJECTED` → ghi audit_log (node="gate", action="auto_reject" +
-  scheduler "email_sent:reject"). Chạy đồng bộ trong pipeline (async task), KHÔNG có HR, KHÔNG suspend.
-- Lỗi gửi email nuốt có kiểm soát (như lát 04): trạng thái REJECTED vẫn giữ, audit email_failed.
+### 3.4 Trang danh sách JD · `app/jobs/page.tsx`
 
-### 3.3 Endpoint bật/tắt gate — `app/api/routes/jobs.py`
+- Bảng JD: tiêu đề, trạng thái (OPEN/CLOSED badge), số tiêu chí rubric, gate auto_reject (bật/tắt badge), ngày tạo.
+- Nút "Tạo JD mới" → form tạo. Bấm dòng → form sửa. Nút đóng/mở JD (đổi status).
+- TanStack Query; loading/empty/error gọn.
 
-- `PATCH /api/jobs/{id}/gate` (hoặc PUT) body `{auto_reject: bool}` (và có thể `auto_invite` để dành) → cập nhật
-  `gate_config` của JD. Trả JD đã cập nhật. (Phục vụ bật/tắt nhanh; UI đầy đủ ở lát 05.)
+### 3.5 Form JD (dùng chung TẠO + SỬA) · `components/JobForm.tsx` (+ trang tạo/sửa)
 
-### 3.4 Test — `app/tests/test_gate_rank.py` (mock scheduler/email)
+- Trường: title (text), description (textarea), requirements (**danh sách động**: thêm/bớt dòng text).
+- **rubric (danh sách động, phần khó nhất):** mỗi dòng = {tiêu chí (text) + trọng số (số 0..1)} + nút xóa; nút thêm dòng.
+  - Hiển thị **TỔNG trọng số** đang chạy + gợi ý "nên bằng 1.0". Validate MỀM: cảnh báo nếu tổng lệch 1.0 nhiều
+    (không chặn cứng — backend/ranker vốn tính lại điểm theo trọng số; ưu tiên hướng dẫn HR đặt tổng ≈ 1).
+- screener_questions (**danh sách động**: thêm/bớt dòng text) — ghi chú nhỏ "dùng cho vòng Screener (kích hoạt sau)".
+- **gate (nợ từ 03c):** toggle `auto_reject` (mặc định TẮT) + ghi chú ngắn "tự động từ chối ca điểm thấp rõ ràng;
+  ca bất định vẫn về HR". Có thể hiện toggle `auto_invite` nhưng disable + nhãn "dùng cho vòng Screener — sẽ bật sau".
+- Nút Lưu: TẠO → `createJob`; SỬA → `updateJob`. Sau lưu → invalidate query + quay lại danh sách. Chống double-submit.
+- Chế độ SỬA: nạp giá trị JD hiện tại vào form.
 
-- Gate ON + điểm thấp SẠCH (confident, không cờ) → route `auto_reject`; scheduler.notify_decision(reject) được gọi; status REJECTED.
-- Gate OFF + điểm thấp → route `human_review` (như cũ), KHÔNG gọi scheduler.
-- Uncertain (có cờ) + gate ON → route `human_review` (gate no-op — an toàn), KHÔNG auto-reject.
-- Confident + đạt ngưỡng → route `continue` (không đổi).
-- PATCH gate cập nhật gate_config đúng.
+### 3.6 Điều hướng
+
+- Link `/jobs` từ nav/trang chủ.
 
 ---
 
-## 4. Verify (chạy thật — auto-reject gửi thư từ chối THẬT tới email của bạn)
+## 4. Verify (chạy thật)
 
-1. `make dev-backend`. Bật gate cho JD #2: `PATCH /api/jobs/2/gate {auto_reject: true}`.
-2. Tạo application với `applicant_email` = **email của bạn**, upload CV lệch ngành RÕ (vd kế toán) cho JD #2
-   → pipeline chạy: ranker điểm thấp, confident, không cờ → **auto-reject tự động** → status REJECTED, KHÔNG cần vào /review.
-3. Kiểm **hòm thư**: nhận thư từ chối THẬT — do hệ thống tự gửi, không có thao tác HR. Audit có dòng gate/auto_reject + email_sent:reject.
-4. Tắt gate: `PATCH /api/jobs/2/gate {auto_reject: false}`. Lặp lại với CV lệch ngành → lần này vào `/review` (PENDING_REVIEW), KHÔNG tự từ chối.
-5. Ca có cờ (vd CV cho điểm 39 + `score_signal_mismatch`) với gate BẬT → vẫn vào `/review` (an toàn), KHÔNG auto-reject.
-6. Ca đạt ngưỡng (CV backend khớp) → tiếp tục như cũ (không bị gate đụng).
-7. `make test` xanh (mock).
+1. `make dev-backend` + `make dev-dashboard`; mở `/jobs`.
+2. **Tạo JD mới** qua form: điền title/description, thêm vài requirements, thêm rubric 3–4 tiêu chí (tổng trọng số ≈ 1), vài câu screener, gate auto_reject TẮT → Lưu → JD xuất hiện trong danh sách; backend embed (kiểm `search-test` khớp JD mới).
+3. **Sửa mô tả** JD đó → Lưu → backend RE-EMBED (log/kiểm search-test phản ánh nội dung mới).
+4. **Sửa CHỈ rubric/gate** (không đụng mô tả) → Lưu → KHÔNG re-embed (không gọi embedding thừa).
+5. **Bật gate auto_reject** trong form → Lưu → `GET /api/jobs/{id}` thấy `gate_config.auto_reject=true` (khớp hành vi 03c).
+6. **Đóng JD** → status CLOSED (badge đổi); mở lại → OPEN.
+7. Danh sách động: thêm/bớt dòng rubric + requirements hoạt động; tổng trọng số hiển thị đúng.
+8. `pnpm --filter dashboard build` PASS; `make test` xanh (nếu có test backend cho edit/status).
 
 ---
 
 ## 5. Definition of Done
 
-- [ ] Định tuyến sau ranker 3 nhánh đúng thứ tự: uncertain→human_review (luôn); confident+thấp→(ON)auto_reject/(OFF)human_review; confident+đạt→continue.
-- [ ] Auto-reject delegate scheduler → thư từ chối THẬT gửi đi (verify bằng email của bạn) → REJECTED + audit.
-- [ ] Ca bất định (có cờ/low-confidence) KHÔNG bị auto-reject dù gate bật (an toàn — verify).
-- [ ] Mặc định gate TẮT → hành vi không đổi so với trước 03c.
-- [ ] `PATCH /api/jobs/{id}/gate` bật/tắt được auto_reject (cấu hình theo JD).
-- [ ] scheduler là điểm phát email DUY NHẤT; lỗi gửi nuốt có kiểm soát (REJECTED vẫn giữ).
-- [ ] KHÔNG auto-mời, KHÔNG UI toggle, KHÔNG đổi schema, KHÔNG đụng ranker-scoring/screener.
-- [ ] `make test` xanh (mock scheduler/email); suite cũ không vỡ.
+- [ ] `/jobs` liệt kê JD (tiêu đề, trạng thái, số tiêu chí, gate, ngày); tạo/sửa/đóng-mở được qua UI.
+- [ ] Form JD dùng chung tạo+sửa; rubric/requirements/screener_questions là danh sách động; tổng trọng số hiển thị.
+- [ ] Toggle gate auto_reject trong form → lưu đúng vào gate_config (nợ 03c đã trả).
+- [ ] Sửa JD RE-EMBED khi title/description/requirements đổi; KHÔNG re-embed khi chỉ rubric/gate/screener đổi.
+- [ ] Lỗi embedding không làm sập cập nhật; đóng JD đổi status (không xóa).
+- [ ] KHÔNG nộp CV công khai, KHÔNG storage, KHÔNG LLM-gợi-ý-rubric, KHÔNG đụng pipeline/ranker.
+- [ ] shadcn, không thêm lib UI; `pnpm build` PASS; test backend (nếu có) xanh.
 
 ---
 
-## 6. Ranh giới & quy ước (theo CLAUDE.md)
+## 6. Ranh giới & quy ước (theo CLAUDE.md + frontend-design)
 
-- CHỈ động vào: policy định tuyến + nhánh auto-reject + endpoint gate + test. KHÔNG đụng ranker-scoring, screener, luồng review 03b.
-- An toàn là ưu tiên số 1: uncertain LUÔN về human_review; gate chỉ áp lên ca confident điểm thấp SẠCH.
-- Tái dùng scheduler (điểm phát email duy nhất); KHÔNG gửi email chỗ khác.
-- Cấu hình theo JD (gate_config sẵn có); mặc định TẮT; không hardcode ngưỡng (từ env).
-- Commit nhỏ (vd `feat(gate): định tuyến có gate sau ranker (3 nhánh)`, `feat(gate): nhánh auto-reject delegate scheduler`, `feat(api): PATCH bật/tắt gate theo JD`, `test(gate): mock scheduler + các nhánh`).
-- Nghiệp vụ chưa rõ → tra **PRD.md** (§9, §8.3). PRD chưa đủ → DỪNG, hỏi.
-- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhắc dùng email của người dùng + bật gate), checklist DoD.
+- CHỈ động vào: endpoint sửa/đóng JD (+ re-embed có điều kiện) + shared-types/api + trang /jobs + JobForm + nav. KHÔNG đụng pipeline/agents/ranker.
+- Backend sửa có phẫu thuật: tái dùng embedding/qdrant service sẵn có; chỉ re-embed khi văn bản đổi.
+- Rubric HR nhập tay (KHÔNG LLM). gate mặc định TẮT. Không hardcode.
+- Component JobForm dùng chung tạo+sửa (tránh trùng lặp); style nhất quán /applications; validate mềm cho trọng số.
+- Commit nhỏ (vd `feat(api): sửa JD + re-embed có điều kiện + đóng/mở`, `feat(ui): trang danh sách /jobs`, `feat(ui): JobForm (rubric/requirements động) + toggle gate`, `feat(ui): trang tạo/sửa JD`).
+- Nghiệp vụ chưa rõ → tra **PRD.md** (§12.1, §9, §7.2). PRD chưa đủ → DỪNG, hỏi.
+- Kết thúc: in tóm tắt thay đổi, lệnh verify, checklist DoD.
 
 ---
 
-## 7. Sau lát này
+## 7. Lát kế tiếp (KHÔNG làm bây giờ)
 
-Giai đoạn 1 (vòng lặp HITL cốt lõi) HOÀN TẤT: CV vào → chấm → (tự tin: đạt→tiếp / thấp→auto-reject nếu gate bật) →
-(bất định→HR duyệt) → email thật ra. Kế tiếp: **GĐ2** — UI quản lý JD (gồm UI toggle gate), nộp CV công khai, object storage. Xem ROADMAP.md.
+**07 Nộp CV công khai:** trang công khai xem JD đang OPEN → chọn JD → nộp CV (gắn JD) → vào pipeline async. Dùng
+`status=OPEN` từ lát này để lọc JD hiển thị. Rồi **06 object storage** (gần lúc deploy). Xem ROADMAP.md.
