@@ -62,6 +62,8 @@ def jd_dict(job: JobPosting) -> dict:
         "description": job.description or "",
         "requirements": reqs,
         "rubric": list(job.rubric or []),
+        # PRD §9: gate auto-từ-chối cấu hình theo JD — policy đọc SAU ranker (ranker bỏ qua key này).
+        "gate_config": dict(job.gate_config or {}),
     }
 
 
