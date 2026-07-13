@@ -13,6 +13,9 @@ export default function Home() {
           Nguồn chân lý: PRD.md.
         </p>
         <p className="flex flex-wrap gap-x-4 text-sm">
+          <Link href="/jobs" className="text-slate-700 underline hover:text-slate-900">
+            → Quản lý JD
+          </Link>
           <Link href="/applications" className="text-slate-700 underline hover:text-slate-900">
             → Danh sách ứng viên
           </Link>
