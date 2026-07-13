@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.nodes import scheduler
 from app.core.config import settings
 from app.models.application import Application, ApplicationStatus
+from app.models.job_posting import JobPosting
 from app.services import audit_service
 
 Recommendation = Literal["invite", "consider_reject", "review_carefully"]
@@ -56,18 +57,25 @@ async def review_decision(
         else ApplicationStatus.REJECTED.value
     )
 
-    # Bản ghi quyết định HR (FR-HR-5) + bản ghi delegate scheduler — cùng transaction.
+    # Gom dữ liệu email TRƯỚC commit (sau commit thuộc tính có thể expire → tránh lazy-load).
+    applicant_email = app_row.applicant_email
+    candidate_name = (app_row.parsed_data or {}).get("full_name") or "Ứng viên"
+    job = await session.get(JobPosting, app_row.job_id) if app_row.job_id else None
+    job_title = job.title if job else "vị trí ứng tuyển"
+
+    # Bản ghi quyết định HR (FR-HR-5). Bản ghi kết quả email (email_sent/email_failed) do
+    # scheduler.notify_decision ghi (điểm phát email DUY NHẤT).
     await audit_service.record(
         session, application_id=application_id, node="human_review", action=decision,
         detail={"note": note, "decided_by": "hr", "mode": mode}, commit=False,
     )
-    await audit_service.record(
-        session, application_id=application_id, node="scheduler", action=f"delegate:{mode}",
-        detail={"email_sent": False, "stub": True}, commit=False,
-    )
     await session.commit()
 
-    # Delegate SAU khi quyết định đã lưu — scheduler là điểm gửi email DUY NHẤT (stub log lát 03b).
-    scheduler.notify_decision(mode, application_id=application_id, applicant_email=app_row.applicant_email)
+    # Delegate SAU khi quyết định đã lưu — scheduler gửi email THẬT (PRD §7.4). Email lỗi KHÔNG
+    # làm sập: notify_decision nuốt lỗi + audit email_failed, quyết định/trạng thái vẫn giữ.
+    await scheduler.notify_decision(
+        session, mode, application_id=application_id, applicant_email=applicant_email,
+        candidate_name=candidate_name, job_title=job_title,
+    )
     await session.refresh(app_row)
     return app_row

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import pytest
 
-from app.agents.nodes import scheduler
 from app.models.application import Application, ApplicationStatus
 from app.models.audit_log import AuditLog
 from app.services import review
@@ -69,19 +68,7 @@ def test_recommendation_review_carefully_when_no_score() -> None:
     assert review.recommendation(None, []) == "review_carefully"
 
 
-# ── scheduler.notify_decision (điểm delegate DUY NHẤT — stub log, KHÔNG email) ─
-
-
-def test_scheduler_notify_decision_invite() -> None:
-    out = scheduler.notify_decision("invite", application_id=1, applicant_email="a@e.com")
-    assert out["mode"] == "invite"
-    assert out["email_sent"] is False
-
-
-def test_scheduler_notify_decision_reject() -> None:
-    out = scheduler.notify_decision("reject", application_id=1, applicant_email="a@e.com")
-    assert out["mode"] == "reject"
-    assert out["email_sent"] is False
+# notify_decision (gửi email THẬT) test riêng ở test_scheduler_email.py (slice 04).
 
 
 # ── review_decision (mutation cốt lõi) ───────────────────────────────────────
@@ -89,10 +76,12 @@ def test_scheduler_notify_decision_reject() -> None:
 
 async def test_review_approve_sets_interview_and_audits(monkeypatch) -> None:
     captured: dict = {}
-    monkeypatch.setattr(
-        review.scheduler, "notify_decision",
-        lambda mode, **kw: captured.update(mode=mode, **kw) or {"mode": mode, "email_sent": False},
-    )
+
+    async def fake_notify(_session, mode, **kw):  # noqa: ANN001 — khớp chữ ký notify_decision (04)
+        captured.update(mode=mode, **kw)
+        return {"mode": mode, "email_sent": True}
+
+    monkeypatch.setattr(review.scheduler, "notify_decision", fake_notify)
     app_row = _app()
     session = FakeSession(app_row)
 
@@ -105,10 +94,10 @@ async def test_review_approve_sets_interview_and_audits(monkeypatch) -> None:
 
 
 async def test_review_reject_sets_rejected_and_keeps_note(monkeypatch) -> None:
-    monkeypatch.setattr(
-        review.scheduler, "notify_decision",
-        lambda mode, **kw: {"mode": mode, "email_sent": False},
-    )
+    async def fake_notify(_session, mode, **kw):  # noqa: ANN001 — khớp chữ ký notify_decision (04)
+        return {"mode": mode, "email_sent": True}
+
+    monkeypatch.setattr(review.scheduler, "notify_decision", fake_notify)
     session = FakeSession(_app())
 
     out = await review.review_decision(session, 1, "reject", "lệch ngành")
