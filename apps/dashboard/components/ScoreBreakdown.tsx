@@ -48,8 +48,12 @@ export function ScoreBreakdown({ breakdown, showFlags = true }: ScoreBreakdownPr
       {failed ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           <p className="font-medium">Chưa chấm được điểm</p>
+          {/* Câu nhắc "vào hàng chờ HR" là chỉ báo HÀNH ĐỘNG — chỉ khi còn chờ quyết (showFlags).
+              Hồ sơ đã quyết chỉ nêu SỰ THẬT "chấm không thành công", không nhắc còn trong hàng đợi (BUG B). */}
           <p className="mt-1 text-red-700">
-            Ranker gặp lỗi khi chấm — ca này vào hàng chờ HR xem xét.
+            {showFlags
+              ? "Ranker gặp lỗi khi chấm — ca này vào hàng chờ HR xem xét."
+              : "Ranker gặp lỗi khi chấm — hồ sơ không chấm được điểm."}
           </p>
         </div>
       ) : (

@@ -1,122 +1,103 @@
-# SLICE 07 — Nộp CV công khai (ứng viên guest chọn JD → nộp → pipeline) · plan one-shot
+# SLICE (FIX) — Sửa 2 lỗi từ end-to-end test: (A) CV đạt không gửi mời · (B) badge review dai dẳng · plan one-shot
 
-> **Bản chất:** plan ONE-SHOT. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Mục tiêu:** "cửa vào" của ứng viên — trang công khai liệt kê JD đang MỞ → ứng viên (guest, chỉ email) chọn một
-> vị trí → nộp CV GẮN với JD đó → vào pipeline async (parser→ranker→...). Khép luồng "HR đăng tin (05) → ứng viên nộp".
-> Tham chiếu: PRD §8.2 (luồng nộp), §12.2 (FR-AP), §14 (web). Tuân thủ `CLAUDE.md` + skill frontend-design.
->
-> **Guest, chỉ JD OPEN, async, LƯU FILE CỤC BỘ** (object storage = lát 06, hoãn tới gần deploy). UI Tailwind thuần
-> (nhất quán component sẵn có; redesign để giai đoạn cuối). KHÔNG auth (đăng nhập HR = GĐ4).
+> **Bản chất:** plan ONE-SHOT sửa 2 lỗi phát hiện qua end-to-end test. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
+> **Chủ đề chung:** trạng thái THẬT của hồ sơ phải được phản ánh đúng — cả cách hệ thống ĐẶT trạng thái (A: backend)
+> lẫn cách HIỂN THỊ (B: frontend).
+> Tham chiếu: PRD §8.3, §9, §11, §13. Tuân thủ `CLAUDE.md`.
 
 ---
 
-## 1. In scope / Out of scope
+## BUG A (backend) — CV đạt bị auto-đặt INTERVIEW_SCHEDULED mà KHÔNG gửi thư mời
 
-**In scope:**
+**Triệu chứng:** app 17 (91.5đ, đạt) → log `branch=auto status=INTERVIEW_SCHEDULED`, KHÔNG dòng scheduler nào → không thư mời.
+Trạng thái "đã hẹn phỏng vấn" nhưng ứng viên không được báo.
+**Nguyên nhân:** đường "CV đạt tự động" không có cơ chế gửi mời — cổng auto-mời (08d) CHƯA xây.
+**Fix:** CV đạt → `human_review` (HR duyệt → scheduler gửi thư mời THẬT, đúng đường 03b+04). Đối xứng với auto-reject (03c).
 
-- Backend: endpoint CÔNG KHAI liệt kê JD `OPEN` (**projection AN TOÀN** — chỉ trường ứng-viên-thấy); endpoint nộp CV
-  công khai (validate JD OPEN + loại/size file → lưu cục bộ → tạo application gắn job_id → chạy pipeline async).
-- shared-types: JD công khai (trường an toàn) + payload nộp.
-- Trang công khai `/apply` (danh sách JD OPEN) + `/apply/[jobId]` (chi tiết JD + form nộp: email + CVUpload → xác nhận).
-- Tái dùng `CVUpload` (đã có từ 01b).
+### A.1 Định tuyến đường "đạt" → human_review · `app/agents/policy.py` (+ graph/runner)
 
-**Out of scope (KHÔNG làm):**
+- `route_after_ranker`: nhánh confident + `score >= SCORE_PASS_THRESHOLD` (không cờ, không low-confidence) →
+  **đổi thành route `human_review`** (thay vì đường tự đặt INTERVIEW_SCHEDULED).
+- 3 nhánh sau sửa (đối xứng, đúng trạng thái hiện có):
+  - uncertain (lỗi/cờ/low-confidence) → human_review.
+  - confident + điểm thấp → auto_reject (gate ON) / human_review (gate OFF). _(giữ nguyên 03c)_
+  - confident + đạt → **human_review** (auto-mời chưa xây, mặc định TẮT). _(sửa)_
+- Nếu đường "đạt" đi qua node screener→scheduler và node đó auto-đặt trạng thái câm → chỉnh route thẳng human_review
+  (screener thật + cổng mời chèn lại ở GĐ3/08d — chừa slot). Runner label: bỏ nhãn "auto" gây hiểu nhầm cho nhánh này.
 
-- KHÔNG object storage (lưu cục bộ — lát 06). KHÔNG auth/đăng nhập (GĐ4).
-- KHÔNG trang tra cứu trạng thái cho ứng viên (guest không đăng nhập; họ nhận email sau qua scheduler). KHÔNG hiện điểm/trạng thái cho ứng viên.
-- KHÔNG lộ rubric/gate_config/screener_questions cho ứng viên (nội bộ — xem §3.1).
-- KHÔNG đụng pipeline/agents/ranker logic. KHÔNG redesign UI (giai đoạn cuối).
+### A.2 INTERVIEW_SCHEDULED chỉ khi đã gửi mời
 
----
+- Rà: KHÔNG đường nào đặt `INTERVIEW_SCHEDULED` mà không qua `scheduler.notify_decision("invite")`. Đường hợp lệ
+  duy nhất hiện tại: human_review approve → scheduler gửi mời → set INTERVIEW_SCHEDULED (đã có 03b/04). Giữ đúng vậy.
+- Nếu node scheduler tự động đang đặt INTERVIEW_SCHEDULED như hành vi stub → bỏ.
 
-## 2. Prerequisites
+### A.3 Test
 
-- Lát 05 xong: JD có `status` OPEN/CLOSED. Có JD OPEN để test (JD #2; lưu ý JD #4 gate đang BẬT).
-- Có sẵn: `CVUpload`, logic tạo application + chạy pipeline (từ scaffold/các lát trước), parser/ranker thật.
-- Lưu file cục bộ hiện tại (thư mục uploads). Node chạy PowerShell.
-
----
-
-## 3. Việc cần làm
-
-### 3.1 Backend — JD công khai + nộp CV · `app/api/routes/` (+ service)
-
-- **Liệt kê JD công khai:** `GET /api/public/jobs` → chỉ JD `status == OPEN`, **projection AN TOÀN**: chỉ
-  `id, title, description, requirements` (+ ngày nếu muốn). **TUYỆT ĐỐI KHÔNG trả** `rubric`, `gate_config`,
-  `screener_questions` — đây là tiêu chí chấm/cấu hình nội bộ; lộ ra thì ứng viên có thể "nhồi từ khóa" theo rubric.
-- **Chi tiết JD công khai:** `GET /api/public/jobs/{id}` → cùng projection an toàn; 404 nếu không OPEN.
-- **Nộp CV công khai:** `POST /api/public/applications` (multipart: `job_id`, `applicant_email`, file CV):
-  1. **Validate**: JD tồn tại + `OPEN` (không thì 404/409); loại file ∈ {PDF, DOCX} (kiểm magic bytes, không chỉ đuôi); size ≤ ~10MB. Email hợp lệ cơ bản.
-  2. Lưu file CV cục bộ (như hiện tại), tạo application gắn `job_id` + `applicant_email`, status `SUBMITTED`.
-  3. Kick pipeline async (BackgroundTask — như luồng tạo application hiện có).
-  4. Trả xác nhận gọn (vd `{application_id}` hoặc chỉ success) — KHÔNG trả điểm/parsed_data cho ứng viên.
-- **Sửa có phẫu thuật:** ĐỌC logic tạo application + chạy pipeline hiện có → TÁI DÙNG; chỉ thêm lớp public
-  (projection an toàn + validate OPEN + validate file). Đừng viết lại pipeline.
-
-### 3.2 shared-types · `packages/shared-types`
-
-- `PublicJob = {id, title, description, requirements[], created_at?}` (KHÔNG rubric/gate/screener).
-- `SubmitApplicationInput = {job_id, applicant_email, file}` (payload nộp).
-
-### 3.3 `lib/api.ts`
-
-- `getOpenJobs(): Promise<PublicJob[]>` → GET /api/public/jobs.
-- `getPublicJob(id)` → GET /api/public/jobs/{id}.
-- `submitApplication(job_id, email, file)` → POST /api/public/applications (multipart).
-
-### 3.4 Trang công khai · `app/apply/page.tsx` + `app/apply/[jobId]/page.tsx`
-
-- `/apply`: danh sách JD OPEN (tiêu đề + mô tả ngắn) → bấm một JD → sang chi tiết. Empty ("hiện không có vị trí mở")/loading/error.
-- `/apply/[jobId]`: hiện chi tiết JD (title, description, requirements) + **form nộp**: ô email + `CVUpload` (tái dùng)
-  → nút "Nộp hồ sơ". Validate client (email + loại/size file). Đang gửi → disable, chống double-submit.
-- Sau khi nộp thành công → **màn xác nhận** ("Cảm ơn, hồ sơ của bạn đã được gửi. Chúng tôi sẽ liên hệ qua email.")
-  — KHÔNG hiện điểm/trạng thái. Lỗi → thông báo thân thiện.
-- **Tách khỏi dashboard HR:** trang công khai KHÔNG dùng nav HR (không lẫn với /jobs, /applications, /review).
-
-### 3.5 (Không bắt buộc) liên kết
-
-- Có thể để một link "Trang tuyển dụng công khai" ở đâu đó cho tiện demo, nhưng public pages là luồng riêng của ứng viên.
+- confident + đạt → `route_after_ranker` = `human_review`; KHÔNG auto-set INTERVIEW_SCHEDULED.
+- Giữ: uncertain→review; confident+thấp→auto_reject(ON)/review(OFF); auto-reject vẫn gửi thư từ chối thật (mock).
 
 ---
 
-## 4. Verify (chạy thật)
+## BUG B (frontend) — Badge "Cần HR xem xét" hiển thị cả khi hồ sơ đã xử lý xong
 
-1. Đảm bảo có JD OPEN (JD #2). Nếu test JD #4 thì tắt gate trước (`PATCH /api/jobs/4/gate {auto_reject:false}`).
-2. `make dev-backend` + `make dev-dashboard`; mở `/apply` → thấy danh sách JD OPEN (chỉ JD OPEN; JD CLOSED không hiện).
-3. Kiểm projection an toàn: response `GET /api/public/jobs` KHÔNG chứa rubric/gate_config/screener_questions.
-4. Chọn JD #2 → `/apply/[id]` hiện title/description/requirements + form. Nhập email của bạn, upload CV backend → Nộp → màn xác nhận (không hiện điểm).
-5. Kiểm application đã tạo: sang dashboard HR `/applications` → thấy ứng viên mới (gắn đúng JD #2) đã chạy pipeline (có điểm/trạng thái). Audit có parser+ranker.
-6. Thử JD CLOSED / job_id sai → nộp bị từ chối (404/409). Thử file .txt hoặc >10MB → bị chặn (client + server).
-7. `pnpm --filter dashboard build` PASS; `make test` xanh (nếu có test backend cho public endpoints).
+**Triệu chứng:** hồ sơ đã REJECTED (auto-từ-chối) hoặc đã quyết vẫn hiện badge "Cần HR xem xét — Điểm 4.5/100 dưới
+ngưỡng..." / "Điểm rubric (20.0) lệch tín hiệu tương đồng (0.5353)" ở danh sách ứng viên.
+**Nguyên nhân:** badge render chỉ vì `escalation_reason`/`uncertainty_flags` CÓ dữ liệu, KHÔNG xét trạng thái.
+**Đúng ra:** badge "cần xem xét" là chỉ báo HÀNH ĐỘNG — chỉ hiện khi `status == PENDING_REVIEW`. Đã xử lý xong
+(REJECTED/INTERVIEW_SCHEDULED) thì KHÔNG hiện nữa; xem lại chỉ thấy trạng thái cuối.
+
+### B.1 Gate hiển thị theo trạng thái · `/applications` (list + detail) — `components/*` liên quan
+
+- Khối/badge "Cần HR xem xét" (+ `escalation_reason`) và các cờ hiển thị dưới dạng "cần chú ý" (vd
+  `score_signal_mismatch`, `weak_match`, `near_threshold`) **CHỈ render khi `status == PENDING_REVIEW`.**
+- Hồ sơ ở trạng thái cuối (REJECTED, INTERVIEW_SCHEDULED, ...) → KHÔNG hiện badge nhắc nhở này; hiện trạng thái
+  cuối (passed/rejected) gọn gàng như bình thường.
+- KHÔNG xóa dữ liệu `escalation_reason`/flags khỏi API/DB — chỉ gate HIỂN THỊ badge "cần xem xét" theo trạng thái.
+  (Tùy chọn: ở trang chi tiết, có thể hiện lý do dạng thông tin trung tính cho hồ sơ đã quyết — KHÔNG bắt buộc, và KHÔNG dùng khung "cần HR xem xét".)
+- `/review` (ReviewCard) KHÔNG đổi: hàng đợi vốn luôn PENDING_REVIEW nên badge vẫn đúng ở đó.
+
+### B.2 (kiểm tra) badge số ca chờ ở nav
+
+- Badge đếm số ca chờ nav vốn đếm theo PENDING_REVIEW → đảm bảo vẫn đúng (không đếm hồ sơ đã quyết). Chỉ xác nhận, sửa nếu lệch.
 
 ---
 
-## 5. Definition of Done
+## Prerequisites
 
-- [ ] `/apply` liệt kê JD OPEN; `/apply/[jobId]` hiện JD an toàn + form nộp (email + CVUpload tái dùng).
-- [ ] Nộp CV công khai (guest, chỉ email) → tạo application gắn job_id → chạy pipeline async; màn xác nhận (không lộ điểm/trạng thái).
-- [ ] JD công khai KHÔNG lộ rubric/gate_config/screener_questions (projection an toàn — verify).
-- [ ] Validate: chỉ nhận JD OPEN; loại file PDF/DOCX + size ≤ ~10MB (client + server).
-- [ ] Ứng viên mới hiện đúng trên /applications của HR (gắn đúng JD, đã chấm).
-- [ ] Lưu file cục bộ (chưa object storage); trang công khai tách khỏi nav HR.
-- [ ] KHÔNG auth, KHÔNG storage cloud, KHÔNG tra cứu trạng thái ứng viên, KHÔNG đụng pipeline/ranker.
-- [ ] `pnpm build` PASS; test backend (nếu có) xanh.
+- 03b (human_review + approve→scheduler) và 04 (scheduler email thật) đã xong — Bug A tái dùng đường đó.
+- Có CV đạt (backend khớp JD #2) + CV thấp để test. Email của bạn để nhận thư mời.
 
----
+## Verify (chạy thật)
 
-## 6. Ranh giới & quy ước (theo CLAUDE.md + frontend-design)
+**Bug A:**
 
-- CHỈ động vào: public endpoints (list OPEN an toàn + nộp CV) + shared-types/api + trang /apply + form. KHÔNG đụng pipeline/agents/ranker.
-- Backend sửa có phẫu thuật: TÁI DÙNG logic tạo application + pipeline hiện có; chỉ thêm lớp public + validate. Đừng viết lại pipeline.
-- BẢO MẬT: projection JD công khai chỉ trường an toàn (không rubric/gate/screener); validate loại+size file ở SERVER (không chỉ client).
-- Guest, chỉ email; ứng viên không thấy điểm/trạng thái (HR-only). UI Tailwind thuần, nhất quán component sẵn có; tách nav HR.
-- Commit nhỏ (vd `feat(api): public JD list an toàn + endpoint nộp CV (validate OPEN + file)`, `feat(ui): trang /apply danh sách JD OPEN`, `feat(ui): trang chi tiết JD + form nộp (CVUpload) + xác nhận`).
-- Nghiệp vụ chưa rõ → tra **PRD.md** (§8.2, §12.2, §14). PRD chưa đủ → DỪNG, hỏi.
+1. `make dev-backend` + `make dev-dashboard`. JD #2 (gate tắt). Nộp CV backend khớp (email của bạn) qua `/apply`.
+2. Kỳ vọng MỚI: hồ sơ vào `/review` (Chờ HR duyệt), đề xuất "mời" — KHÔNG auto INTERVIEW_SCHEDULED, KHÔNG email câm.
+3. Duyệt ca đó → nhận **thư mời THẬT** trong hòm thư → status INTERVIEW_SCHEDULED. Audit: approve + email_sent:invite.
+
+**Bug B:** 4. Bật gate auto_reject JD → nộp CV điểm thấp (email của bạn) → auto-REJECTED + thư từ chối thật. Vào `/applications`
+→ hồ sơ REJECTED **KHÔNG** còn badge "Cần HR xem xét"; chỉ hiện trạng thái "Đã từ chối". 5. Hồ sơ đang PENDING_REVIEW (từ bước 2, trước khi duyệt) → **CÓ** badge "Cần HR xem xét" + lý do (đúng). 6. Hồ sơ đã INTERVIEW_SCHEDULED (sau khi duyệt) → KHÔNG badge nhắc nhở; hiện "Đã hẹn phỏng vấn". 7. Badge số ca chờ ở nav = số PENDING_REVIEW (không tính hồ sơ đã quyết). 8. `make test` xanh; `pnpm --filter dashboard build` PASS.
+
+## Definition of Done
+
+- [ ] **A:** CV confident+đạt → human_review (đề xuất "mời"), KHÔNG auto-schedule câm; HR duyệt → thư mời THẬT → INTERVIEW_SCHEDULED.
+- [ ] **A:** INTERVIEW_SCHEDULED chỉ đạt khi thư mời đã gửi; auto-reject + uncertain→review không hồi quy.
+- [ ] **B:** Badge "Cần HR xem xét" (+ escalation/flags "cần chú ý") CHỈ hiện khi status==PENDING_REVIEW; hồ sơ đã quyết không còn badge.
+- [ ] **B:** Không xóa dữ liệu escalation/flags khỏi API/DB (chỉ gate hiển thị); `/review` không đổi; badge nav đếm đúng PENDING_REVIEW.
+- [ ] KHÔNG xây cổng auto-mời (08d), KHÔNG làm screener thật, KHÔNG đụng ranker/parser. scheduler = điểm phát email duy nhất.
+- [ ] `make test` xanh; `pnpm build` PASS.
+
+## Ranh giới & quy ước (theo CLAUDE.md)
+
+- A: chỉ sửa định tuyến đường "đạt" + bỏ auto-set INTERVIEW_SCHEDULED câm + test. B: chỉ sửa LOGIC HIỂN THỊ badge theo trạng thái (không đụng backend cho B).
+- Giữ đối xứng 03c; auto-mời để 08d (giờ = human_review). INTERVIEW_SCHEDULED = "đã báo ứng viên" — chỉ sau khi gửi mời.
+- B là thay đổi hiển thị thuần — KHÔNG đổi dữ liệu API/DB, KHÔNG đụng ReviewCard/review queue.
+- Trước khi sửa `route_after_ranker`, chạy impact analysis (GitNexus) như CLAUDE.md yêu cầu.
+- Commit nhỏ (vd `fix(routing): CV đạt -> human_review (không auto-schedule câm)`, `fix(state): INTERVIEW_SCHEDULED chỉ sau khi gửi mời`, `fix(ui): badge cần-xem-xét chỉ khi PENDING_REVIEW`, `test: cập nhật nhánh đạt`).
+- Nghiệp vụ chưa rõ → tra **PRD.md** (§8.3, §9, §11, §13). PRD chưa đủ → DỪNG, hỏi.
 - Kết thúc: in tóm tắt thay đổi, lệnh verify (nhắc dùng email của người dùng), checklist DoD.
 
----
+## Sau lát này
 
-## 7. Sau lát này
-
-Cửa vào ứng viên hoàn chỉnh: đăng tin (05) → ứng viên nộp (07) → pipeline → HR xem/duyệt → email ra. Kế tiếp:
-**06 object storage** (chuyển lưu file lên cloud, gần lúc deploy) hoặc bước vào **GĐ3 Screener async** (phần khó nhất). Xem ROADMAP.md.
+Vòng lõi đúng cả hai chiều (đạt→mời qua HR, thấp→auto-reject/HR) + hiển thị trạng thái sạch. Rồi vào **GĐ3 Screener
+async** (08a: Postgres checkpointer + suspend/resume); cổng auto-mời (08d) xây sau, thêm nhánh "đạt + auto_invite BẬT → tự mời". Xem ROADMAP.md.
