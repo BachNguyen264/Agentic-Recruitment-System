@@ -23,6 +23,13 @@ class GateConfig(BaseModel):
     auto_invite: bool = False
 
 
+class GateConfigUpdate(BaseModel):
+    """Body PATCH /jobs/{id}/gate — cập nhật partial (field None giữ nguyên). PRD §9 FR-GATE-1."""
+
+    auto_reject: bool | None = None
+    auto_invite: bool | None = None
+
+
 class JobPostingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str = Field(min_length=1)

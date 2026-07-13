@@ -192,3 +192,28 @@ async def test_background_auto_reject_delegates_scheduler(monkeypatch) -> None:
 
 async def _await_value(value):
     return value
+
+
+# ── set_gate_config: bật/tắt gate theo JD (PATCH endpoint) ───────────────────
+
+
+async def test_set_gate_config_toggles_only_given_field() -> None:
+    from app.models.job_posting import JobPosting
+    from app.services import job_service
+
+    job = JobPosting(id=2, title="X", gate_config={"auto_reject": False, "auto_invite": False})
+    session = _FakeSession({(JobPosting, 2): job})
+
+    out = await job_service.set_gate_config(session, 2, auto_reject=True)
+
+    assert out is job
+    assert out.gate_config["auto_reject"] is True
+    assert out.gate_config["auto_invite"] is False  # KHÔNG đụng field không truyền
+    assert session.commits == 1
+
+
+async def test_set_gate_config_missing_job_returns_none() -> None:
+    from app.services import job_service
+
+    session = _FakeSession({})
+    assert await job_service.set_gate_config(session, 999, auto_reject=True) is None

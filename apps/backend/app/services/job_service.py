@@ -67,6 +67,29 @@ def jd_dict(job: JobPosting) -> dict:
     }
 
 
+async def set_gate_config(
+    session: AsyncSession, job_id: int, *,
+    auto_reject: bool | None = None, auto_invite: bool | None = None,
+) -> JobPosting | None:
+    """Bật/tắt gate của JD (PRD §9 FR-GATE-1, cấu hình theo từng JD). None nếu JD không tồn tại.
+
+    Chỉ cập nhật field được truyền (partial) — field None giữ nguyên. Gán lại dict để SQLAlchemy
+    nhận thay đổi JSONB (mutate in-place không đánh dấu dirty).
+    """
+    job = await session.get(JobPosting, job_id)
+    if job is None:
+        return None
+    gate = dict(job.gate_config or {})
+    if auto_reject is not None:
+        gate["auto_reject"] = auto_reject
+    if auto_invite is not None:
+        gate["auto_invite"] = auto_invite
+    job.gate_config = gate
+    await session.commit()
+    await session.refresh(job)
+    return job
+
+
 async def get_job(session: AsyncSession, job_id: int) -> JobPosting | None:
     return await session.get(JobPosting, job_id)
 

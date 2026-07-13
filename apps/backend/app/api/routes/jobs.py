@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import DBSession
 from app.schemas.job_posting import (
+    GateConfigUpdate,
     JobPostingCreate,
     JobPostingCreateResult,
     JobPostingRead,
@@ -36,6 +37,23 @@ async def list_jobs(session: DBSession) -> list[JobPostingRead]:
 @router.get("/{job_id}", response_model=JobPostingRead)
 async def get_job(job_id: int, session: DBSession) -> JobPostingRead:
     job = await job_service.get_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="JobPosting không tồn tại")
+    return JobPostingRead.model_validate(job)
+
+
+@router.patch(
+    "/{job_id}/gate",
+    response_model=JobPostingRead,
+    summary="Bật/tắt gate auto (auto_reject/auto_invite) theo JD (PRD §9)",
+)
+async def update_gate(
+    job_id: int, payload: GateConfigUpdate, session: DBSession
+) -> JobPostingRead:
+    """Cập nhật gate_config của JD (partial). UI đầy đủ ở lát 05; endpoint này để bật/tắt nhanh."""
+    job = await job_service.set_gate_config(
+        session, job_id, auto_reject=payload.auto_reject, auto_invite=payload.auto_invite
+    )
     if job is None:
         raise HTTPException(status_code=404, detail="JobPosting không tồn tại")
     return JobPostingRead.model_validate(job)
