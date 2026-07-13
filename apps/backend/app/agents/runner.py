@@ -87,5 +87,7 @@ async def run_with_trace(*, force_review: bool = False, applicant_email: str | N
     elif final.get("require_human_review"):
         branch = "human_review"
     else:
-        branch = "auto"
+        # Hiện KHÔNG reachable: ca ĐẠT cũng về human_review (BUG A fix). Chừa cho auto-mời (08d);
+        # nhãn "screener" (KHÔNG "auto") để audit không hiểu nhầm là đã tự lên lịch.
+        branch = "screener"
     return {"branch": branch, "final": final, "trace": trace}

@@ -75,10 +75,12 @@ def test_route_error_gate_on_still_human_review() -> None:
     assert route_after_ranker(st) == "human_review"
 
 
-def test_route_confident_pass_continues_to_screener() -> None:
-    # Đạt ngưỡng, tự tin → screener (nhánh tự động cũ — gate KHÔNG đụng).
+def test_route_confident_pass_goes_to_human_review() -> None:
+    # BUG A fix: đạt ngưỡng + tự tin → human_review (HR duyệt → scheduler gửi thư MỜI thật, đường
+    # 03b+04). Auto-mời chưa xây (mặc định TẮT) nên KHÔNG auto-schedule câm; gate auto_reject KHÔNG
+    # áp cho ca ĐẠT (dù bật) — chỉ áp ca điểm thấp.
     st = _state(require_review=False, score=_PASS, auto_reject=True)
-    assert route_after_ranker(st) == "screener"
+    assert route_after_ranker(st) == "human_review"
 
 
 # ── gate node: đặt REJECTED, KHÔNG gửi email ─────────────────────────────────

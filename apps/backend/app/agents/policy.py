@@ -33,16 +33,19 @@ def _auto_reject_enabled(state: RecruitmentState) -> bool:
 
 
 def route_after_ranker(state: RecruitmentState) -> str:
-    """3 nhánh sau ranker (PRD §8.3, §9) — THỨ TỰ ƯU TIÊN AN TOÀN TRƯỚC. Tên nhánh khớp key trong
-    add_conditional_edges (graph.py):
+    """Định tuyến sau ranker (PRD §8.3, §9) — THỨ TỰ ƯU TIÊN AN TOÀN TRƯỚC. Tên nhánh khớp key trong
+    add_conditional_edges (graph.py). Chỉ ca điểm thấp SẠCH + gate BẬT rời human_review (→ auto_reject);
+    mọi ca còn lại về human_review.
 
     1) BẤT ĐỊNH → `human_review` (gate KHÔNG xét — ca không chắc luôn về người).
-    2) tự tin + đạt ngưỡng (require_human_review falsy) → `screener` (nhánh tự động — giữ nguyên).
+    2) tự tin + ĐẠT ngưỡng (require_human_review falsy) → `human_review`: HR duyệt rồi scheduler gửi thư
+       MỜI THẬT (đường 03b+04). Auto-mời chưa xây (mặc định TẮT — PRD §9) → KHÔNG auto-set
+       INTERVIEW_SCHEDULED câm. INTERVIEW_SCHEDULED CHỈ đặt sau khi mời đã gửi.
     3) tự tin + điểm thấp SẠCH (ranker đặt require_human_review = điểm < ngưỡng) → gate JD:
-       auto_reject BẬT → `auto_reject`; TẮT → `human_review` (mặc định — hành vi không đổi).
+       auto_reject BẬT → `auto_reject`; TẮT → `human_review`.
     """
     if should_review(state):
         return "human_review"
     if not state.get("require_human_review"):
-        return "screener"
+        return "human_review"  # ĐẠT ngưỡng → HR duyệt → gửi mời thật (BUG A fix; auto-mời = 08d)
     return "auto_reject" if _auto_reject_enabled(state) else "human_review"

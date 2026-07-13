@@ -60,9 +60,12 @@ async def notify_decision(
 
 
 def scheduler_node(state: RecruitmentState) -> dict:
-    # TODO (PRD §7.4): chọn gửi email / tạo lịch / cả hai (function calling — phase sau).
+    # STUB & hiện KHÔNG reachable từ routing (route_after_ranker không trả "screener" — BUG A fix):
+    # thư MỜI THẬT + INTERVIEW_SCHEDULED CHỈ đặt qua human_review → scheduler.notify_decision("invite")
+    # (03b/04). Node này KHÔNG tự đặt INTERVIEW_SCHEDULED (tránh trạng thái "đã hẹn" câm không có email).
+    # TODO (PRD §9, 08d): cổng auto-mời — nhánh auto_invite BẬT gọi notify_decision("invite") ở đây.
     return {
-        "status": ApplicationStatus.INTERVIEW_SCHEDULED.value,
-        "result": {"action": "invite_sent", "note": "stub — chưa gửi email/đặt lịch thật"},
-        "messages": ["[scheduler] stub: gửi thư mời + đặt lịch (chưa thật — PRD §7.4)"],
+        "status": ApplicationStatus.SCHEDULING.value,
+        "result": {"action": "scheduler_stub", "note": "chưa gửi mời — mời thật qua human_review"},
+        "messages": ["[scheduler] stub (chưa reachable) — mời thật đi qua human_review→notify_decision"],
     }
