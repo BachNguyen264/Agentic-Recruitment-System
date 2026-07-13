@@ -81,5 +81,11 @@ async def run_with_trace(*, force_review: bool = False, applicant_email: str | N
                 }
             )
     final = (await recruitment_graph.aget_state(config)).values
-    branch = "human_review" if final.get("require_human_review") else "auto"
+    nodes_run = {step["node"] for step in trace}
+    if "gate" in nodes_run:              # gate auto-từ-chối (PRD §9) — điểm phát email ở background.
+        branch = "auto_reject"
+    elif final.get("require_human_review"):
+        branch = "human_review"
+    else:
+        branch = "auto"
     return {"branch": branch, "final": final, "trace": trace}

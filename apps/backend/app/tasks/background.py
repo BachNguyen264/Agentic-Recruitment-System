@@ -9,6 +9,7 @@ hiện chạy thẳng một mạch (chưa suspend).
 
 from __future__ import annotations
 
+from app.agents.nodes import scheduler
 from app.agents.runner import run_with_trace
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
@@ -49,6 +50,7 @@ async def process_application(application_id: int, *, force_review: bool = False
 
             # JD cho ranker (nếu application gắn job_id + JD tồn tại).
             jd = None
+            job = None
             if application.job_id is not None:
                 job = await session.get(JobPosting, application.job_id)
                 if job is not None:
@@ -77,6 +79,9 @@ async def process_application(application_id: int, *, force_review: bool = False
                         "score": final.get("score"),
                         "semantic_similarity": final.get("semantic_similarity"),
                     }
+                elif node == "gate":  # auto-từ-chối (PRD §9) — thư từ chối gửi ở khối bên dưới.
+                    action = "auto_reject"
+                    detail = {"status": step.get("status"), "score": final.get("score")}
                 else:
                     action = "stub_pass_through"
                     detail = {"status": step.get("status")}
@@ -105,11 +110,29 @@ async def process_application(application_id: int, *, force_review: bool = False
                 escalation_reason=final.get("escalation_reason"),
                 detail={"final_status": final.get("status")}, commit=False,
             )
+
+            # Gom dữ liệu email auto-reject TRƯỚC commit (sau commit thuộc tính có thể expire).
+            auto_reject = out["branch"] == "auto_reject"
+            if auto_reject:
+                reject_email = application.applicant_email
+                reject_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
+                reject_title = job.title if job is not None else "vị trí ứng tuyển"
+
             await session.commit()
             logger.info(
                 "BG: xong application_id=%s -> branch=%s status=%s",
                 application_id, out["branch"], final.get("status"),
             )
+
+            # Gate auto-từ-chối (PRD §9): quyết định (REJECTED) đã commit → gửi thư từ chối THẬT qua
+            # scheduler (điểm phát email DUY NHẤT). Lỗi gửi notify_decision nuốt có kiểm soát: audit
+            # email_failed, REJECTED VẪN giữ. KHÔNG có HR, KHÔNG suspend.
+            if auto_reject:
+                await scheduler.notify_decision(
+                    session, "reject", application_id=application_id,
+                    applicant_email=reject_email, candidate_name=reject_name,
+                    job_title=reject_title,
+                )
         except Exception:  # noqa: BLE001 — lỗi kỹ thuật -> PENDING_REVIEW[error] (PRD §13)
             logger.exception("BG: lỗi xử lý application_id=%s", application_id)
             await session.rollback()

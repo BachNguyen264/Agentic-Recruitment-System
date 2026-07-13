@@ -92,3 +92,103 @@ def test_gate_node_sets_rejected() -> None:
 
     assert out["status"] == ApplicationStatus.REJECTED.value
     assert out["result"]["action"] == "auto_reject"
+
+
+# ── background: nhánh auto_reject → delegate scheduler (thư từ chối THẬT) ─────
+
+
+class _FakeSession:
+    """AsyncSession tối thiểu cho process_application (mock — KHÔNG chạm DB)."""
+
+    def __init__(self, rows: dict) -> None:
+        self._rows = rows  # {(Model, pk): obj}
+        self.added: list = []
+        self.commits = 0
+
+    async def get(self, model, pk):  # noqa: ANN001
+        return self._rows.get((model, pk))
+
+    def add(self, obj) -> None:
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        pass
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def refresh(self, _obj) -> None:
+        pass
+
+    async def rollback(self) -> None:
+        pass
+
+
+def _auto_reject_out(status: str) -> dict:
+    return {
+        "branch": "auto_reject",
+        "final": {
+            "status": status,
+            "parsed_data": {"full_name": "Nguyễn Văn A"},
+            "score": _LOW,
+            "semantic_similarity": 0.1,
+            "confidence": 1.0,
+            "uncertainty_flags": [],
+            "escalation_reason": None,
+            "scratchpad": {},
+        },
+        "trace": [
+            {"node": "parser", "status": "PARSED", "uncertainty_flags": []},
+            {"node": "ranker", "status": "RANKING", "uncertainty_flags": []},
+            {"node": "gate", "status": status, "uncertainty_flags": []},
+        ],
+    }
+
+
+async def test_background_auto_reject_delegates_scheduler(monkeypatch) -> None:
+    from app.agents.nodes import scheduler
+    from app.models.application import Application, ApplicationStatus
+    from app.models.audit_log import AuditLog
+    from app.models.job_posting import JobPosting
+    from app.tasks import background
+
+    app_row = Application(id=1, applicant_email="me@e.com", job_id=2, status="SUBMITTED")
+    job = JobPosting(id=2, title="Backend Intern")
+    session = _FakeSession({(Application, 1): app_row, (JobPosting, 2): job})
+
+    class _Ctx:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(background, "AsyncSessionLocal", lambda: _Ctx())
+    monkeypatch.setattr(
+        background, "run_with_trace",
+        lambda **_kw: _await_value(_auto_reject_out(ApplicationStatus.REJECTED.value)),
+    )
+
+    captured: dict = {}
+
+    async def fake_notify(_session, mode, **kw):  # noqa: ANN001 — khớp chữ ký notify_decision
+        captured.update(mode=mode, **kw)
+        return {"mode": mode, "email_sent": True}
+
+    monkeypatch.setattr(scheduler, "notify_decision", fake_notify)
+
+    await background.process_application(1)
+
+    # Auto-reject: status REJECTED + delegate scheduler(reject) đúng recipient/tên/vị trí.
+    assert app_row.status == ApplicationStatus.REJECTED.value
+    assert captured["mode"] == "reject"
+    assert captured["applicant_email"] == "me@e.com"
+    assert captured["candidate_name"] == "Nguyễn Văn A"
+    assert captured["job_title"] == "Backend Intern"
+    # Audit gate/auto_reject được ghi (điểm phát email do scheduler tự ghi).
+    audits = [(a.node, a.action) for a in session.added if isinstance(a, AuditLog)]
+    assert ("gate", "auto_reject") in audits
+
+
+async def _await_value(value):
+    return value
