@@ -1,12 +1,14 @@
-# SLICE 04 — Scheduler email THẬT (Resend) · plan one-shot
+# SLICE 03c — Gate rank (auto-từ-chối, cấu hình theo JD) · plan one-shot
 
 > **Bản chất:** plan ONE-SHOT. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Mục tiêu:** biến `scheduler.notify_decision(mode)` từ stub-log thành GỬI EMAIL THẬT qua Resend — thư mời
-> phỏng vấn / thư từ chối tới ứng viên. Khép kín vòng lặp end-to-end (CV vào → email ra). Là điểm phát email DUY NHẤT.
-> Tham chiếu: PRD §7.4 (Scheduler), §12.4 (FR-NOTI-1), §13. Tuân thủ `CLAUDE.md`.
+> **Mục tiêu:** thêm cổng auto-từ-chối SAU ranker — khi HR bật gate cho một JD, ca điểm thấp RÕ RÀNG (tự tin,
+> không cờ bất định) tự động bị từ chối + gửi thư từ chối THẬT (qua scheduler); khi tắt, mọi từ chối vẫn qua
+> human_review. Ca BẤT ĐỊNH luôn về human_review bất kể gate. Hoàn thiện Giai đoạn 1 (vòng lặp HITL cốt lõi).
+> Tham chiếu: PRD §9 (hai gate + FR-GATE), §8.3 (định tuyến sau ranker), §13 (trạng thái). Tuân thủ `CLAUDE.md`.
 >
-> **Nhà cung cấp: Resend.** **Calendar (Google) HOÃN** — lát này CHỈ email; tạo sự kiện lịch để lát sau/đơn giản
-> hóa (thư mời nêu sẽ liên hệ sắp lịch). Luồng review (03b) KHÔNG đổi — chỉ thay phần thân của notify_decision.
+> **Quyết định phạm vi:** CHỈ auto-từ-chối (sau ranker). KHÔNG làm auto-mời (sau screener — lát 08d). Cấu hình
+> **theo từng JD** (`gate_config` đã có trên JD từ 02a — không đổi schema). **UI toggle HOÃN** (đi kèm UI quản lý
+> JD, lát 05); lát này bật/tắt qua API. Backend-only.
 
 ---
 
@@ -14,114 +16,109 @@
 
 **In scope:**
 
-- `email_service` gửi email qua Resend (API key + from-address, xử lý lỗi).
-- Template email CỐ ĐỊNH: thư mời + thư từ chối (tiếng Việt), điền {candidate_name}, {job_title}.
-- `scheduler.notify_decision(mode)`: dựng email từ template → gửi thật; lỗi gửi → log + ghi nhận, KHÔNG sập, quyết định vẫn giữ.
-- Config `RESEND_API_KEY` + `EMAIL_FROM`; thêm dependency `resend`.
-- Test (mock Resend — KHÔNG gửi thật trong test).
+- Định tuyến sau ranker có ý thức về gate: uncertain → human_review (LUÔN); confident + điểm thấp → (gate ON) auto-reject / (OFF) human_review; confident + đạt → tiếp tục (giữ nguyên).
+- Nhánh/logic auto-reject: delegate `scheduler.notify_decision(reject)` (gửi thư từ chối THẬT) → REJECTED → audit. Chạy trong pipeline (async), KHÔNG cần HR.
+- Endpoint nhỏ bật/tắt `gate_config` trên JD có sẵn (phục vụ test/dùng thật qua API).
+- Test (mock scheduler/email) + verify thật (gửi thư từ chối tự động tới email của bạn).
 
 **Out of scope (KHÔNG làm):**
 
-- KHÔNG tạo sự kiện Google Calendar (hoãn — OAuth phức tạp). Thư mời chỉ nêu bước sắp lịch.
-- KHÔNG để LLM tự viết email — template CỐ ĐỊNH (nhất quán + an toàn pháp lý, cùng lý do Screener câu hỏi cố định).
-- KHÔNG đổi luồng review 03b / endpoint / trạng thái — chỉ thay phần thân notify_decision (stub-log → gửi thật).
-- KHÔNG làm gate (03c), KHÔNG cơ chế resend/retry đầy đủ (chỉ log lỗi; retry để sau).
-- KHÔNG đụng parser/ranker/policy.
+- KHÔNG auto-mời (gate sau screener — lát 08d). KHÔNG đụng nhánh "đạt → tiếp tục".
+- KHÔNG UI toggle (hoãn tới UI quản lý JD, lát 05). KHÔNG đổi schema (gate_config đã có).
+- KHÔNG đụng logic chấm điểm của ranker; KHÔNG build screener; KHÔNG checkpointer.
+- KHÔNG auto-reject ca bất định (an toàn — xem quy tắc §3.1).
 
 ---
 
-## 2. Prerequisites (đọc kỹ phần Resend)
+## 2. Prerequisites
 
-- Đăng ký Resend (https://resend.com), lấy **API key** → đặt `RESEND_API_KEY` vào `.env` + `.env.example`.
-- `EMAIL_FROM`: dùng `onboarding@resend.dev` để test, HOẶC địa chỉ thuộc domain đã xác thực.
-- **⚠️ Giới hạn người nhận:** với from-address test (`onboarding@resend.dev`) + chưa xác thực domain, Resend
-  thường CHỈ cho gửi tới **email đã đăng ký tài khoản Resend của bạn**. → Khi verify (mục 4), tạo application với
-  `applicant_email` = **email của chính bạn**. Gửi tới email tùy ý cần **xác thực domain** (thêm DNS) — để lúc demo public.
-- Free tier Resend đủ cho đồ án (giới hạn ngày/tháng nhỏ). Thêm dep: `resend` (uv add).
+- Lát 04 xong (scheduler gửi email thật) — auto-reject sẽ tái dùng scheduler để gửi thư từ chối thật.
+- `SCORE_PASS_THRESHOLD`, `CONFIDENCE_THRESHOLD` đã có. `gate_config` (`auto_reject`, `auto_invite`) đã có trên JD.
+- Có JD (id=2) để test. Có email của bạn để nhận thư từ chối tự động khi verify.
 
 ---
 
 ## 3. Việc cần làm
 
-### 3.1 `email_service` · `app/services/email_service.py`
+### 3.1 Định tuyến có gate sau ranker — `app/agents/policy.py` (+ graph)
 
-- `send_email(to: str, subject: str, html: str) -> None` (async): gọi Resend (SDK `resend` hoặc httpx tới API Resend)
-  với `from=settings.EMAIL_FROM`, `RESEND_API_KEY`.
-- Bọc try/except: lỗi Resend (mạng/khóa/giới hạn) → raise lỗi RÕ (để caller xử lý), log chi tiết. KHÔNG nuốt lỗi im lặng.
-- Config từ env; KHÔNG hardcode key/from.
+Thay quyết định 2 nhánh hiện tại bằng quyết định 3 nhánh, **theo đúng thứ tự ưu tiên (an toàn trước)**:
 
-### 3.2 Template email · `app/services/email_templates.py`
+1. **Uncertain trước hết** — nếu `confidence < CONFIDENCE_THRESHOLD` HOẶC `uncertainty_flags` khác rỗng HOẶC
+   `require_human_review` → **`human_review`**. (Gate KHÔNG được xét ở đây — ca không chắc LUÔN về người, dù gate bật.)
+2. **Nếu confident (không rơi vào (1))**:
+   - `score >= SCORE_PASS_THRESHOLD` → **`continue`** (đạt ngưỡng — giữ nguyên luồng hiện tại, KHÔNG đụng).
+   - `score < SCORE_PASS_THRESHOLD` (từ chối rõ ràng, confident):
+     - JD.`gate_config.auto_reject == True` → **`auto_reject`**.
+     - ngược lại → **`human_review`**.
 
-- `invite_email(candidate_name, job_title) -> (subject, html)`: thư mời phỏng vấn — chúc mừng, nêu vị trí, nói sẽ
-  liên hệ sắp lịch phỏng vấn. Lịch sự, trung tính, tiếng Việt.
-- `rejection_email(candidate_name, job_title) -> (subject, html)`: thư từ chối — cảm ơn đã ứng tuyển vị trí, rất tiếc
-  chưa phù hợp lần này, chúc may mắn. Lịch sự, tôn trọng.
-- HTML đơn giản (không cần đẹp cầu kỳ). Placeholder điền an toàn (escape nếu cần). CỐ ĐỊNH — không sinh bằng LLM.
+- Hàm đọc `gate_config` của JD theo `job_id`. Log/ghi rõ nhánh đã chọn + lý do (score, gate) để audit.
+- **Mặc định gate TẮT** → hành vi mặc định KHÔNG đổi so với hiện tại (mọi điểm thấp vẫn về human_review).
 
-### 3.3 `scheduler.notify_decision(mode)` · `app/agents/nodes/scheduler.py`
+> Lưu ý precedence (quan trọng): ca điểm thấp NHƯNG có cờ (`score_signal_mismatch`…) là _uncertain_ → về
+> human_review dù gate bật. CHỈ ca điểm thấp SẠCH (confident, không cờ) mới được auto-reject.
 
-- Thay phần thân (đang log ý định) bằng:
-  1. Lấy `candidate_name` (từ parsed_data.full_name, fallback "Ứng viên") + `job_title` (từ JD) + `applicant_email`.
-  2. mode `invite` → `invite_email(...)`; mode `reject` → `rejection_email(...)`.
-  3. `await email_service.send_email(to=applicant_email, subject, html)`.
-  4. **Xử lý lỗi gửi:** try/except quanh send — lỗi → log rõ + ghi audit_log `action="email_failed"` (hoặc cờ),
-     nhưng KHÔNG raise làm sập luồng review; quyết định + trạng thái (đã đặt ở 03b) VẪN giữ. (Retry/resend: để sau.)
-  5. Thành công → log + audit `action="email_sent:invite/reject"`.
-- GIỮ vai trò điểm phát email DUY NHẤT. Không gửi email ở chỗ khác.
+### 3.2 Nhánh auto-reject — node/logic
 
-### 3.4 Config · `app/core/config.py`
+- Khi route = `auto_reject`: delegate `scheduler.notify_decision(mode="reject")` (điểm phát email DUY NHẤT →
+  gửi thư từ chối THẬT) → set status `REJECTED` → ghi audit_log (node="gate", action="auto_reject" +
+  scheduler "email_sent:reject"). Chạy đồng bộ trong pipeline (async task), KHÔNG có HR, KHÔNG suspend.
+- Lỗi gửi email nuốt có kiểm soát (như lát 04): trạng thái REJECTED vẫn giữ, audit email_failed.
 
-- Thêm `RESEND_API_KEY`, `EMAIL_FROM` (pydantic-settings). Cập nhật `.env.example`.
+### 3.3 Endpoint bật/tắt gate — `app/api/routes/jobs.py`
 
-### 3.5 Test · `app/tests/test_scheduler_email.py`
+- `PATCH /api/jobs/{id}/gate` (hoặc PUT) body `{auto_reject: bool}` (và có thể `auto_invite` để dành) → cập nhật
+  `gate_config` của JD. Trả JD đã cập nhật. (Phục vụ bật/tắt nhanh; UI đầy đủ ở lát 05.)
 
-- **Mock Resend/email_service** (KHÔNG gửi thật):
-  - notify_decision(invite) → gọi email_service.send_email đúng recipient + template mời (subject/nội dung chứa job_title, tên).
-  - notify_decision(reject) → gọi với template từ chối.
-  - email_service ném lỗi → notify_decision KHÔNG raise (nuốt có kiểm soát) + ghi audit email_failed.
-- Template: điền placeholder đúng (tên + vị trí).
-- Suite cũ vẫn xanh (03b review test không vỡ).
+### 3.4 Test — `app/tests/test_gate_rank.py` (mock scheduler/email)
+
+- Gate ON + điểm thấp SẠCH (confident, không cờ) → route `auto_reject`; scheduler.notify_decision(reject) được gọi; status REJECTED.
+- Gate OFF + điểm thấp → route `human_review` (như cũ), KHÔNG gọi scheduler.
+- Uncertain (có cờ) + gate ON → route `human_review` (gate no-op — an toàn), KHÔNG auto-reject.
+- Confident + đạt ngưỡng → route `continue` (không đổi).
+- PATCH gate cập nhật gate_config đúng.
 
 ---
 
-## 4. Verify (chạy thật — GỬI EMAIL THẬT tới email của bạn)
+## 4. Verify (chạy thật — auto-reject gửi thư từ chối THẬT tới email của bạn)
 
-1. `.env` có `RESEND_API_KEY` + `EMAIL_FROM`. `make dev-backend`.
-2. Tạo application với `applicant_email` = **email của chính bạn** cho JD #2 (upload một CV) → chạy tới PENDING_REVIEW (hoặc dùng ca có sẵn nhưng đổi email về email bạn).
-3. Vào `/review` → **Duyệt** ca đó → kiểm **hòm thư của bạn**: nhận được THƯ MỜI (đúng tên + vị trí). Backend log email_sent; audit có dòng.
-4. Tạo ca khác (email của bạn) → **Từ chối** → nhận THƯ TỪ CHỐI trong hòm thư.
-5. Thử lỗi (tùy chọn): tạm để `RESEND_API_KEY` sai → quyết định vẫn xong (trạng thái đổi), backend log email_failed, KHÔNG sập.
-6. `make test` xanh (mock, không gửi thật); `pnpm build` PASS (nếu có đụng shared-types — lát này chủ yếu backend).
+1. `make dev-backend`. Bật gate cho JD #2: `PATCH /api/jobs/2/gate {auto_reject: true}`.
+2. Tạo application với `applicant_email` = **email của bạn**, upload CV lệch ngành RÕ (vd kế toán) cho JD #2
+   → pipeline chạy: ranker điểm thấp, confident, không cờ → **auto-reject tự động** → status REJECTED, KHÔNG cần vào /review.
+3. Kiểm **hòm thư**: nhận thư từ chối THẬT — do hệ thống tự gửi, không có thao tác HR. Audit có dòng gate/auto_reject + email_sent:reject.
+4. Tắt gate: `PATCH /api/jobs/2/gate {auto_reject: false}`. Lặp lại với CV lệch ngành → lần này vào `/review` (PENDING_REVIEW), KHÔNG tự từ chối.
+5. Ca có cờ (vd CV cho điểm 39 + `score_signal_mismatch`) với gate BẬT → vẫn vào `/review` (an toàn), KHÔNG auto-reject.
+6. Ca đạt ngưỡng (CV backend khớp) → tiếp tục như cũ (không bị gate đụng).
+7. `make test` xanh (mock).
 
 ---
 
 ## 5. Definition of Done
 
-- [ ] Duyệt ca → thư MỜI thật gửi tới email ứng viên (verify bằng email của bạn); Từ chối → thư TỪ CHỐI thật.
-- [ ] Email dùng template CỐ ĐỊNH (không LLM), điền đúng tên + vị trí.
-- [ ] scheduler là điểm phát email DUY NHẤT; luồng review 03b không đổi (chỉ thay thân notify_decision).
-- [ ] Lỗi gửi email KHÔNG làm sập; quyết định/trạng thái vẫn giữ; audit ghi email_sent / email_failed.
-- [ ] Config RESEND_API_KEY/EMAIL_FROM từ env; `.env.example` cập nhật; dep `resend` thêm.
-- [ ] Calendar KHÔNG làm (hoãn). KHÔNG gate. KHÔNG đụng parser/ranker/policy.
-- [ ] `make test` xanh (mock Resend); suite 03b không vỡ.
+- [ ] Định tuyến sau ranker 3 nhánh đúng thứ tự: uncertain→human_review (luôn); confident+thấp→(ON)auto_reject/(OFF)human_review; confident+đạt→continue.
+- [ ] Auto-reject delegate scheduler → thư từ chối THẬT gửi đi (verify bằng email của bạn) → REJECTED + audit.
+- [ ] Ca bất định (có cờ/low-confidence) KHÔNG bị auto-reject dù gate bật (an toàn — verify).
+- [ ] Mặc định gate TẮT → hành vi không đổi so với trước 03c.
+- [ ] `PATCH /api/jobs/{id}/gate` bật/tắt được auto_reject (cấu hình theo JD).
+- [ ] scheduler là điểm phát email DUY NHẤT; lỗi gửi nuốt có kiểm soát (REJECTED vẫn giữ).
+- [ ] KHÔNG auto-mời, KHÔNG UI toggle, KHÔNG đổi schema, KHÔNG đụng ranker-scoring/screener.
+- [ ] `make test` xanh (mock scheduler/email); suite cũ không vỡ.
 
 ---
 
 ## 6. Ranh giới & quy ước (theo CLAUDE.md)
 
-- CHỈ động vào: email_service + templates + scheduler.notify_decision (thân) + config + test. KHÔNG đổi endpoint/luồng review.
-- Template CỐ ĐỊNH, KHÔNG sinh bằng LLM (nhất quán + pháp lý). Calendar hoãn.
-- Lỗi gửi email nuốt có kiểm soát (log + audit), KHÔNG sập luồng; quyết định HR luôn được giữ.
-- scheduler giữ vai trò điểm phát email DUY NHẤT — đừng rải send_email chỗ khác.
-- Test mock Resend (không gửi thật, không tốn quota/không phụ thuộc mạng trong CI).
-- Async-first; config từ env; không hardcode key/from/nội dung nhạy cảm.
-- Commit nhỏ (vd `feat(email): email_service qua Resend + config`, `feat(email): template thư mời/từ chối`, `feat(scheduler): notify_decision gửi email thật + xử lý lỗi`, `test(scheduler): mock Resend + template`).
-- Nghiệp vụ chưa rõ → tra **PRD.md** (§7.4, §12.4). PRD chưa đủ → DỪNG, hỏi.
-- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhắc dùng email của người dùng), checklist DoD.
+- CHỈ động vào: policy định tuyến + nhánh auto-reject + endpoint gate + test. KHÔNG đụng ranker-scoring, screener, luồng review 03b.
+- An toàn là ưu tiên số 1: uncertain LUÔN về human_review; gate chỉ áp lên ca confident điểm thấp SẠCH.
+- Tái dùng scheduler (điểm phát email duy nhất); KHÔNG gửi email chỗ khác.
+- Cấu hình theo JD (gate_config sẵn có); mặc định TẮT; không hardcode ngưỡng (từ env).
+- Commit nhỏ (vd `feat(gate): định tuyến có gate sau ranker (3 nhánh)`, `feat(gate): nhánh auto-reject delegate scheduler`, `feat(api): PATCH bật/tắt gate theo JD`, `test(gate): mock scheduler + các nhánh`).
+- Nghiệp vụ chưa rõ → tra **PRD.md** (§9, §8.3). PRD chưa đủ → DỪNG, hỏi.
+- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhắc dùng email của người dùng + bật gate), checklist DoD.
 
 ---
 
-## 7. Lát kế tiếp (KHÔNG làm bây giờ)
+## 7. Sau lát này
 
-**03c Gate rank** (auto-từ-chối dùng score + gate_config — giờ sẽ gửi email từ chối THẬT qua scheduler, PRD §9).
-Rồi GĐ2: đăng JD UI + nộp CV công khai + storage. Xem ROADMAP.md. (Google Calendar: cân nhắc lát riêng nếu cần.)
+Giai đoạn 1 (vòng lặp HITL cốt lõi) HOÀN TẤT: CV vào → chấm → (tự tin: đạt→tiếp / thấp→auto-reject nếu gate bật) →
+(bất định→HR duyệt) → email thật ra. Kế tiếp: **GĐ2** — UI quản lý JD (gồm UI toggle gate), nộp CV công khai, object storage. Xem ROADMAP.md.

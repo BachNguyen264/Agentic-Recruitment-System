@@ -190,6 +190,41 @@ async def test_background_auto_reject_delegates_scheduler(monkeypatch) -> None:
     assert ("gate", "auto_reject") in audits
 
 
+async def test_background_auto_reject_survives_notify_error(monkeypatch) -> None:
+    # notify_decision raise (vd audit commit lỗi SAU khi email đã gửi) KHÔNG được reset REJECTED về
+    # PENDING_REVIEW — dispatch phải cô lập khỏi handler lỗi kỹ thuật (quyết định đã commit).
+    from app.agents.nodes import scheduler
+    from app.models.application import Application, ApplicationStatus
+    from app.models.job_posting import JobPosting
+    from app.tasks import background
+
+    app_row = Application(id=1, applicant_email="me@e.com", job_id=2, status="SUBMITTED")
+    job = JobPosting(id=2, title="Backend Intern")
+    session = _FakeSession({(Application, 1): app_row, (JobPosting, 2): job})
+
+    class _Ctx:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(background, "AsyncSessionLocal", lambda: _Ctx())
+    monkeypatch.setattr(
+        background, "run_with_trace",
+        lambda **_kw: _await_value(_auto_reject_out(ApplicationStatus.REJECTED.value)),
+    )
+
+    async def boom(_session, mode, **kw):  # noqa: ANN001
+        raise RuntimeError("audit commit failed after email sent")
+
+    monkeypatch.setattr(scheduler, "notify_decision", boom)
+
+    await background.process_application(1)  # KHÔNG được raise ra ngoài
+
+    assert app_row.status == ApplicationStatus.REJECTED.value  # REJECTED giữ nguyên, KHÔNG reset
+
+
 async def _await_value(value):
     return value
 

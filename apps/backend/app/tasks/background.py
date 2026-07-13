@@ -111,7 +111,8 @@ async def process_application(application_id: int, *, force_review: bool = False
                 detail={"final_status": final.get("status")}, commit=False,
             )
 
-            # Gom dữ liệu email auto-reject TRƯỚC commit (sau commit thuộc tính có thể expire).
+            # Gom dữ liệu email auto-reject vào biến cục bộ để khối gửi (SAU commit) không phụ thuộc
+            # ORM object — dữ liệu email tách khỏi vòng đời session.
             auto_reject = out["branch"] == "auto_reject"
             if auto_reject:
                 reject_email = application.applicant_email
@@ -124,15 +125,22 @@ async def process_application(application_id: int, *, force_review: bool = False
                 application_id, out["branch"], final.get("status"),
             )
 
-            # Gate auto-từ-chối (PRD §9): quyết định (REJECTED) đã commit → gửi thư từ chối THẬT qua
-            # scheduler (điểm phát email DUY NHẤT). Lỗi gửi notify_decision nuốt có kiểm soát: audit
-            # email_failed, REJECTED VẪN giữ. KHÔNG có HR, KHÔNG suspend.
+            # Gate auto-từ-chối (PRD §9): quyết định (REJECTED) ĐÃ commit → gửi thư từ chối THẬT qua
+            # scheduler (điểm phát email DUY NHẤT), KHÔNG có HR, KHÔNG suspend. CÔ LẬP khỏi handler
+            # lỗi kỹ thuật bên dưới: mọi lỗi ở đây (kể cả lỗi commit audit của notify_decision sau khi
+            # email đã gửi) KHÔNG được reset REJECTED về PENDING_REVIEW — nuốt + log (như review 03b).
             if auto_reject:
-                await scheduler.notify_decision(
-                    session, "reject", application_id=application_id,
-                    applicant_email=reject_email, candidate_name=reject_name,
-                    job_title=reject_title,
-                )
+                try:
+                    await scheduler.notify_decision(
+                        session, "reject", application_id=application_id,
+                        applicant_email=reject_email, candidate_name=reject_name,
+                        job_title=reject_title,
+                    )
+                except Exception:  # noqa: BLE001 — REJECTED đã commit; lỗi email/audit KHÔNG làm sập
+                    logger.exception(
+                        "BG: notify_decision(reject) lỗi SAU khi REJECTED đã commit app=%s",
+                        application_id,
+                    )
         except Exception:  # noqa: BLE001 — lỗi kỹ thuật -> PENDING_REVIEW[error] (PRD §13)
             logger.exception("BG: lỗi xử lý application_id=%s", application_id)
             await session.rollback()
