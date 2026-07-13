@@ -79,3 +79,25 @@ async def test_send_email_success_passes_params(monkeypatch) -> None:
     monkeypatch.setattr(email_service, "_send_sync", fake_send)
     await email_service.send_email(to="a@e.com", subject="Mời", html="<p>xin chào</p>")
     assert captured == {"to": "a@e.com", "subject": "Mời", "html": "<p>xin chào</p>"}
+
+
+async def test_send_email_builds_resend_payload(monkeypatch) -> None:
+    # Chạy _send_sync THẬT (chỉ mock resend.Emails.send) → khoá đúng shape payload Resend:
+    # key `from`, `to` bọc thành list. Bắt lỗi sai key ('from_') / to chưa bọc list.
+    import resend
+
+    monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(email_service.settings, "email_from", "onboarding@resend.dev")
+    captured: dict = {}
+
+    def fake_resend_send(params: dict) -> dict:
+        captured.update(params)
+        return {"id": "email_123"}
+
+    monkeypatch.setattr(resend.Emails, "send", fake_resend_send)
+    await email_service.send_email(to="a@e.com", subject="Mời", html="<p>hi</p>")
+
+    assert captured["from"] == "onboarding@resend.dev"
+    assert captured["to"] == ["a@e.com"]  # phải là list
+    assert captured["subject"] == "Mời"
+    assert captured["html"] == "<p>hi</p>"

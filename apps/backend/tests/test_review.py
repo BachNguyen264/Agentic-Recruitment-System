@@ -13,6 +13,7 @@ import pytest
 
 from app.models.application import Application, ApplicationStatus
 from app.models.audit_log import AuditLog
+from app.models.job_posting import JobPosting
 from app.services import review
 
 
@@ -124,3 +125,49 @@ async def test_review_rejects_wrong_status(monkeypatch) -> None:
 async def test_review_missing_application() -> None:
     with pytest.raises(review.ApplicationNotFound):
         await review.review_decision(FakeSession(None), 99, "approve", None)
+
+
+async def test_review_passes_candidate_and_job_to_scheduler(monkeypatch) -> None:
+    # Wiring 04: review_decision phải trích ĐÚNG tên (parsed_data.full_name) + vị trí (JD.title)
+    # + email và truyền vào notify_decision (điểm phát email). Chống swap-arg / sai key.
+    captured: dict = {}
+
+    async def fake_notify(_session, mode, **kw):  # noqa: ANN001
+        captured.update(mode=mode, **kw)
+        return {"mode": mode, "email_sent": True}
+
+    monkeypatch.setattr(review.scheduler, "notify_decision", fake_notify)
+
+    app_row = _app(app_id=1)
+    app_row.job_id = 7
+    app_row.parsed_data = {"full_name": "Nguyễn Văn A"}
+    job = JobPosting(id=7, title="Backend Intern (Node.js)")
+
+    class SessionWithJob(FakeSession):
+        async def get(self, model, pk):  # noqa: ANN001
+            if model is JobPosting and pk == 7:
+                return job
+            return await super().get(model, pk)
+
+    await review.review_decision(SessionWithJob(app_row), 1, "approve", None)
+
+    assert captured["applicant_email"] == "ung.vien@example.com"
+    assert captured["candidate_name"] == "Nguyễn Văn A"
+    assert captured["job_title"] == "Backend Intern (Node.js)"
+
+
+async def test_review_falls_back_when_no_parsed_name_or_job(monkeypatch) -> None:
+    # Không có full_name / không gắn JD → fallback an toàn (không vỡ, không None).
+    captured: dict = {}
+
+    async def fake_notify(_session, mode, **kw):  # noqa: ANN001
+        captured.update(**kw)
+        return {"mode": mode, "email_sent": True}
+
+    monkeypatch.setattr(review.scheduler, "notify_decision", fake_notify)
+    app_row = _app(app_id=1)  # parsed_data=None, job_id=2 (FakeSession.get trả None cho JobPosting)
+
+    await review.review_decision(FakeSession(app_row), 1, "reject", None)
+
+    assert captured["candidate_name"] == "Ứng viên"
+    assert captured["job_title"] == "vị trí ứng tuyển"
