@@ -21,6 +21,7 @@ dependencies = [
     "pymupdf>=1.27.2.3",
     "python-docx>=1.2.0",
     "python-multipart>=0.0.32",
+    "resend>=2.32.2",
 ]
 
 [dependency-groups]

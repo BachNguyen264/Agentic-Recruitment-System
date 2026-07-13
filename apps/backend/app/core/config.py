@@ -70,6 +70,13 @@ class Settings(BaseSettings):
     # Một collection dùng chung JD + CV (phân biệt bằng payload "type") — plan 02a.
     qdrant_collection: str = "cv_jd_embeddings"
 
+    # ── Email (slice-04 Scheduler gửi thư mời/từ chối qua Resend — PRD §7.4, §12.4) ──
+    # KHÔNG hardcode key. EMAIL_FROM mặc định địa chỉ test của Resend (onboarding@resend.dev) —
+    # với sender này + domain CHƯA xác thực, Resend chỉ gửi tới email tài khoản Resend của bạn.
+    # Đổi sang địa chỉ thuộc domain đã xác thực khi demo public.
+    resend_api_key: str | None = None
+    email_from: str = "onboarding@resend.dev"
+
     # ── Langfuse (observability — phase sau) ─────────────────────────
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
