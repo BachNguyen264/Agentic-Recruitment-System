@@ -143,6 +143,23 @@ export interface JobMutationResult {
   embedding_warning: string | null;
 }
 
+// ── Công khai (ứng viên guest — slice 07) ──
+// JD projection AN TOÀN — khớp PublicJobRead (backend). KHÔNG có rubric/gate_config/screener_questions
+// (cố ý: ứng viên không được thấy tiêu chí chấm).
+export interface PublicJob {
+  id: number;
+  title: string;
+  description: string;
+  requirements: string[];
+  created_at: string;
+}
+
+// Xác nhận nộp CV — khớp PublicSubmitResponse. KHÔNG có điểm/trạng thái (ứng viên không thấy).
+export interface PublicSubmitResult {
+  application_id: number;
+  message: string;
+}
+
 // Parser (PRD §7.1) — khớp app/schemas/parsed_cv.py (backend). Mọi trường có thể null/rỗng.
 export interface Experience {
   company: string | null;

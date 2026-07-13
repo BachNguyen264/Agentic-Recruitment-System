@@ -5,6 +5,8 @@ import type {
   JobPosting,
   JobPostingInput,
   ParseCvResponse,
+  PublicJob,
+  PublicSubmitResult,
   ReviewDecision,
 } from "@ars/shared-types";
 
@@ -65,6 +67,29 @@ export const setJobStatus = (id: number, status: "OPEN" | "CLOSED") =>
 // MUTATION human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.
 export const submitReview = (id: number, decision: ReviewDecision, note: string | null) =>
   postJson<ApplicationDetail>(`/api/applications/${id}/review`, { decision, note });
+
+// ── Công khai (ứng viên guest — slice 07) ──
+export const getOpenJobs = () => getJson<PublicJob[]>("/api/public/jobs");
+export const getPublicJob = (id: number) => getJson<PublicJob>(`/api/public/jobs/${id}`);
+
+// Nộp CV công khai (multipart: job_id + email + file). Lỗi validate server → ném message rõ.
+export async function submitApplication(
+  jobId: number,
+  email: string,
+  file: File,
+): Promise<PublicSubmitResult> {
+  const form = new FormData();
+  form.append("job_id", String(jobId));
+  form.append("applicant_email", email);
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/api/public/applications`, { method: "POST", body: form });
+  if (!res.ok) {
+    // Backend trả {detail} (vd JD đã đóng / file sai) — hiện message thân thiện cho ứng viên.
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? `HTTP ${res.status} khi nộp hồ sơ`);
+  }
+  return (await res.json()) as PublicSubmitResult;
+}
 
 // Upload CV -> POST /api/agents/parse-cv (multipart). KHÔNG tự set Content-Type:
 // để browser tự thêm boundary cho FormData.
