@@ -4,6 +4,9 @@ import type { ScoreBreakdownData } from "@ars/shared-types";
 // Chỉ hiển thị điểm rubric (điểm CHÍNH) + tín hiệu phụ; KHÔNG chứa nút duyệt/từ chối (mutation là lát sau).
 interface ScoreBreakdownProps {
   breakdown: ScoreBreakdownData;
+  // Cờ "cần chú ý" (score_signal_mismatch/weak_match/near_threshold) là chỉ báo HÀNH ĐỘNG cho HR:
+  // chỉ hiện khi hồ sơ còn chờ quyết. Mặc định true → ReviewCard (/review, luôn PENDING_REVIEW) không đổi.
+  showFlags?: boolean;
 }
 
 function confidenceStyle(c: number): { label: string; cls: string } {
@@ -16,7 +19,7 @@ function pct(weight: number): string {
   return `${Math.round(weight * 100)}%`;
 }
 
-export function ScoreBreakdown({ breakdown }: ScoreBreakdownProps) {
+export function ScoreBreakdown({ breakdown, showFlags = true }: ScoreBreakdownProps) {
   const { overall_score, criteria, semantic_similarity, confidence, uncertainty_flags, summary } =
     breakdown;
   const conf = confidence != null ? confidenceStyle(confidence) : null;
@@ -31,14 +34,15 @@ export function ScoreBreakdown({ breakdown }: ScoreBreakdownProps) {
             Tự tin: {conf.label} · {confidence!.toFixed(2)}
           </span>
         )}
-        {uncertainty_flags.map((flag) => (
-          <span
-            key={flag}
-            className="rounded bg-amber-100 px-2 py-0.5 text-sm font-medium text-amber-800"
-          >
-            {flag}
-          </span>
-        ))}
+        {showFlags &&
+          uncertainty_flags.map((flag) => (
+            <span
+              key={flag}
+              className="rounded bg-amber-100 px-2 py-0.5 text-sm font-medium text-amber-800"
+            >
+              {flag}
+            </span>
+          ))}
       </div>
 
       {failed ? (

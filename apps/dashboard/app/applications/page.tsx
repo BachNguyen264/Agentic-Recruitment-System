@@ -45,7 +45,9 @@ function Row({ app }: { app: ApplicationListItem }) {
           </span>
         </div>
       </div>
-      {app.uncertainty_flags.length > 0 && (
+      {/* Cờ "cần chú ý" chỉ là chỉ báo HÀNH ĐỘNG cho HR → CHỈ hiện khi còn chờ quyết (PENDING_REVIEW).
+          Hồ sơ đã quyết (REJECTED/INTERVIEW_SCHEDULED) chỉ hiện trạng thái cuối (BUG B). */}
+      {app.status === "PENDING_REVIEW" && app.uncertainty_flags.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {app.uncertainty_flags.map((flag) => (
             <span

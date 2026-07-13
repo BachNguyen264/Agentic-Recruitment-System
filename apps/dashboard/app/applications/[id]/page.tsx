@@ -65,16 +65,18 @@ export default function ApplicationDetailPage() {
             </p>
           </header>
 
-          {/* Lý do cần HR xem xét (PRD §11) — hiện khi có, giúp HR nắm nhanh vì sao leo thang. */}
-          {app.escalation_reason?.trim() && (
+          {/* Lý do cần HR xem xét (PRD §11) — chỉ báo HÀNH ĐỘNG: CHỈ hiện khi còn chờ quyết
+              (PENDING_REVIEW). Hồ sơ đã quyết chỉ xem trạng thái cuối, không nhắc "cần xem xét" (BUG B). */}
+          {app.status === "PENDING_REVIEW" && app.escalation_reason?.trim() && (
             <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               <p className="font-medium">Cần HR xem xét</p>
               <p className="mt-1 text-amber-800">{app.escalation_reason}</p>
             </div>
           )}
 
-          {/* Điểm đối sánh + từng tiêu chí (tái dùng được ở ReviewCard lát sau) */}
-          <ScoreBreakdown breakdown={toBreakdown(app)} />
+          {/* Điểm đối sánh + từng tiêu chí (tái dùng ở ReviewCard). Cờ "cần chú ý" chỉ hiện khi
+              còn chờ quyết — hồ sơ đã quyết xem điểm sạch, không badge cờ (BUG B). */}
+          <ScoreBreakdown breakdown={toBreakdown(app)} showFlags={app.status === "PENDING_REVIEW"} />
 
           {/* Ngữ cảnh JD: yêu cầu chính, để HR biết ứng viên được chấm dựa trên gì. */}
           {jobQuery.data && jobQuery.data.requirements.length > 0 && (
