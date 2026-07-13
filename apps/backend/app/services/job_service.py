@@ -160,3 +160,20 @@ async def list_jobs(session: AsyncSession, *, limit: int = 100) -> list[JobPosti
         select(JobPosting).order_by(JobPosting.created_at.desc()).limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def list_open_jobs(session: AsyncSession, *, limit: int = 100) -> list[JobPosting]:
+    """JD đang MỞ cho trang công khai (PRD §8.2, FR-AP-1). Chỉ status=OPEN."""
+    result = await session.execute(
+        select(JobPosting)
+        .where(JobPosting.status == "OPEN")
+        .order_by(JobPosting.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def get_open_job(session: AsyncSession, job_id: int) -> JobPosting | None:
+    """JD công khai theo id — CHỈ khi OPEN (chống nộp vào JD đã đóng). None nếu không OPEN/không có."""
+    job = await session.get(JobPosting, job_id)
+    return job if (job is not None and job.status == "OPEN") else None

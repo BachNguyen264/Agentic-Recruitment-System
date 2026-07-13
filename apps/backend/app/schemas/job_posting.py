@@ -89,6 +89,30 @@ class JobPostingRead(BaseModel):
         return v
 
 
+class PublicJobRead(BaseModel):
+    """JD cho trang CÔNG KHAI (ứng viên guest — PRD §8.2, §12.2). PROJECTION AN TOÀN: CHỈ trường
+    ứng-viên-thấy. TUYỆT ĐỐI KHÔNG khai báo rubric/gate_config/screener_questions/status/embedding_ref
+    (lộ rubric → ứng viên nhồi từ khóa). Các trường không khai báo sẽ KHÔNG được đọc/serialize.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    description: str
+    requirements: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+    @field_validator("requirements", mode="before")
+    @classmethod
+    def _split_requirements(cls, v: object) -> object:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [line for line in v.splitlines() if line.strip()]
+        return v
+
+
 class JobPostingCreateResult(BaseModel):
     """POST /api/jobs: JD đã lưu + cảnh báo nếu embedding lỗi (JD vẫn tạo được)."""
 

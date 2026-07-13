@@ -25,6 +25,13 @@ class ReviewRequest(BaseModel):
     note: str | None = None
 
 
+class PublicSubmitResponse(BaseModel):
+    """Xác nhận nộp CV công khai (PRD §8.2). KHÔNG lộ điểm/parsed_data/trạng thái cho ứng viên."""
+
+    application_id: int
+    message: str = "Đã nhận hồ sơ. Chúng tôi sẽ liên hệ với bạn qua email."
+
+
 class ApplicationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
