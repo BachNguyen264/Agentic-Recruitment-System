@@ -1,127 +1,121 @@
-# ROADMAP — Hệ thống Tuyển dụng Tự trị (bản đồ các lát triển khai)
+# ROADMAP — Autonomous Recruitment System (map of implementation slices)
 
-> **Bản chất:** bản đồ SỐNG để không lạc — chia công việc còn lại thành từng lát mỏng, có thứ tự + lý do.
-> Không phải hợp đồng: lát có thể tách/đổi thứ tự khi phát hiện điều mới (như bug parser rớt TOEIC đã dạy).
-> Nguồn chân lý vẫn là **`PRD.md`**. Mỗi lát = một plan one-shot riêng khi tới lượt.
+> **Living map** to stay oriented — remaining work split into thin slices, ordered, with rationale.
+> **Not a contract:** slices may split/reorder as we learn (the parser-dropped-TOEIC bug taught us).
+> Source of truth is still **`PRD.md`** (Vietnamese). Each slice = its own one-shot plan when its turn comes.
 >
-> Nguyên tắc xuyên suốt: lát mỏng, backend trước UI ngay sau, verify từng lát, lọc mọi ý qua PRD chống phình.
+> Throughout: thin slices, backend then UI right after, verify each slice, filter every idea through the PRD.
 
 ---
 
-## ✅ ĐÃ XONG
+## ✅ DONE
 
-- Scaffold (7 phase) · PWA migration (bỏ React Native).
-- **01** Parser thật (gpt-4.1-mini) · **01b** UI upload CV (/cv-check) · **01c** certificates/languages/awards/other + benchmark.
-- **02a** JD + embedding Qdrant · **02b** Ranker thật (Hướng A, chọn **gpt-5-mini** effort=low).
-- **03a** Màn HR: danh sách ứng viên + chi tiết điểm (chỉ đọc).
-- Dọn dẹp: xóa data demo + gỡ Run demo.
-
----
-
-## 🟡 GIAI ĐOẠN 1 — Hoàn thiện vòng lặp HITL cốt lõi (ĐANG LÀM)
-
-> Mục tiêu: pipeline QUYẾT ĐỊNH được end-to-end (CV → chấm → gate/HR → email ra). Đây là lõi + câu chuyện đồ án.
-
-- **03b — human_review THẬT** (PRD §11) · _TIẾP THEO_
-  ReviewCard (tái dùng `ScoreBreakdown` từ 03a: tóm tắt + điểm + lý do leo thang) + nút Duyệt/Từ chối →
-  delegate `scheduler`. Biến điểm đến human_review từ stub thành khâu thật. Ghi audit_log quyết định HR.
-- **03c — Gate rank** (PRD §9) · _phụ thuộc: ranker (xong)_
-  Auto-từ-chối dùng `score` + `gate_config` của JD: bật → điểm thấp thành REJECTED (+ delegate scheduler gửi thư
-  từ chối); tắt → mọi từ chối vào human_review. Ca bất định LUÔN vào human_review (gate no-op). + UI bật/tắt gate.
-- **04 — Scheduler THẬT (email)** (PRD §7.4) · _phụ thuộc: 03b (delegate)_
-  Điểm phát email DUY NHẤT: gửi thư mời / thư từ chối qua email provider (SMTP/Resend/SendGrid free). Calendar có
-  thể đơn giản hóa/để sau. Biến "duyệt/từ chối" ở 03b/03c thành email thật gửi đi.
-  → **Mốc:** vòng lặp lõi chạy end-to-end thật.
+- Scaffold (7 phases) · PWA migration (dropped React Native).
+- **01** Parser (gpt-4.1-mini) · **01b** CV-upload UI (`/cv-check`) · **01c** certificates/languages/awards/other + model benchmark.
+- **02a** JD + Qdrant embedding · **02b** Ranker (Hướng A: reasoned rubric scoring; chose **gpt-5-mini** effort=low).
+- **03a** HR candidate list + score detail (read-only).
+- **03b** human_review (ReviewCard + approve/reject → scheduler) · **03c** gate rank (auto-reject, per-JD toggle).
+- **04** Scheduler email (real invite/rejection via **Resend**).
+- **05** JD management UI (create/edit/close + gate toggle + dynamic rubric).
+- Cleanup: removed demo data + Run-demo.
 
 ---
 
-## 🔵 GIAI ĐOẠN 2 — Cổng vào thật (đăng JD + nộp CV công khai + storage)
+## ✅ PHASE 1 — Core HITL loop — **COMPLETE**
 
-> Mục tiêu: ứng viên nộp CV thật cho JD thật; HR quản lý JD qua web; file lưu bền. (Hiện tạo qua /docs + local disk.)
-
-- **05 — JD management UI** (PRD §12.1 FR-HR-JD-1)
-  Trang HR tạo/sửa/đóng JD qua web (title, description, requirements, rubric, screener_questions, gate_config) —
-  thay cho việc gọi API tay. Tạo JD → embedding Qdrant (đã có ở 02a).
-- **06 — Object storage** (PRD §16 cv_file_ref; bàn deploy)
-  Chuyển lưu CV từ đĩa local → cloud (Cloudflare R2 / Supabase Storage, S3-compatible). Bọc sau interface
-  `save/get/url` (local dev ↔ cloud prod, đổi bằng config). _Có thể dời xuống GĐ5/deploy — local đủ cho dev._
-- **07 — Nộp CV công khai** (PRD §8.2, §12.2 FR-AP-1/2)
-  Trang công khai: xem danh sách JD đang mở → chọn JD → nộp CV (gắn đúng JD) → vào pipeline async. Đây chính là
-  "tạo JD xong nộp CV tương ứng với từng JD". (Tái dùng `CVUpload`; guest, chỉ cần email.)
-  → **Mốc:** luồng vào thật hoàn chỉnh.
+Verified end-to-end live: **CV in → scored → (confident: pass→continue / clean-low→auto-reject if gated) →
+(uncertain→HR review) → real email out.** This is the core + the thesis story. (Slices 03b, 03c, 04.)
 
 ---
 
-## 🔵 GIAI ĐOẠN 3 — Screener bất đồng bộ (PRD §10 — phần KHÓ NHẤT)
+## 🟡 PHASE 2 — Real intake (JD posting + public CV submission + storage) — IN PROGRESS
 
-> Mục tiêu: pipeline dừng chờ ứng viên rồi thức dậy. Tách nhỏ vì đây là lát phức tạp nhất. _Phụ thuộc: 04 (email), 07 (submission)._
+> Goal: applicants submit real CVs for real JDs; HR manages JDs via web; files persist.
 
-- **08a — Postgres checkpointer + suspend/resume** (NFR-2, §10 FR-SCR-1/2)
-  Chuyển checkpointer MemorySaver → Postgres (Neon). Pipeline dừng ở screener, lưu state bền; resume được từ điểm dừng.
-- **08b — Magic-link form** (§7.3, §12.2 FR-AP-3)
-  Route công khai `/screening/<token>`; gửi email bộ câu hỏi (cố định theo JD); ứng viên điền form → nhận trả lời →
-  resume pipeline. Kiểm token (hạn/đã dùng). Chuẩn hóa câu trả lời (LLM nhẹ, không chatbot).
-- **08c — Timeout + nhắc + trả lời trễ** (§10 FR-SCR-3/4/5)
-  Job quét deadline định kỳ; nhắc +24h một lần; timeout → human_review (`no_response`, KHÔNG auto-loại); xử lý reply trễ.
-- **08d — Gate mời** (PRD §9)
-  Sau screener: auto-mời bật + ổn → scheduler; tắt / có cờ → human_review. Hoàn thiện gate thứ hai.
-  → **Mốc:** Screener đầy đủ, pipeline bất đồng bộ hoàn chỉnh (điểm nhấn kỹ thuật lớn).
-
----
-
-## 🔵 GIAI ĐOẠN 4 — Xác thực & phân quyền (PRD §4)
-
-- **09 — HR admin auth**
-  Đăng nhập HR; bảo vệ mọi route/màn HR (dashboard, JD, review, gate). Ứng viên giữ **guest** (không bắt đăng nhập
-  để nộp); tùy chọn tài khoản ứng viên tra cứu đơn. _Có thể dời sớm hơn nếu cần bảo mật/demo; dev thì làm muộn tiện hơn._
-  → **Mốc:** phân quyền thật (guest nộp CV, HR đăng nhập quản lý).
+- **05 — JD management UI** — **DONE** (create/edit/close, gate toggle, dynamic rubric, conditional re-embed).
+- **07 — Public CV submission ← NEXT** (PRD §8.2, §12.2). Public page listing OPEN JDs → applicant (guest,
+  email only) picks a JD → submits CV tied to that JD → async pipeline. Applicant is fire-and-forget: no account,
+  confirmation screen only, outcome by email later. Public JD projection hides rubric/gate/screener. Reuses
+  `CVUpload`. Local file storage for now.
+- **06 — Object storage** (PRD §16). Move CV files from local disk → cloud (Cloudflare R2 / Supabase Storage,
+  S3-compatible) behind a `save/get/url` interface (local dev ↔ cloud prod via config). **DEFERRED** — local is
+  fine for dev; fold in near deploy.
+  → **Milestone:** complete real intake path.
 
 ---
 
-## 🔵 GIAI ĐOẠN 5 — Vững chắc & triển khai
+## 🔵 PHASE 3 — Screener async (PRD §10 — the HARDEST part)
 
-- **10 — Thống kê / analytics** (PRD §12.1 FR-HR-ANALYTICS-1)
-  Số CV, tỉ lệ passed/rejected/pending theo JD; nền cho vòng học sau.
-- **11 — Observability** (NFR-6)
-  Langfuse Cloud: giám sát chi phí token, độ trễ, tỉ lệ lỗi của các lời gọi LLM.
-- **12 — Chống prompt injection** (NFR-5)
-  Làm sạch/đóng khung nội dung CV + câu trả lời ứng viên trước khi đưa vào LLM (chống chèn lệnh qua CV).
-- **13 — Triển khai (deploy)**
-  Backend → Render/Railway; frontend → Vercel; storage cloud (nếu chưa làm ở 06); env secrets; xử lý managed
-  auto-suspend (đánh thức trước demo). Lưu ý dữ liệu cá nhân (NFR-4) — dùng CV ẩn danh khi demo public.
-  → **Mốc:** hệ thống chạy trên internet, demo từ xa được.
+> Pipeline pauses waiting for the applicant, then wakes. Split small; most complex. Depends on 04 (email) + 07.
 
----
-
-## ⚪ GIAI ĐOẠN 6 — Tương lai / tùy chọn (PRD §17)
-
-- **14 — LLM đề xuất rubric từ JD + HR duyệt/chỉnh** (bán tự động, trụ cột 4)
-  Gắn vào luồng đăng JD (GĐ2): HR nhập JD → LLM đề xuất rubric → HR sửa → lưu. Giải bài "HR quên đặt tiêu chí".
-  Điểm nhấn học thuật mạnh (AI đề xuất, người duyệt). Làm khi có thời gian.
-- **15 — Khác:** Zalo OA cho Screener · web push xuyên nền tảng (iOS) · vòng học đầy đủ (gom mẫu→đề xuất) ·
-  đa JD/ứng viên · A/B testing rubric.
+- **08a — Postgres checkpointer + suspend/resume** (NFR-2, §10). MemorySaver → Postgres; pipeline pauses at
+  screener, state durable, resumes from the pause point.
+- **08b — Magic-link form** (§7.3, §12.2). Public `/screening/<token>` route; email the fixed question set (per
+  JD); applicant fills form → answers captured → resume. Validate token (expiry/used). Normalize answers (light LLM, not a chatbot).
+- **08c — Timeout + reminder + late reply** (§10). Periodic deadline sweep; one reminder at +24h; timeout →
+  human_review (`no_response`, NEVER auto-reject); handle late replies.
+- **08d — Gate invite** (§9). After screener: auto-invite on + clean → scheduler; off/flagged → human_review. Completes the second gate.
+  → **Milestone:** full Screener; complete async pipeline (major technical highlight).
 
 ---
 
-## Ghi chú thứ tự & điểm linh hoạt
+## 🔵 PHASE 4 — Auth (PRD §4)
 
-- **Vì sao GĐ1 trước:** hoàn thiện vòng quyết định = giá trị/câu chuyện cao nhất. Có nó, bạn demo được lõi tự trị + HITL.
-- **Vì sao auth (GĐ4) muộn:** dev đỡ vướng đăng nhập; chức năng vẫn chạy không cần auth. Dời sớm nếu cần bảo mật/demo.
-- **Vì sao Screener (GĐ3) sau cổng vào:** nó cần email (04) + luồng nộp (07) mới có nghĩa, và là phần khó nhất → làm khi nền vững.
-- **Storage (06) linh hoạt:** local đủ cho dev; có thể gộp vào lúc deploy (13).
-- **Nếu thiếu thời gian (bản tối thiểu để bảo vệ):** GĐ1 đầy đủ + 05/07 (cổng vào) + 09 (auth) + 13 (deploy);
-  Screener (GĐ3) có thể rút gọn (vd bỏ timeout tự động, làm luồng cơ bản) — nêu rõ phần rút gọn trong báo cáo.
-- **Đừng để design/ý tưởng đẻ lát ngoài roadmap** — ý mới lọc qua PRD trước; đáng làm thì cập nhật PRD/roadmap rồi mới làm.
+- **09 — HR admin auth.** Login; protect all HR routes/pages (dashboard, JD, review, gate). **Applicant stays
+  guest forever** — no applicant accounts (deliberate: single-tenant internal system, fire-and-forget intake).
+  So auth = ONE user type only. Can move earlier if security/demo needs it; later is easier for dev.
+  → **Milestone:** real access control (guest submits, HR logs in to manage).
 
 ---
 
-## Trạng thái nhanh (cập nhật khi xong lát)
+## 🔵 PHASE 5 — Hardening & deploy
+
+- **10 — Analytics** (PRD §12.1). CV counts, passed/rejected/pending rates per JD; foundation for the learning loop.
+- **11 — Observability** (NFR-6). Langfuse Cloud: token cost, latency, LLM error rates.
+- **12 — Anti-prompt-injection** (NFR-5). Sanitize/frame CV + applicant answers before they reach the LLM (block injected instructions via CV).
+- **UI redesign.** Full visual pass over the UI (currently plain Tailwind scaffolding built to verify flows). Do
+  it HERE, near the end, as its OWN work: incremental (screen by screen), no-backend-touched (presentational
+  components make this safe), verify each piece. Prefer polishing in plain Tailwind (spacing/typography/color/
+  hierarchy/consistency — enough for a modern look) over adopting a component library (bigger, riskier lift across a finished app).
+- **13 — Deploy.** Backend → Render/Railway; frontend → Vercel; cloud storage (if not done in 06); env secrets;
+  handle managed auto-suspend (wake before demo). Mind personal data (NFR-4) — use anonymized CVs for public demos.
+  → **Milestone:** running on the internet, demo-able remotely.
+
+---
+
+## ⚪ PHASE 6 — Future / optional (PRD §17)
+
+- **14 — LLM-suggested rubric + HR approval** (semi-auto, pillar 4). Hooks into JD posting (Phase 2): HR enters
+  JD → LLM proposes a rubric → HR edits → save. Solves "HR forgot to set criteria." Strong academic highlight
+  (AI proposes, human approves). Do it if time allows.
+- **15 — Others:** Zalo OA for Screener · cross-platform web push (iOS) · full learning loop (collect samples →
+  propose) · multi-JD/applicant · rubric A/B testing.
+
+---
+
+## Sequencing notes & flex points
+
+- **Phase 1 first:** completing the decision loop = highest value/story. With it, you can demo the autonomous core + HITL.
+- **Auth (Phase 4) late:** dev is easier without login friction; features work without it. Move earlier if security/demo needs it.
+- **Screener (Phase 3) after intake:** it needs email (04) + submission (07) to be meaningful, and it's the hardest → do it on a solid base.
+- **Storage (06) flexible:** local is fine for dev; can fold into deploy (13).
+- **Applicant is guest forever** (no accounts) — deliberate scope: single-tenant internal system, not a two-sided
+  marketplace. Don't re-introduce applicant auth/accounts.
+- **UI polish is its own end-phase**, not per-slice — build flows in plain Tailwind now, redesign once at the end (incremental, no backend touched).
+- **Minimum viable thesis** (if time is short): full Phase 1 + 05/07 (intake) + 09 (HR auth) + 13 (deploy);
+  Screener (Phase 3) can be scoped down (e.g., drop the automatic timeout, do the basic flow) — state the reduction in the report.
+- **Don't let design/ideas spawn slices outside this roadmap** — filter new ideas through the PRD first; if worth it, update PRD/roadmap, then build.
+
+---
+
+## Quick status (update per slice)
 
 - [x] Scaffold · PWA · 01 · 01b · 01c · 02a · 02b · 03a · cleanup
-- [ ] 03b human_review ← **TIẾP THEO**
-- [ ] 03c gate rank · 04 scheduler email
-- [ ] 05 JD UI · 06 storage · 07 nộp CV công khai
+- [x] **Phase 1** — 03b human_review · 03c gate rank · 04 scheduler email — **COMPLETE**
+- [x] 05 JD management UI
+- [ ] **07 public CV submission ← NEXT**
+- [ ] 06 object storage (deferred to near-deploy)
 - [ ] 08a/b/c/d Screener async
-- [ ] 09 auth
-- [ ] 10 analytics · 11 observability · 12 anti-injection · 13 deploy
-- [ ] 14 LLM gợi ý rubric · 15 tùy chọn
+- [ ] 09 HR auth
+- [ ] 10 analytics · 11 observability · 12 anti-injection · UI redesign · 13 deploy
+- [ ] 14 LLM-suggested rubric · 15 optional

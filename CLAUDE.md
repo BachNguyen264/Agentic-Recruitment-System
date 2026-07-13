@@ -1,154 +1,164 @@
 # CLAUDE.md
 
-Hướng dẫn cho Claude Code khi làm việc trong repo này. Đọc mỗi session.
+Guidance for Claude Code working in this repo. Read every session.
 
-## tài liệu (đọc kỹ)
+## Source of truth
 
-- **`PRD.md` = NGUỒN CHÂN LÝ của hệ thống.** Mọi quyết định nghiệp vụ, luồng, agent, trạng thái, yêu cầu —
-  tra `PRD.md`. Khi code mâu thuẫn với PRD → PRD đúng (hoặc cập nhật PRD trước rồi mới sửa code). Khi không
-  chắc "hệ thống nên hành xử thế nào" → mở PRD, KHÔNG suy diễn.
-
----
-
-## Project là gì (tóm tắt — chi tiết ở PRD)
-
-**Hệ thống tuyển dụng tự trị sử dụng Multi-Agent AI**. Tự động hóa vòng sàng lọc từ nhận
-CV đến gửi thư mời; HR chỉ can thiệp ở điểm quyết định hoặc khi hệ thống không đủ tự tin.
-
-Pipeline cố định (PRD §7–§8): `parser → ranker → screener → scheduler` + `human_review` có điều kiện.
-
-- `parser`: CV (PDF/DOCX) → JSON.
-- `ranker`: đối sánh CV–JD (RAG) + chấm điểm rubric. Node ra quyết định.
-- `screener`: chạy SAU ranker; gửi bộ câu hỏi cố định qua email + magic-link form; **bất đồng bộ** (pipeline
-  suspend/resume, có timeout). KHÔNG phải chatbot tự do.
-- `scheduler`: điểm thực thi DUY NHẤT cho mọi email tới ứng viên (mời + đặt lịch, hoặc từ chối).
-- `human_review`: kích hoạt có điều kiện; luôn kèm **ReviewCard** (tóm tắt + điểm + lý do); HR duyệt → delegate scheduler.
-
-Hai **gate** cấu hình (PRD §9): `auto-từ-chối`, `auto-mời` — HR bật/tắt; chỉ can thiệp ca tự tin, ca bất định
-luôn vào human_review (gate no-op).
-
-Kiến trúc đã chốt: **pipeline cố định, KHÔNG Supervisor** — có chủ đích, ưu tiên dự đoán được + kiểm toán
-(PRD §5, 4 trụ cột).
+- **`PRD.md` is the SOURCE OF TRUTH for the system** — it is written in Vietnamese (the human-facing spec).
+  Every business decision, flow, agent, state, and requirement lives there. If code conflicts with the PRD,
+  the PRD wins (or update the PRD first, then change code). When unsure how the system *should behave*, open
+  the PRD — do NOT improvise.
+- **This file (CLAUDE.md)** covers HOW to build: stack, conventions, current status, boundaries, gotchas.
+- **`ROADMAP.md`** is the map of remaining slices and their order.
+- `plan.md` / `slice-*.md` is a ONE-SHOT script for the current slice only; discard when done — never a reference.
 
 ---
 
-## Trạng thái hiện tại (cập nhật mỗi lát)
+## What the project is
 
-Đã qua scaffold — đang build từng **lát (slice)** logic thật. Node THẬT vs STUB:
+**Autonomous Recruitment System using Multi-Agent AI.** Automates the screening loop from CV intake to sending
+the invitation/rejection email; HR intervenes only at decision points or when the system isn't confident enough.
 
-| Node           | Trạng thái | Ghi chú                                                                             |
-| -------------- | ---------- | ---------------------------------------------------------------------------------- |
-| `parser`       | ✅ THẬT     | CV→JSON qua OpenAI `gpt-4.1-mini` (structured output) + certificates/languages/awards/other |
-| `ranker`       | ✅ THẬT     | chấm rubric có suy luận qua `gpt-5-mini` (reasoning_effort=low); embedding = tín hiệu phụ |
-| `screener`     | ⛔ STUB     | pass-through — async suspend/resume là lát sau (PRD §10)                            |
-| `scheduler`    | ⛔ STUB     | pass-through — email/Calendar là lát sau                                            |
-| `human_review` | ⛔ STUB     | set require_human_review + reason — ReviewCard là lát sau (PRD §11)                 |
+**Single-tenant, internal recruitment tool — NOT a two-sided job marketplace** (not TopCV/CareerViet). One
+company; HR is the admin; applicants are guests. An applicant submits a CV for a specific JD and leaves
+("fire and forget") — no account, no login, no status page. They receive the outcome later by email.
 
-Đã THẬT thêm: quản lý JD + embedding vào Qdrant (`text-embedding-3-small`, 1536 chiều); dashboard **PWA** +
-trang `/cv-check` + màn ứng viên `/applications` (danh sách + chi tiết điểm, **chỉ đọc**). **CHƯA làm:** 2 gate
-(§9), Screener async (§10), ReviewCard (§11), email/Calendar, vòng học.
+Fixed pipeline (PRD §7–§8): `parser → ranker → screener → scheduler` + conditional `human_review`.
 
-`ENABLE_LLM=true` bật parser+ranker THẬT; `false` → giữ stub (cho `test_graph`).
+- `parser`: CV (PDF/DOCX) → structured JSON.
+- `ranker`: CV–JD match + rubric scoring. The DECISION node.
+- `screener`: runs AFTER ranker; sends a fixed question set via email + magic-link form; **asynchronous**
+  (pipeline suspend/resume, with timeout). NOT a free chatbot.
+- `scheduler`: the SOLE execution point for every email to the applicant (invite + scheduling, or rejection).
+- `human_review`: conditionally triggered; always with a **ReviewCard** (summary + score + reason); HR decides
+  → delegates to scheduler.
+
+Two configurable **gates** (PRD §9): `auto-reject`, `auto-invite` — HR toggles per JD; they act ONLY on
+confident cases; uncertain cases ALWAYS go to human_review (gate is a no-op for them).
+
+Locked architecture: **fixed pipeline, NO Supervisor** — deliberate, favoring predictability + auditability
+(PRD §5, four pillars).
+
+---
+
+## Current status (update every slice)
+
+Past scaffold — building real logic slice by slice. Node REAL vs STUB:
+
+| Node           | Status   | Notes |
+| -------------- | -------- | ----- |
+| `parser`       | ✅ REAL  | CV→JSON via OpenAI `gpt-4.1-mini` (structured output) + certificates/languages/awards/other |
+| `ranker`       | ✅ REAL  | reasoned rubric scoring via `gpt-5-mini` (reasoning_effort=low); embedding = SIDE signal only |
+| `screener`     | ⛔ STUB  | pass-through — async suspend/resume is a later slice (PRD §10) |
+| `scheduler`    | ✅ REAL  | sends real invite/rejection email via **Resend** (fixed VN templates); Calendar deferred |
+| `human_review` | ✅ REAL  | ReviewCard + approve/reject → delegates to scheduler; audit-logged (PRD §11) |
+
+Also REAL: JD management (create/edit/close) + embedding to Qdrant (`text-embedding-3-small`, 1536-dim);
+**gate rank** (auto-reject, per-JD toggle, §9); PWA dashboard; HR pages `/cv-check`, `/applications`
+(list + score detail), `/review` (queue), `/jobs` (JD management UI).
+
+**NOT yet done:** gate INVITE (auto-invite — the second gate, §9); Screener async (§10); public CV submission
+(`/apply` — slice 07, **NEXT**); object storage (local disk for now); HR auth; analytics; observability;
+anti-prompt-injection; deploy; UI redesign; learning loop.
+
+`ENABLE_LLM=true` enables real parser+ranker; `false` keeps stubs (for `test_graph`).
 
 ---
 
 ## Stack
 
-- **Backend:** Python 3.12 · FastAPI · LangGraph · SQLAlchemy 2 (async) · Alembic · Pydantic v2. Gói: `uv`.
-- **Hạ tầng (managed-first):** Neon (Postgres) · Upstash Redis · Qdrant Cloud. Dự phòng: `docker-compose.local.yml`.
-- **Async:** FastAPI BackgroundTasks (KHÔNG worker polling — phá free tier Upstash). Screener dùng suspend/resume
-  (LangGraph interrupt + Postgres checkpointer — phase sau).
-- **Frontend:** Next.js 14 · **plain Tailwind (bảng màu slate)** · TanStack Query. shadcn/ui **CHƯA cài** —
-  dùng utility class + component tự viết; ĐỪNG thêm thư viện UI. API base đọc env `NEXT_PUBLIC_API_BASE`.
-- **PWA:** web dashboard cài được trên điện thoại cho HR (không codebase mobile riêng).
-- **Monorepo:** pnpm workspaces; dùng chung ở `packages/shared-types`.
+- **Backend:** Python 3.12 · FastAPI · LangGraph · SQLAlchemy 2 (async) · Alembic · Pydantic v2. Package mgr: `uv`.
+- **Infra (managed-first):** Neon (Postgres) · Upstash Redis · Qdrant Cloud. Local fallback: `docker-compose.local.yml`.
+- **LLM (OpenAI):** parser `gpt-4.1-mini`; ranker `gpt-5-mini` (reasoning_effort=low); embeddings
+  `text-embedding-3-small` (1536-dim). **Email: Resend.**
+- **Async:** FastAPI BackgroundTasks (NO worker polling — kills Upstash free tier). Screener uses suspend/resume
+  (LangGraph interrupt + Postgres checkpointer — later phase).
+- **Frontend:** Next.js 14 · **plain Tailwind (slate palette)** · TanStack Query. shadcn/ui NOT installed —
+  use utility classes + hand-written components; DO NOT add a UI library. API base from env `NEXT_PUBLIC_API_BASE`.
+- **PWA:** installable HR dashboard (no separate mobile codebase).
+- **Monorepo:** pnpm workspaces; shared code in `packages/shared-types`.
 
 ---
 
-## Lệnh (và chạy ở đâu)
+## Commands (and where to run them)
 
-- **Backend (Python/uv) → Bash:** `make dev-backend` · `make test` · `make migrate`. Script lẻ / test:
+- **Backend (Python/uv) → Bash:** `make dev-backend` · `make test` · `make migrate`. Single scripts/tests:
   `uv run --directory apps/backend python …` / `uv run --directory apps/backend pytest -q`.
-- **Node (pnpm/next/tsc) → PowerShell** (Git Bash bung lỗi fnm): `pnpm --filter dashboard dev|build|typecheck`.
-- **git → Bash nhưng TRÁNH `cd`** (hook fnm lỗi): dùng `git -C <repo-root> …`.
-- Test tích hợp gọi API thật bị gate: bật `RUN_EMBED_IT=1` / `RUN_PARSE_IT=1` (mặc định skip, giữ `make test` nhanh).
+- **Node (pnpm/next/tsc) → PowerShell** (Git Bash breaks on fnm): `pnpm --filter dashboard dev|build|typecheck`.
+- **git → Bash but AVOID `cd`** (fnm hook breaks): use `git -C <repo-root> …`.
+- Integration tests hitting real APIs are gated: set `RUN_EMBED_IT=1` / `RUN_PARSE_IT=1` (default skip, keeps `make test` fast).
 
 ---
 
-## Quy ước code (BẮT BUỘC)
+## Code conventions (MANDATORY)
 
-- **Async-first** ở backend: async engine/session/route. Không trộn sync I/O.
-- **Cấu hình đọc từ env** qua pydantic-settings. KHÔNG hardcode secret/URL/ngưỡng.
-- **Type đầy đủ:** type hints (Python), không `any` tùy tiện (TS).
-- **Secret chỉ trong `.env`** (gitignore). Chỉ commit `.env.example`.
-- **Commit nhỏ mỗi bước:** message rõ, prefix theo lát (`feat(parser): …`, `feat(ranker): …`, `fix(…)`, `test(…)`, `chore(…)`).
-- **Neon cần SSL:** `connect_args={"ssl": True}` trong `create_async_engine`. KHÔNG `?sslmode=` (asyncpg không hiểu).
-- **scheduler là điểm thực thi DUY NHẤT** gửi email tới ứng viên — đừng gửi email rải rác ở node khác.
-
----
-
-## Bốn nguyên tắc làm việc
-
-_(Chắt từ quan sát của Andrej Karpathy về lỗi LLM hay mắc khi code. Thiên về cẩn trọng hơn tốc độ.)_
-
-### 1. Nghĩ trước khi code — đừng giả định, đừng giấu chỗ khó hiểu
-
-- Nêu rõ giả định; không chắc thì **hỏi**. Nhiều cách hiểu → **trình bày lựa chọn**, đừng tự chọn im lặng.
-- Có cách đơn giản hơn → **nói ra**. Điều gì không rõ → **dừng**, gọi tên, hỏi.
-- Project này: nghiệp vụ chưa rõ → mở **PRD**; PRD chưa đủ → hỏi, ĐỪNG suy diễn.
-
-### 2. Đơn giản trước — code tối thiểu giải quyết vấn đề
-
-- Không tính năng ngoài yêu cầu. Không trừu tượng cho code dùng một lần. Không "linh hoạt" không ai yêu cầu.
-- 200 dòng mà 50 là đủ → viết lại. "Kỹ sư senior có nói cái này phức tạp quá mức không?"
-- Mỗi lát chỉ làm phần đã khoanh vùng; node CHƯA tới lượt (screener/scheduler/human_review) giữ stub, ĐỪNG "làm cho xịn".
-
-### 3. Sửa có phẫu thuật — chỉ động vào cái buộc phải động
-
-- Đừng "cải thiện" code/comment/format xung quanh. Đừng refactor cái không hỏng. Theo style sẵn có.
-- Thấy dead code không liên quan → nói ra, đừng xóa. Dọn phần _do bạn_ tạo thừa.
-- Mỗi dòng thay đổi truy được về yêu cầu (hoặc một mục PRD).
-
-### 4. Thực thi theo mục tiêu — định nghĩa tiêu chí thành công rồi lặp đến khi xác minh
-
-- Biến task thành mục tiêu kiểm chứng. Mỗi lát: **Verify chạy thật** (cho người dùng xem output) + kiểm định
-  độc lập (Workflow) trước khi chốt; mỗi yêu cầu PRD (FR-xxx) là tiêu chí — viết test phản ánh FR rồi làm cho pass.
+- **Async-first** backend: async engine/session/route. No mixed sync I/O.
+- **Config from env** via pydantic-settings. NO hardcoded secret/URL/threshold.
+- **Full typing:** type hints (Python), no loose `any` (TS).
+- **Secrets only in `.env`** (gitignored). Commit only `.env.example`.
+- **Small commits per step:** clear message, slice-prefixed (`feat(parser): …`, `fix(…)`, `test(…)`, `chore(…)`).
+- **Neon needs SSL:** `connect_args={"ssl": True}` in `create_async_engine`. NOT `?sslmode=` (asyncpg won't parse it).
+- **scheduler is the SOLE email-send point** to applicants — don't scatter email sends in other nodes.
 
 ---
 
-## Ranh giới hiện tại
+## Four working principles
 
-- KHÔNG Supervisor Agent / điều phối động — pipeline cố định (PRD §5).
-- Node CHƯA tới lượt giữ **stub**: screener/scheduler/human_review. CHƯA có: 2 gate (§9), Screener async (§10),
-  ReviewCard (§11), email/Calendar/Zalo, vòng học — giữ stub + TODO trỏ PRD; đừng làm ngoài phạm vi lát.
-- KHÔNG worker queue polling Redis — dùng BackgroundTasks.
-- **Ranker:** điểm CHỈ dựa rubric có suy luận (trọng số từ JD); cosine/embedding là **tín hiệu phụ**, KHÔNG vào
-  điểm, KHÔNG chunk JD. confidence/flags = heuristic **xác định** (không hỏi LLM tự chấm).
-- **scheduler là điểm gửi email DUY NHẤT** — đừng gửi email rải rác ở node khác.
-- **Chừa chỗ kiến trúc (đã có):** `RecruitmentState` có confidence/uncertainty_flags/escalation_reason/
-  require_human_review + score/score_breakdown/semantic_similarity + trường Screener; `policy.should_review`
-  route theo giá trị thật; `audit_log` đủ cột (PRD §16).
+*(Distilled from Karpathy's observations on LLM coding failures. Bias toward caution over speed.)*
 
----
-
-## Gotchas đã gặp (đọc trước khi lặp lại)
-
-- **Node async trong pipeline:** ranker là `async` → `runner.run_sync` dùng `asyncio.run(ainvoke)`; parser giữ
-  sync; graph chạy mixed OK. Thêm node async mới → nhớ đường sync này.
-- **langchain-openai BỎ `temperature`** cho model reasoning (gpt-5*): nhánh reasoning truyền `reasoning_effort`,
-  KHÔNG truyền temperature. Đặt `RANKER_MODEL=gpt-5-mini` thì PHẢI đặt `RANKER_REASONING_EFFORT=low`.
-- **Qdrant Cloud** bắt buộc payload index cho field dùng filter (`type`); `create_collection` không idempotent
-  (409) — đã có `asyncio.Lock` + tha thứ 409 trong `ensure_collection`.
-- **str.format prompt:** literal `{...}` phải escape `{{...}}` (quên → KeyError, mọi lần parse thành fail).
-- **curl UTF-8 (Git Bash):** body JSON tiếng Việt phải `--data-binary @file` (inline `-d` hỏng dấu).
-- Lỗi LLM/embedding/Qdrant KHÔNG được sập pipeline → try/except đặt cờ (`parse_failed`/`rank_failed`) + escalation.
+1. **Think before coding — don't assume, don't hide confusion.** State assumptions; unsure → ASK. Multiple
+   interpretations → PRESENT the options, don't silently pick one. Simpler way exists → SAY SO. Business unclear
+   → open the PRD; PRD insufficient → ask, don't improvise.
+2. **Simplicity first — minimum code that solves the problem.** No features beyond the ask. No abstractions for
+   single-use code. 200 lines where 50 suffice → rewrite. Nodes not yet in scope stay stub — don't "make them nice."
+3. **Surgical edits — touch only what you must.** Don't "improve" surrounding code/comments/format. Don't refactor
+   what isn't broken. See unrelated dead code → mention it, don't delete. Every changed line traces to a requirement (or PRD item).
+4. **Goal-directed execution — define success criteria, then iterate until verified.** Each slice: a real Verify
+   (show the user output) + independent review before finalizing; each PRD requirement (FR-xxx) is a criterion —
+   write a test reflecting it, make it pass.
 
 ---
 
-## Khi nghi ngờ
+## Current boundaries
 
-Thứ tự tra cứu: **PRD.md** (nghiệp vụ, hệ thống nên làm gì) → **CLAUDE.md** (cách code + trạng thái) → hỏi người dùng.
-`plan.md` là kịch bản **one-shot cho lát hiện tại**; xong thì bỏ, KHÔNG dùng làm tham chiếu.
+- NO Supervisor Agent / dynamic orchestration — fixed pipeline (PRD §5).
+- Nodes not yet in scope stay STUB: `screener` (still stub). NOT yet built: gate INVITE (§9), Screener async
+  (§10), object storage, auth, analytics, observability, anti-injection, deploy, UI redesign, learning loop —
+  keep stub + TODO pointing to PRD; don't build outside the current slice.
+- NO Redis-polling worker queue — use BackgroundTasks.
+- **Ranker:** score is ONLY the reasoned rubric (weights from the JD); cosine/embedding is a SIDE signal, NOT in
+  the score, NO JD chunking. confidence/flags = DETERMINISTIC heuristic (don't ask the LLM to self-score).
+- **scheduler is the SOLE email-send point** — don't scatter sends.
+- **Applicant = guest, fire-and-forget:** no applicant account, no login, no applicant-facing status/score. Only
+  HR sees scores/status. (The auth phase covers HR only — never re-introduce applicant accounts.)
+- **Public JD projection must NOT leak** `rubric` / `gate_config` / `screener_questions` (applicants gaming the rubric).
+- **Reserved architectural slots (exist):** `RecruitmentState` has confidence/uncertainty_flags/escalation_reason/
+  require_human_review + score/score_breakdown/semantic_similarity + Screener fields; `policy` routes on real
+  values; `audit_log` has the needed columns (PRD §16).
+
+---
+
+## Gotchas encountered (read before repeating)
+
+- **Async node in pipeline:** ranker is `async` → `runner.run_sync` uses `asyncio.run(ainvoke)`; parser stays
+  sync; mixed graph runs OK. New async node → remember this sync path.
+- **langchain-openai DROPS `temperature`** for reasoning models (gpt-5*): the reasoning branch passes
+  `reasoning_effort`, NOT temperature. `RANKER_MODEL=gpt-5-mini` REQUIRES `RANKER_REASONING_EFFORT=low`.
+- **Qdrant Cloud** requires a payload index for filtered fields (`type`); `create_collection` isn't idempotent
+  (409) — handled via `asyncio.Lock` + tolerating 409 in `ensure_collection`.
+- **str.format prompts:** literal `{...}` must be escaped `{{...}}` (forgetting → KeyError, every parse fails).
+- **curl UTF-8 (Git Bash):** Vietnamese JSON body must use `--data-binary @file` (inline `-d` mangles diacritics).
+- **`require_human_review` is the ranker's "low-score marker"** (set for every below-threshold score), NOT an
+  uncertainty signal — the gate uses it as its trigger. uncertainty = error / uncertainty_flags / low-confidence only.
+- **Post-commit email dispatch must be isolated from the technical-error handler:** a decision already committed
+  (e.g. auto-reject → REJECTED) must SURVIVE an email/audit failure — don't let an escaping exception reset status.
+- **LLM/embedding/Qdrant errors must NOT crash the pipeline** → try/except sets a flag (`parse_failed`/`rank_failed`) + escalation.
+
+---
+
+## When in doubt
+
+Lookup order: **PRD.md** (business, what the system should do) → **CLAUDE.md** (how to code + status) → **ROADMAP.md** (what's next) → ask the user.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence

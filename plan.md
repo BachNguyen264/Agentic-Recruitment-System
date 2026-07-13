@@ -1,11 +1,12 @@
-# SLICE 05 — UI quản lý JD (tạo/sửa/đóng) + toggle gate · plan one-shot
+# SLICE 07 — Nộp CV công khai (ứng viên guest chọn JD → nộp → pipeline) · plan one-shot
 
 > **Bản chất:** plan ONE-SHOT. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Mục tiêu:** HR quản lý tin tuyển dụng (JD) qua giao diện web — tạo, xem danh sách, sửa, đóng/mở — thay cho
-> gọi API tay. Toggle gate auto-reject (hoãn từ 03c) nằm trong form này. Mở đường cho lát 07 (nộp CV công khai).
-> Tham chiếu: PRD §12.1 (FR-HR-JD), §9 (gate_config), §7.2 (rubric). Tuân thủ `CLAUDE.md` + skill frontend-design.
+> **Mục tiêu:** "cửa vào" của ứng viên — trang công khai liệt kê JD đang MỞ → ứng viên (guest, chỉ email) chọn một
+> vị trí → nộp CV GẮN với JD đó → vào pipeline async (parser→ranker→...). Khép luồng "HR đăng tin (05) → ứng viên nộp".
+> Tham chiếu: PRD §8.2 (luồng nộp), §12.2 (FR-AP), §14 (web). Tuân thủ `CLAUDE.md` + skill frontend-design.
 >
-> **Rubric = HR NHẬP TAY** (LLM gợi ý rubric ở §17 — KHÔNG làm ở đây). Bắt đầu GĐ2.
+> **Guest, chỉ JD OPEN, async, LƯU FILE CỤC BỘ** (object storage = lát 06, hoãn tới gần deploy). UI Tailwind thuần
+> (nhất quán component sẵn có; redesign để giai đoạn cuối). KHÔNG auth (đăng nhập HR = GĐ4).
 
 ---
 
@@ -13,115 +14,109 @@
 
 **In scope:**
 
-- Backend (bổ sung, có phẫu thuật): sửa JD (`PUT/PATCH /api/jobs/{id}`) — **re-embed CHỈ khi title/description/
-  requirements đổi**; đóng/mở JD (status). (Tạo/đọc/gate đã có từ 02a/03c — tái dùng.)
-- Trang danh sách JD (`/jobs`).
-- Form JD dùng chung cho TẠO + SỬA: title, description, requirements (danh sách động), rubric (danh sách động
-  {tiêu chí, trọng số} + hiển thị tổng trọng số), screener_questions (danh sách động), gate_config (toggle auto_reject).
-- Toggle gate (nợ từ 03c) đặt trong form.
+- Backend: endpoint CÔNG KHAI liệt kê JD `OPEN` (**projection AN TOÀN** — chỉ trường ứng-viên-thấy); endpoint nộp CV
+  công khai (validate JD OPEN + loại/size file → lưu cục bộ → tạo application gắn job_id → chạy pipeline async).
+- shared-types: JD công khai (trường an toàn) + payload nộp.
+- Trang công khai `/apply` (danh sách JD OPEN) + `/apply/[jobId]` (chi tiết JD + form nộp: email + CVUpload → xác nhận).
+- Tái dùng `CVUpload` (đã có từ 01b).
 
 **Out of scope (KHÔNG làm):**
 
-- KHÔNG nộp CV công khai (lát 07). KHÔNG object storage (lát 06). KHÔNG LLM gợi ý rubric (§17).
-- KHÔNG re-chấm điểm các application cũ khi sửa rubric (chỉ ảnh hưởng application MỚI — ghi chú §3.1).
-- KHÔNG đụng pipeline/agents/ranker logic. KHÔNG auto-invite UI (gate mời — lát sau).
-- KHÔNG thêm thư viện UI ngoài shadcn.
+- KHÔNG object storage (lưu cục bộ — lát 06). KHÔNG auth/đăng nhập (GĐ4).
+- KHÔNG trang tra cứu trạng thái cho ứng viên (guest không đăng nhập; họ nhận email sau qua scheduler). KHÔNG hiện điểm/trạng thái cho ứng viên.
+- KHÔNG lộ rubric/gate_config/screener_questions cho ứng viên (nội bộ — xem §3.1).
+- KHÔNG đụng pipeline/agents/ranker logic. KHÔNG redesign UI (giai đoạn cuối).
 
 ---
 
 ## 2. Prerequisites
 
-- Endpoint đã có: `POST /api/jobs` (tạo + embed), `GET /api/jobs` (list), `GET /api/jobs/{id}`, `PATCH /api/jobs/{id}/gate`.
-- Dịch vụ có sẵn: `embedding_service`, `qdrant_service` (upsert). shadcn/ui, TanStack Query, lib/api.ts. Node chạy PowerShell.
+- Lát 05 xong: JD có `status` OPEN/CLOSED. Có JD OPEN để test (JD #2; lưu ý JD #4 gate đang BẬT).
+- Có sẵn: `CVUpload`, logic tạo application + chạy pipeline (từ scaffold/các lát trước), parser/ranker thật.
+- Lưu file cục bộ hiện tại (thư mục uploads). Node chạy PowerShell.
 
 ---
 
 ## 3. Việc cần làm
 
-### 3.1 Backend — sửa JD + đóng/mở · `app/api/routes/jobs.py` + `job_service.py`
+### 3.1 Backend — JD công khai + nộp CV · `app/api/routes/` (+ service)
 
-- `PUT /api/jobs/{id}` (hoặc PATCH) nhận các trường JD (title, description, requirements, rubric, screener_questions, gate_config):
-  - Cập nhật DB.
-  - **Re-embed CÓ ĐIỀU KIỆN:** nếu title/description/requirements THAY ĐỔI → `build_jd_text` → `embed_text` →
-    `qdrant.upsert_jd` (ghi đè vector cùng job_id). Nếu CHỈ rubric/screener_questions/gate_config đổi → KHÔNG re-embed.
-    (So sánh giá trị cũ/mới để quyết định; tránh gọi embedding thừa.)
-  - Lỗi embedding không làm sập cập nhật (giữ pattern 02a: cập nhật DB vẫn xong + cảnh báo).
-- Đóng/mở JD: `PATCH /api/jobs/{id}/status` (hoặc field `status` trong PUT) — vd `OPEN`/`CLOSED`. JD `CLOSED` sẽ
-  không nhận CV mới (dùng ở lát 07). Không xóa JD.
-- **Ghi chú (không code):** sửa rubric CHỈ ảnh hưởng application chấm SAU đó; application cũ giữ điểm cũ (không tự re-chấm).
+- **Liệt kê JD công khai:** `GET /api/public/jobs` → chỉ JD `status == OPEN`, **projection AN TOÀN**: chỉ
+  `id, title, description, requirements` (+ ngày nếu muốn). **TUYỆT ĐỐI KHÔNG trả** `rubric`, `gate_config`,
+  `screener_questions` — đây là tiêu chí chấm/cấu hình nội bộ; lộ ra thì ứng viên có thể "nhồi từ khóa" theo rubric.
+- **Chi tiết JD công khai:** `GET /api/public/jobs/{id}` → cùng projection an toàn; 404 nếu không OPEN.
+- **Nộp CV công khai:** `POST /api/public/applications` (multipart: `job_id`, `applicant_email`, file CV):
+  1. **Validate**: JD tồn tại + `OPEN` (không thì 404/409); loại file ∈ {PDF, DOCX} (kiểm magic bytes, không chỉ đuôi); size ≤ ~10MB. Email hợp lệ cơ bản.
+  2. Lưu file CV cục bộ (như hiện tại), tạo application gắn `job_id` + `applicant_email`, status `SUBMITTED`.
+  3. Kick pipeline async (BackgroundTask — như luồng tạo application hiện có).
+  4. Trả xác nhận gọn (vd `{application_id}` hoặc chỉ success) — KHÔNG trả điểm/parsed_data cho ứng viên.
+- **Sửa có phẫu thuật:** ĐỌC logic tạo application + chạy pipeline hiện có → TÁI DÙNG; chỉ thêm lớp public
+  (projection an toàn + validate OPEN + validate file). Đừng viết lại pipeline.
 
 ### 3.2 shared-types · `packages/shared-types`
 
-- `JobPosting` (read: id, title, description, requirements[], rubric[{criterion,weight}], screener_questions[],
-  gate_config{auto_reject,auto_invite}, status, created_at); `JobPostingInput` (create/edit payload).
+- `PublicJob = {id, title, description, requirements[], created_at?}` (KHÔNG rubric/gate/screener).
+- `SubmitApplicationInput = {job_id, applicant_email, file}` (payload nộp).
 
 ### 3.3 `lib/api.ts`
 
-- `getJobs()`, `getJob(id)`, `createJob(input)`, `updateJob(id, input)`, `setJobStatus(id, status)`,
-  `toggleGate(id, {auto_reject})` (đã có PATCH /gate — tái dùng, hoặc gộp vào updateJob). Chọn một, ưu tiên gọn.
+- `getOpenJobs(): Promise<PublicJob[]>` → GET /api/public/jobs.
+- `getPublicJob(id)` → GET /api/public/jobs/{id}.
+- `submitApplication(job_id, email, file)` → POST /api/public/applications (multipart).
 
-### 3.4 Trang danh sách JD · `app/jobs/page.tsx`
+### 3.4 Trang công khai · `app/apply/page.tsx` + `app/apply/[jobId]/page.tsx`
 
-- Bảng JD: tiêu đề, trạng thái (OPEN/CLOSED badge), số tiêu chí rubric, gate auto_reject (bật/tắt badge), ngày tạo.
-- Nút "Tạo JD mới" → form tạo. Bấm dòng → form sửa. Nút đóng/mở JD (đổi status).
-- TanStack Query; loading/empty/error gọn.
+- `/apply`: danh sách JD OPEN (tiêu đề + mô tả ngắn) → bấm một JD → sang chi tiết. Empty ("hiện không có vị trí mở")/loading/error.
+- `/apply/[jobId]`: hiện chi tiết JD (title, description, requirements) + **form nộp**: ô email + `CVUpload` (tái dùng)
+  → nút "Nộp hồ sơ". Validate client (email + loại/size file). Đang gửi → disable, chống double-submit.
+- Sau khi nộp thành công → **màn xác nhận** ("Cảm ơn, hồ sơ của bạn đã được gửi. Chúng tôi sẽ liên hệ qua email.")
+  — KHÔNG hiện điểm/trạng thái. Lỗi → thông báo thân thiện.
+- **Tách khỏi dashboard HR:** trang công khai KHÔNG dùng nav HR (không lẫn với /jobs, /applications, /review).
 
-### 3.5 Form JD (dùng chung TẠO + SỬA) · `components/JobForm.tsx` (+ trang tạo/sửa)
+### 3.5 (Không bắt buộc) liên kết
 
-- Trường: title (text), description (textarea), requirements (**danh sách động**: thêm/bớt dòng text).
-- **rubric (danh sách động, phần khó nhất):** mỗi dòng = {tiêu chí (text) + trọng số (số 0..1)} + nút xóa; nút thêm dòng.
-  - Hiển thị **TỔNG trọng số** đang chạy + gợi ý "nên bằng 1.0". Validate MỀM: cảnh báo nếu tổng lệch 1.0 nhiều
-    (không chặn cứng — backend/ranker vốn tính lại điểm theo trọng số; ưu tiên hướng dẫn HR đặt tổng ≈ 1).
-- screener_questions (**danh sách động**: thêm/bớt dòng text) — ghi chú nhỏ "dùng cho vòng Screener (kích hoạt sau)".
-- **gate (nợ từ 03c):** toggle `auto_reject` (mặc định TẮT) + ghi chú ngắn "tự động từ chối ca điểm thấp rõ ràng;
-  ca bất định vẫn về HR". Có thể hiện toggle `auto_invite` nhưng disable + nhãn "dùng cho vòng Screener — sẽ bật sau".
-- Nút Lưu: TẠO → `createJob`; SỬA → `updateJob`. Sau lưu → invalidate query + quay lại danh sách. Chống double-submit.
-- Chế độ SỬA: nạp giá trị JD hiện tại vào form.
-
-### 3.6 Điều hướng
-
-- Link `/jobs` từ nav/trang chủ.
+- Có thể để một link "Trang tuyển dụng công khai" ở đâu đó cho tiện demo, nhưng public pages là luồng riêng của ứng viên.
 
 ---
 
 ## 4. Verify (chạy thật)
 
-1. `make dev-backend` + `make dev-dashboard`; mở `/jobs`.
-2. **Tạo JD mới** qua form: điền title/description, thêm vài requirements, thêm rubric 3–4 tiêu chí (tổng trọng số ≈ 1), vài câu screener, gate auto_reject TẮT → Lưu → JD xuất hiện trong danh sách; backend embed (kiểm `search-test` khớp JD mới).
-3. **Sửa mô tả** JD đó → Lưu → backend RE-EMBED (log/kiểm search-test phản ánh nội dung mới).
-4. **Sửa CHỈ rubric/gate** (không đụng mô tả) → Lưu → KHÔNG re-embed (không gọi embedding thừa).
-5. **Bật gate auto_reject** trong form → Lưu → `GET /api/jobs/{id}` thấy `gate_config.auto_reject=true` (khớp hành vi 03c).
-6. **Đóng JD** → status CLOSED (badge đổi); mở lại → OPEN.
-7. Danh sách động: thêm/bớt dòng rubric + requirements hoạt động; tổng trọng số hiển thị đúng.
-8. `pnpm --filter dashboard build` PASS; `make test` xanh (nếu có test backend cho edit/status).
+1. Đảm bảo có JD OPEN (JD #2). Nếu test JD #4 thì tắt gate trước (`PATCH /api/jobs/4/gate {auto_reject:false}`).
+2. `make dev-backend` + `make dev-dashboard`; mở `/apply` → thấy danh sách JD OPEN (chỉ JD OPEN; JD CLOSED không hiện).
+3. Kiểm projection an toàn: response `GET /api/public/jobs` KHÔNG chứa rubric/gate_config/screener_questions.
+4. Chọn JD #2 → `/apply/[id]` hiện title/description/requirements + form. Nhập email của bạn, upload CV backend → Nộp → màn xác nhận (không hiện điểm).
+5. Kiểm application đã tạo: sang dashboard HR `/applications` → thấy ứng viên mới (gắn đúng JD #2) đã chạy pipeline (có điểm/trạng thái). Audit có parser+ranker.
+6. Thử JD CLOSED / job_id sai → nộp bị từ chối (404/409). Thử file .txt hoặc >10MB → bị chặn (client + server).
+7. `pnpm --filter dashboard build` PASS; `make test` xanh (nếu có test backend cho public endpoints).
 
 ---
 
 ## 5. Definition of Done
 
-- [ ] `/jobs` liệt kê JD (tiêu đề, trạng thái, số tiêu chí, gate, ngày); tạo/sửa/đóng-mở được qua UI.
-- [ ] Form JD dùng chung tạo+sửa; rubric/requirements/screener_questions là danh sách động; tổng trọng số hiển thị.
-- [ ] Toggle gate auto_reject trong form → lưu đúng vào gate_config (nợ 03c đã trả).
-- [ ] Sửa JD RE-EMBED khi title/description/requirements đổi; KHÔNG re-embed khi chỉ rubric/gate/screener đổi.
-- [ ] Lỗi embedding không làm sập cập nhật; đóng JD đổi status (không xóa).
-- [ ] KHÔNG nộp CV công khai, KHÔNG storage, KHÔNG LLM-gợi-ý-rubric, KHÔNG đụng pipeline/ranker.
-- [ ] shadcn, không thêm lib UI; `pnpm build` PASS; test backend (nếu có) xanh.
+- [ ] `/apply` liệt kê JD OPEN; `/apply/[jobId]` hiện JD an toàn + form nộp (email + CVUpload tái dùng).
+- [ ] Nộp CV công khai (guest, chỉ email) → tạo application gắn job_id → chạy pipeline async; màn xác nhận (không lộ điểm/trạng thái).
+- [ ] JD công khai KHÔNG lộ rubric/gate_config/screener_questions (projection an toàn — verify).
+- [ ] Validate: chỉ nhận JD OPEN; loại file PDF/DOCX + size ≤ ~10MB (client + server).
+- [ ] Ứng viên mới hiện đúng trên /applications của HR (gắn đúng JD, đã chấm).
+- [ ] Lưu file cục bộ (chưa object storage); trang công khai tách khỏi nav HR.
+- [ ] KHÔNG auth, KHÔNG storage cloud, KHÔNG tra cứu trạng thái ứng viên, KHÔNG đụng pipeline/ranker.
+- [ ] `pnpm build` PASS; test backend (nếu có) xanh.
 
 ---
 
 ## 6. Ranh giới & quy ước (theo CLAUDE.md + frontend-design)
 
-- CHỈ động vào: endpoint sửa/đóng JD (+ re-embed có điều kiện) + shared-types/api + trang /jobs + JobForm + nav. KHÔNG đụng pipeline/agents/ranker.
-- Backend sửa có phẫu thuật: tái dùng embedding/qdrant service sẵn có; chỉ re-embed khi văn bản đổi.
-- Rubric HR nhập tay (KHÔNG LLM). gate mặc định TẮT. Không hardcode.
-- Component JobForm dùng chung tạo+sửa (tránh trùng lặp); style nhất quán /applications; validate mềm cho trọng số.
-- Commit nhỏ (vd `feat(api): sửa JD + re-embed có điều kiện + đóng/mở`, `feat(ui): trang danh sách /jobs`, `feat(ui): JobForm (rubric/requirements động) + toggle gate`, `feat(ui): trang tạo/sửa JD`).
-- Nghiệp vụ chưa rõ → tra **PRD.md** (§12.1, §9, §7.2). PRD chưa đủ → DỪNG, hỏi.
-- Kết thúc: in tóm tắt thay đổi, lệnh verify, checklist DoD.
+- CHỈ động vào: public endpoints (list OPEN an toàn + nộp CV) + shared-types/api + trang /apply + form. KHÔNG đụng pipeline/agents/ranker.
+- Backend sửa có phẫu thuật: TÁI DÙNG logic tạo application + pipeline hiện có; chỉ thêm lớp public + validate. Đừng viết lại pipeline.
+- BẢO MẬT: projection JD công khai chỉ trường an toàn (không rubric/gate/screener); validate loại+size file ở SERVER (không chỉ client).
+- Guest, chỉ email; ứng viên không thấy điểm/trạng thái (HR-only). UI Tailwind thuần, nhất quán component sẵn có; tách nav HR.
+- Commit nhỏ (vd `feat(api): public JD list an toàn + endpoint nộp CV (validate OPEN + file)`, `feat(ui): trang /apply danh sách JD OPEN`, `feat(ui): trang chi tiết JD + form nộp (CVUpload) + xác nhận`).
+- Nghiệp vụ chưa rõ → tra **PRD.md** (§8.2, §12.2, §14). PRD chưa đủ → DỪNG, hỏi.
+- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhắc dùng email của người dùng), checklist DoD.
 
 ---
 
-## 7. Lát kế tiếp (KHÔNG làm bây giờ)
+## 7. Sau lát này
 
-**07 Nộp CV công khai:** trang công khai xem JD đang OPEN → chọn JD → nộp CV (gắn JD) → vào pipeline async. Dùng
-`status=OPEN` từ lát này để lọc JD hiển thị. Rồi **06 object storage** (gần lúc deploy). Xem ROADMAP.md.
+Cửa vào ứng viên hoàn chỉnh: đăng tin (05) → ứng viên nộp (07) → pipeline → HR xem/duyệt → email ra. Kế tiếp:
+**06 object storage** (chuyển lưu file lên cloud, gần lúc deploy) hoặc bước vào **GĐ3 Screener async** (phần khó nhất). Xem ROADMAP.md.
