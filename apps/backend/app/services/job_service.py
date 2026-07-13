@@ -67,6 +67,65 @@ def jd_dict(job: JobPosting) -> dict:
     }
 
 
+async def update_job(
+    session: AsyncSession, job_id: int, data: JobPostingCreate
+) -> tuple[JobPosting | None, str | None]:
+    """Sửa JD → cập nhật DB → RE-EMBED CHỈ KHI title/description/requirements đổi (plan §3.1).
+
+    Trả (row, warning|None); None nếu JD không tồn tại. So sánh văn bản embed cũ/mới (build_jd_text
+    chuẩn hóa) để quyết re-embed — chỉ rubric/gate/screener đổi thì KHÔNG gọi embedding (tốn API).
+    Re-embed lỗi KHÔNG làm sập cập nhật (JD vẫn lưu, vector cũ giữ nguyên + cảnh báo) — pattern 02a.
+    """
+    job = await session.get(JobPosting, job_id)
+    if job is None:
+        return None, None
+
+    old_reqs = [line for line in (job.requirements or "").splitlines() if line.strip()]
+    old_text = build_jd_text(
+        title=job.title, description=job.description or "", requirements=old_reqs
+    )
+    new_text = build_jd_text(
+        title=data.title, description=data.description, requirements=data.requirements
+    )
+
+    job.title = data.title
+    job.description = data.description
+    job.requirements = "\n".join(data.requirements)  # cột Text — Read tách lại thành list
+    job.rubric = [c.model_dump() for c in data.rubric]
+    job.screener_questions = list(data.screener_questions)
+    job.gate_config = data.gate_config.model_dump()
+    await session.commit()
+    await session.refresh(job)
+
+    if new_text == old_text:
+        return job, None  # văn bản embed KHÔNG đổi → bỏ qua re-embed
+
+    warning: str | None = None
+    try:
+        vector = await embed_text(new_text)
+        job.embedding_ref = await qdrant_service.upsert_jd(job.id, vector, title=job.title)
+        await session.commit()
+        await session.refresh(job)
+    except Exception as exc:  # noqa: BLE001 — re-embed lỗi KHÔNG sập cập nhật (JD đã lưu, vector cũ giữ)
+        await session.rollback()
+        logger.warning("Re-embed JD id=%s thất bại (JD vẫn cập nhật): %s", job.id, exc)
+        warning = f"JD đã cập nhật nhưng CHƯA re-embed được: {exc}"
+    return job, warning
+
+
+async def set_job_status(
+    session: AsyncSession, job_id: int, status: str
+) -> JobPosting | None:
+    """Đóng/mở JD = đổi cột status (KHÔNG xóa). None nếu JD không tồn tại."""
+    job = await session.get(JobPosting, job_id)
+    if job is None:
+        return None
+    job.status = status
+    await session.commit()
+    await session.refresh(job)
+    return job
+
+
 async def set_gate_config(
     session: AsyncSession, job_id: int, *,
     auto_reject: bool | None = None, auto_invite: bool | None = None,

@@ -10,6 +10,7 @@ from app.schemas.job_posting import (
     JobPostingCreate,
     JobPostingCreateResult,
     JobPostingRead,
+    JobStatusUpdate,
     SearchTestHit,
     SearchTestRequest,
     SearchTestResponse,
@@ -37,6 +38,37 @@ async def list_jobs(session: DBSession) -> list[JobPostingRead]:
 @router.get("/{job_id}", response_model=JobPostingRead)
 async def get_job(job_id: int, session: DBSession) -> JobPostingRead:
     job = await job_service.get_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="JobPosting không tồn tại")
+    return JobPostingRead.model_validate(job)
+
+
+@router.put(
+    "/{job_id}",
+    response_model=JobPostingCreateResult,
+    summary="Sửa JD — re-embed CHỈ khi title/description/requirements đổi (PRD §12.1)",
+)
+async def update_job(
+    job_id: int, payload: JobPostingCreate, session: DBSession
+) -> JobPostingCreateResult:
+    """Cập nhật JD (form tạo+sửa dùng chung). Re-embed có điều kiện; lỗi embed → JD vẫn cập nhật + cảnh báo."""
+    job, warning = await job_service.update_job(session, job_id, payload)
+    if job is None:
+        raise HTTPException(status_code=404, detail="JobPosting không tồn tại")
+    return JobPostingCreateResult(
+        job=JobPostingRead.model_validate(job), embedding_warning=warning
+    )
+
+
+@router.patch(
+    "/{job_id}/status",
+    response_model=JobPostingRead,
+    summary="Đóng/mở JD (OPEN/CLOSED) — KHÔNG xóa (PRD §12.1)",
+)
+async def update_status(
+    job_id: int, payload: JobStatusUpdate, session: DBSession
+) -> JobPostingRead:
+    job = await job_service.set_job_status(session, job_id, payload.status)
     if job is None:
         raise HTTPException(status_code=404, detail="JobPosting không tồn tại")
     return JobPostingRead.model_validate(job)

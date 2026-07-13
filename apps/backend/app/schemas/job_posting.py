@@ -8,6 +8,7 @@ list[str] và join "\n" khi lưu; Read chuẩn hóa ngược lại. Cột JSONB 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -28,6 +29,12 @@ class GateConfigUpdate(BaseModel):
 
     auto_reject: bool | None = None
     auto_invite: bool | None = None
+
+
+class JobStatusUpdate(BaseModel):
+    """Body PATCH /jobs/{id}/status — đóng/mở JD (KHÔNG xóa). PRD §12.1 FR-HR-JD-1."""
+
+    status: Literal["OPEN", "CLOSED"]
 
 
 class JobPostingCreate(BaseModel):
