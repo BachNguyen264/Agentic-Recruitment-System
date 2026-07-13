@@ -1,7 +1,9 @@
 import type {
   ApplicationDetail,
   ApplicationListItem,
+  JobMutationResult,
   JobPosting,
+  JobPostingInput,
   ParseCvResponse,
   ReviewDecision,
 } from "@ars/shared-types";
@@ -16,12 +18,24 @@ export async function getJson<T>(path: string): Promise<T> {
 }
 
 export async function postJson<T>(path: string, body: unknown): Promise<T> {
+  return sendJson<T>("POST", path, body);
+}
+
+export async function putJson<T>(path: string, body: unknown): Promise<T> {
+  return sendJson<T>("PUT", path, body);
+}
+
+export async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  return sendJson<T>("PATCH", path, body);
+}
+
+async function sendJson<T>(method: string, path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status} khi POST ${path}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status} khi ${method} ${path}`);
   return (await res.json()) as T;
 }
 
@@ -32,8 +46,21 @@ export const getApplications = () =>
 export const getApplication = (id: number) =>
   getJson<ApplicationDetail>(`/api/applications/${id}`);
 
-// JD của ứng viên (tiêu đề + rubric) để hiển thị ngữ cảnh chấm điểm ở trang chi tiết.
+// ── Quản lý JD (slice 05) ──
+export const getJobs = () => getJson<JobPosting[]>("/api/jobs");
+
+// JD đơn (dùng cho ngữ cảnh chấm điểm ở trang chi tiết + nạp form sửa).
 export const getJob = (id: number) => getJson<JobPosting>(`/api/jobs/${id}`);
+
+export const createJob = (input: JobPostingInput) =>
+  postJson<JobMutationResult>("/api/jobs", input);
+
+export const updateJob = (id: number, input: JobPostingInput) =>
+  putJson<JobMutationResult>(`/api/jobs/${id}`, input);
+
+// Đóng/mở JD (đổi status — KHÔNG xóa).
+export const setJobStatus = (id: number, status: "OPEN" | "CLOSED") =>
+  patchJson<JobPosting>(`/api/jobs/${id}/status`, { status });
 
 // MUTATION human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.
 export const submitReview = (id: number, decision: ReviewDecision, note: string | null) =>

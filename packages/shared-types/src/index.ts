@@ -101,10 +101,16 @@ export interface ScoreBreakdownData {
   summary?: string | null;
 }
 
-// JD tối thiểu để hiển thị ngữ cảnh ở trang chi tiết (tiêu đề + rubric) — khớp JobPostingRead (backend).
+// JD — khớp JobPostingRead (backend). Dùng cho ngữ cảnh chấm điểm (trang chi tiết) + quản lý JD (slice 05).
 export interface RubricCriterion {
   criterion: string;
   weight: number;
+}
+
+// Hai gate cấu hình theo JD (PRD §9). auto_invite dành cho vòng Screener (kích hoạt sau).
+export interface GateConfig {
+  auto_reject: boolean;
+  auto_invite: boolean;
 }
 
 export interface JobPosting {
@@ -113,7 +119,28 @@ export interface JobPosting {
   description: string;
   requirements: string[];
   rubric: RubricCriterion[];
-  status: string;
+  screener_questions: string[];
+  gate_config: GateConfig;
+  status: string; // OPEN | CLOSED | DRAFT (legacy) — badge xử lý mọi giá trị.
+  embedding_ref: string | null; // null = chưa embed (embedding lỗi / JD legacy).
+  created_at: string;
+  updated_at: string;
+}
+
+// Payload tạo/sửa JD (form dùng chung) — khớp JobPostingCreate (backend).
+export interface JobPostingInput {
+  title: string;
+  description: string;
+  requirements: string[];
+  rubric: RubricCriterion[];
+  screener_questions: string[];
+  gate_config: GateConfig;
+}
+
+// Trả về POST/PUT /api/jobs — khớp JobPostingCreateResult: JD + cảnh báo nếu embed lỗi (JD vẫn lưu).
+export interface JobMutationResult {
+  job: JobPosting;
+  embedding_warning: string | null;
 }
 
 // Parser (PRD §7.1) — khớp app/schemas/parsed_cv.py (backend). Mọi trường có thể null/rỗng.
