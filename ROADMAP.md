@@ -48,8 +48,10 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 
 > Pipeline pauses waiting for the applicant, then wakes. Split small; most complex. Depends on 04 (email) + 07.
 
-- **08a — Postgres checkpointer + suspend/resume** (NFR-2, §10). MemorySaver → Postgres; pipeline pauses at
-  screener, state durable, resumes from the pause point.
+- **08a — Postgres checkpointer + suspend/resume** (NFR-2, §10) — ✅ **DONE.** MemorySaver → AsyncPostgresSaver
+  (Neon direct); pipeline pauses at screener (`interrupt()`), state durable, resumes from the pause point (bền
+  qua restart backend, verified live: đạt→AWAITING_SCREENER→restart→resume→PENDING_REVIEW, không chạy lại parser/ranker).
+  Windows dev: `python -m app` (SelectorEventLoop cho psycopg). Resume qua endpoint test + payload mock (08b thay bằng form).
 - **08b — Magic-link form** (§7.3, §12.2). Public `/screening/<token>` route; email the fixed question set (per
   JD); applicant fills form → answers captured → resume. Validate token (expiry/used). Normalize answers (light LLM, not a chatbot).
 - **08c — Timeout + reminder + late reply** (§10). Periodic deadline sweep; one reminder at +24h; timeout →
@@ -113,9 +115,11 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [x] Scaffold · PWA · 01 · 01b · 01c · 02a · 02b · 03a · cleanup
 - [x] **Phase 1** — 03b human_review · 03c gate rank · 04 scheduler email — **COMPLETE**
 - [x] 05 JD management UI
-- [ ] **07 public CV submission ← NEXT**
+- [x] 07 public CV submission (`/apply`, guest)
+- [x] **08a Postgres checkpointer + suspend/resume** (durable qua restart, verified live)
+- [ ] **08b Magic-link form + bộ câu hỏi email ← NEXT** (thay endpoint test resume-screener)
 - [ ] 06 object storage (deferred to near-deploy)
-- [ ] 08a/b/c/d Screener async
+- [ ] 08c timeout/nhắc · 08d gate auto-mời
 - [ ] 09 HR auth
 - [ ] 10 analytics · 11 observability · 12 anti-injection · UI redesign · 13 deploy
 - [ ] 14 LLM-suggested rubric · 15 optional

@@ -49,17 +49,18 @@ Past scaffold — building real logic slice by slice. Node REAL vs STUB:
 | -------------- | -------- | ----- |
 | `parser`       | ✅ REAL  | CV→JSON via OpenAI `gpt-4.1-mini` (structured output) + certificates/languages/awards/other |
 | `ranker`       | ✅ REAL  | reasoned rubric scoring via `gpt-5-mini` (reasoning_effort=low); embedding = SIDE signal only |
-| `screener`     | ⛔ STUB  | pass-through — async suspend/resume is a later slice (PRD §10) |
+| `screener`     | 🟡 PARTIAL | **08a DONE:** suspend/resume real (`interrupt()` + AsyncPostgresSaver/Neon, bền qua restart; đạt→screener→resume→human_review). Form magic-link + bộ câu hỏi email + timeout/nhắc + gate auto-mời = 08b/c/d (PRD §10) |
 | `scheduler`    | ✅ REAL  | sends real invite/rejection email via **Resend** (fixed VN templates); Calendar deferred |
 | `human_review` | ✅ REAL  | ReviewCard + approve/reject → delegates to scheduler; audit-logged (PRD §11) |
 
 Also REAL: JD management (create/edit/close) + embedding to Qdrant (`text-embedding-3-small`, 1536-dim);
-**gate rank** (auto-reject, per-JD toggle, §9); PWA dashboard; HR pages `/cv-check`, `/applications`
-(list + score detail), `/review` (queue), `/jobs` (JD management UI).
+**gate rank** (auto-reject, per-JD toggle, §9); **public CV submission** (`/apply`, guest, safe JD projection +
+server-side magic-byte validation — slice 07); **Screener suspend/resume** (Postgres checkpointer, 08a);
+PWA dashboard; HR pages `/cv-check`, `/applications` (list + score detail), `/review` (queue), `/jobs` (JD UI).
 
-**NOT yet done:** gate INVITE (auto-invite — the second gate, §9); Screener async (§10); public CV submission
-(`/apply` — slice 07, **NEXT**); object storage (local disk for now); HR auth; analytics; observability;
-anti-prompt-injection; deploy; UI redesign; learning loop.
+**NOT yet done:** Screener 08b (form magic-link + bộ câu hỏi email → resume câu trả lời thật, thay endpoint
+test `/api/agents/resume-screener`) / 08c (timeout/nhắc/trả lời trễ) / 08d (gate auto-mời — §9); object storage
+(local disk for now); HR auth; analytics; observability; anti-prompt-injection; deploy; UI redesign; learning loop.
 
 `ENABLE_LLM=true` enables real parser+ranker; `false` keeps stubs (for `test_graph`).
 
