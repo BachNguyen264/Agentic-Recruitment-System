@@ -38,14 +38,15 @@ def route_after_ranker(state: RecruitmentState) -> str:
     mọi ca còn lại về human_review.
 
     1) BẤT ĐỊNH → `human_review` (gate KHÔNG xét — ca không chắc luôn về người).
-    2) tự tin + ĐẠT ngưỡng (require_human_review falsy) → `human_review`: HR duyệt rồi scheduler gửi thư
-       MỜI THẬT (đường 03b+04). Auto-mời chưa xây (mặc định TẮT — PRD §9) → KHÔNG auto-set
-       INTERVIEW_SCHEDULED câm. INTERVIEW_SCHEDULED CHỈ đặt sau khi mời đã gửi.
+    2) tự tin + ĐẠT ngưỡng (require_human_review falsy) → `screener` (08a, PRD §10): pipeline DỪNG hỏi
+       ứng viên (bộ câu hỏi cố định — async, suspend/resume). Xong screener → human_review (HR duyệt →
+       scheduler gửi thư MỜI THẬT, đường 03b+04). Auto-mời chưa xây (mặc định TẮT) → KHÔNG auto-set
+       INTERVIEW_SCHEDULED câm. (Trước 08a: đi thẳng human_review — BUG A fix.)
     3) tự tin + điểm thấp SẠCH (ranker đặt require_human_review = điểm < ngưỡng) → gate JD:
-       auto_reject BẬT → `auto_reject`; TẮT → `human_review`.
+       auto_reject BẬT → `auto_reject`; TẮT → `human_review`. (KHÔNG qua screener.)
     """
     if should_review(state):
         return "human_review"
     if not state.get("require_human_review"):
-        return "human_review"  # ĐẠT ngưỡng → HR duyệt → gửi mời thật (BUG A fix; auto-mời = 08d)
+        return "screener"  # ĐẠT ngưỡng → Screener async (08a): dừng hỏi ứng viên rồi mới → human_review
     return "auto_reject" if _auto_reject_enabled(state) else "human_review"

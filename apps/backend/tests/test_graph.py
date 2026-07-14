@@ -14,16 +14,17 @@ def test_graph_compiles() -> None:
     assert compile_graph() is not None
 
 
-def test_confident_pass_reaches_human_review() -> None:
-    # BUG A fix: ca ĐẠT/tự tin KHÔNG còn tự đặt INTERVIEW_SCHEDULED câm — về human_review để HR duyệt
-    # rồi scheduler mới gửi thư mời THẬT (auto-mời chưa xây, mặc định TẮT). Không qua screener/scheduler.
+def test_confident_pass_suspends_at_screener() -> None:
+    # 08a (PRD §10): ca ĐẠT/tự tin KHÔNG chạy thẳng — DỪNG ở screener (interrupt, suspend/resume).
+    # run_sync là MỘT ainvoke (không resume) → trả state ở ĐIỂM DỪNG: parser+ranker đã chạy nhưng
+    # screener CHƯA hoàn tất, CHƯA tới human_review/scheduler. (Bài suspend→resume đầy đủ ở
+    # test_checkpointer.py.) Trước 08a: đi thẳng human_review (BUG A fix).
     final = run_sync(force_review=False)
-    assert final["status"] == "PENDING_REVIEW"
-    assert final["require_human_review"] is True
     joined = " ".join(final["messages"])
     assert "[parser]" in joined and "[ranker]" in joined
-    assert "[human_review]" in joined
-    assert "[scheduler]" not in joined  # KHÔNG auto-schedule câm
+    assert "[human_review]" not in joined  # chưa tới human_review (còn chờ resume screener)
+    assert "[scheduler]" not in joined
+    assert final["status"] != "PENDING_REVIEW"  # chưa quyết (đang suspend)
 
 
 def test_review_branch_reaches_human_review() -> None:

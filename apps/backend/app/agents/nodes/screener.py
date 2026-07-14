@@ -1,25 +1,37 @@
-"""screener node — STUB (PRD §7.3 + §10). Chạy SAU ranker, trên nhánh tự động.
+"""screener node — SUSPEND/RESUME (PRD §7.3 + §10). Chạy SAU ranker, trên nhánh ĐẠT.
 
-Thật: gửi BỘ CÂU HỎI CỐ ĐỊNH qua email + magic-link form rồi **SUSPEND** pipeline (lưu state bền,
-không chiếm tài nguyên); resume theo sự kiện/timeout; nhắc +24h; deadline +72h. KHÔNG phải chatbot.
+08a (nền bất đồng bộ): DỪNG pipeline ở đây bằng LangGraph `interrupt()` — state được lưu BỀN xuống
+checkpointer Postgres (Neon), không chiếm tài nguyên; resume ĐÚNG điểm dừng khi có câu trả lời, sống
+qua restart backend. Đây MỚI là cơ chế; những phần Screener khác xây trên nền này:
+  - 08b: gửi BỘ CÂU HỎI CỐ ĐỊNH qua email + magic-link form → resume bằng câu trả lời THẬT.
+  - 08c: nhắc +24h, deadline +72h (timeout/trả lời trễ).
+  - 08d: cổng auto-mời sau screener.
+KHÔNG phải chatbot. Payload interrupt ở 08a chỉ PLACEHOLDER (câu hỏi thật = 08b).
 
-Scaffold: pass-through, KHÔNG suspend thật.
+LƯU Ý (ngữ nghĩa interrupt): khi resume, node CHẠY LẠI TỪ ĐẦU — code TRƯỚC `interrupt()` chạy 2 lần.
+Giữ node tối giản, KHÔNG side-effect trước `interrupt()`.
 """
 
 from __future__ import annotations
+
+from langgraph.types import interrupt
 
 from app.agents.state import RecruitmentState
 from app.models.application import ApplicationStatus
 
 
 def screener_node(state: RecruitmentState) -> dict:
-    # TODO (PRD §10): LangGraph interrupt + Postgres checkpointer (suspend/resume, reminder, timeout).
-    # TODO (PRD §9): GATE MỜI sau screener (auto-mời ON -> scheduler; OFF/có cờ -> human_review).
+    # Lần chạy ĐẦU: interrupt() raise → pipeline DỪNG (suspend), KHÔNG trả dict, state lưu ở checkpointer.
+    # Lần RESUME: interrupt() trả về payload resume (mock ở 08a) → node chạy tiếp, trả dict bên dưới.
+    answers = interrupt(
+        {"awaiting": "screener_answers", "application_id": state.get("application_id")}
+    )
+    # 08a chưa xử lý câu trả lời (chuẩn hóa/chấm = 08b) — chỉ đi tiếp sang human_review.
     return {
         "status": ApplicationStatus.SCREENING.value,
-        "awaiting_screener": False,  # scaffold: chưa suspend
-        "screener_answers": None,
+        "awaiting_screener": False,
+        "screener_answers": answers,
         "confidence": 1.0,
         "uncertainty_flags": [],
-        "messages": ["[screener] stub pass-through (chưa gửi email/suspend — PRD §10)"],
+        "messages": ["[screener] resume: nhận câu trả lời (placeholder 08a) → tiếp human_review"],
     }
