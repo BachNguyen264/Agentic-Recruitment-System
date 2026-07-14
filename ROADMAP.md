@@ -52,8 +52,12 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   (Neon direct); pipeline pauses at screener (`interrupt()`), state durable, resumes from the pause point (bền
   qua restart backend, verified live: đạt→AWAITING_SCREENER→restart→resume→PENDING_REVIEW, không chạy lại parser/ranker).
   Windows dev: `python -m app` (SelectorEventLoop cho psycopg). Resume qua endpoint test + payload mock (08b thay bằng form).
-- **08b — Magic-link form** (§7.3, §12.2). Public `/screening/<token>` route; email the fixed question set (per
-  JD); applicant fills form → answers captured → resume. Validate token (expiry/used). Normalize answers (light LLM, not a chatbot).
+- **08b — Magic-link form** (§7.3, §12.2) — ✅ **DONE.** `screening_session` (token urlsafe + expires_at +
+  used_at + questions snapshot); interrupt → email câu hỏi + magic-link qua scheduler; public `/screening/<token>`
+  + `GET/POST /api/public/screening/{token}` (projection an toàn: chỉ câu hỏi + tiêu đề JD); nộp → resume BẰNG
+  câu trả lời → human_review; answers hiện cho HR. Bảo mật: token crypto-random, hết hạn, one-time, row-lock
+  chống double-submit, chỉ resume AWAITING_SCREENER. Verified live (API + browser) + adversarial security review
+  (0 finding). Chuẩn hóa answers bằng LLM = hoãn (lưu thô). Endpoint dev resume gated ENABLE_DEV_ENDPOINTS.
 - **08c — Timeout + reminder + late reply** (§10). Periodic deadline sweep; one reminder at +24h; timeout →
   human_review (`no_response`, NEVER auto-reject); handle late replies.
 - **08d — Gate invite** (§9). After screener: auto-invite on + clean → scheduler; off/flagged → human_review. Completes the second gate.
@@ -117,9 +121,9 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [x] 05 JD management UI
 - [x] 07 public CV submission (`/apply`, guest)
 - [x] **08a Postgres checkpointer + suspend/resume** (durable qua restart, verified live)
-- [ ] **08b Magic-link form + bộ câu hỏi email ← NEXT** (thay endpoint test resume-screener)
+- [x] **08b Magic-link form + email câu hỏi** (token/expiry/one-time/row-lock, verified live + security review)
 - [ ] 06 object storage (deferred to near-deploy)
-- [ ] 08c timeout/nhắc · 08d gate auto-mời
+- [ ] **08c timeout/nhắc/trả lời trễ ← NEXT** · 08d gate auto-mời
 - [ ] 09 HR auth
 - [ ] 10 analytics · 11 observability · 12 anti-injection · UI redesign · 13 deploy
 - [ ] 14 LLM-suggested rubric · 15 optional

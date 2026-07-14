@@ -1,12 +1,12 @@
-# SLICE 08a — Postgres checkpointer + suspend/resume (nền Screener async) · plan one-shot
+# SLICE 08b — Magic-link form + email câu hỏi (Screener do ứng viên điều khiển) · plan one-shot
 
 > **Bản chất:** plan ONE-SHOT. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Mục tiêu (HẸP):** chứng minh pipeline **dừng được ở screener → lưu state xuống Postgres → resume từ đúng điểm
-> dừng**, BỀN qua restart backend. Đây là NỀN cho Screener async; mọi thứ Screener khác (form, email câu hỏi,
-> timeout, gate mời) xây trên nền này ở 08b/c/d.
-> Tham chiếu: PRD §10 (Screener), §7.3, NFR-2 (bất đồng bộ). Tuân thủ `CLAUDE.md`.
+> **Mục tiêu:** khi pipeline dừng ở screener (08a), hệ thống **gửi email kèm magic-link** → ứng viên mở link thấy
+> **form câu hỏi (cố định theo JD)** → nộp → **resume pipeline bằng chính câu trả lời** (thay endpoint dev). Câu
+> trả lời được lưu + hiện cho HR. Ghép: suspend/resume (08a) + email (04) + cửa ứng viên (07).
+> Tham chiếu: PRD §7.3 (Screener), §10, §12.2 (FR-AP-3), §16 (ScreeningSession). Tuân thủ `CLAUDE.md`.
 >
-> **⚠️ Đây là lát KHÓ NHẤT tới giờ (bất đồng bộ thật). Scope hẹp có chủ đích. Gặp góc tinh vi → DỪNG, hỏi.**
+> **⚠️ Cốt lõi lát này = BẢO MẬT MAGIC-LINK (token). Đọc kỹ mục "Bảo mật" — làm đúng từ đầu.**
 
 ---
 
@@ -14,121 +14,133 @@
 
 **In scope:**
 
-- Thêm **Postgres checkpointer** (LangGraph `AsyncPostgresSaver`) — kết nối Neon riêng, `.setup()` một lần, compile graph với nó (thay MemorySaver).
-- Đổi node `screener` từ stub pass-through → **interrupt** (pipeline tạm dừng ở đây; payload chỉ là placeholder).
-- Định tuyến: confident + đạt → **screener** (chèn lại vào đường đạt). uncertain / điểm thấp KHÔNG qua screener (giữ nguyên).
-- BackgroundTask: khi graph interrupt → set status `AWAITING_SCREENER`; `thread_id = application_id` (bền, để resume).
-- Endpoint RESUME (dev/test): `POST /api/agents/resume-screener/{id}` (payload mock) → `Command(resume=...)` → graph
-  chạy tiếp TỪ screener → node kế → trạng thái cuối (hiện: human_review, vì gate mời chưa xây).
-- Test.
+- Bảng `screening_session` (token, application_id, expires_at, used_at, answers) + migration Alembic.
+- Khi interrupt (BackgroundTask): sinh token an toàn + tạo screening_session + delegate **scheduler** gửi email câu hỏi kèm magic-link.
+- scheduler: thêm template email "screener" (magic-link + hạn) — vẫn là điểm phát email DUY NHẤT.
+- Endpoint CÔNG KHAI: `GET /api/public/screening/{token}` (validate token → trả câu hỏi + tiêu đề JD, KHÔNG lộ nội bộ);
+  `POST /api/public/screening/{token}` (nộp câu trả lời → validate → row-lock → **resume graph bằng câu trả lời** → đánh dấu used → lưu answers).
+- Trang công khai `/screening/[token]` (hiện câu hỏi, form, nộp, xác nhận) — tách khỏi nav HR.
+- Hiện câu trả lời screener cho HR (thêm nhỏ ở ReviewCard/chi tiết).
+- Gỡ/gate endpoint dev `resume-screener` (token-submit là đường thật).
 
-**Out of scope (KHÔNG làm — là 08b/c/d):**
+**Out of scope (KHÔNG làm — là 08c/08d/sau):**
 
-- KHÔNG form magic-link, KHÔNG gửi email câu hỏi (resume bằng endpoint test + payload mock).
-- KHÔNG bộ câu hỏi thật / chuẩn hóa câu trả lời bằng LLM. KHÔNG timeout / nhắc / trả lời trễ.
-- KHÔNG cổng auto-mời (08d). KHÔNG đụng parser/ranker/scheduler/human_review logic.
-- CHỈ CV đạt vào screener; đừng cho low/uncertain qua screener.
+- KHÔNG timeout/nhắc lịch/trả lời trễ (08c). KHÔNG cổng auto-mời (08d).
+- KHÔNG dùng LLM chuẩn hóa/hỏi lại câu trả lời (lưu answers THÔ + hiện cho HR; tinh chỉnh để sau).
+- KHÔNG đụng parser/ranker logic; KHÔNG đổi cơ chế checkpointer 08a (chỉ đổi trigger resume).
 
 ---
 
 ## 2. Prerequisites
 
-- Deps: `langgraph-checkpoint-postgres` (cung cấp `AsyncPostgresSaver`) + driver của nó (`psycopg[binary,pool]`). Thêm qua `uv add`.
-- Neon connection string (đã có cho app). **LƯU Ý:** checkpointer dùng kết nối Postgres RIÊNG (psycopg), tách khỏi
-  SQLAlchemy async engine (asyncpg) của app — xem Gotchas.
-- **Kiểm phiên bản LangGraph đang cài** rồi dùng ĐÚNG API checkpointer + interrupt/resume của phiên bản đó (API này
-  đã thay đổi qua các version — đừng dựa theo trí nhớ; đọc docs/version thực tế).
+- 08a xong (suspend/resume + AsyncPostgresSaver + screener interrupt). 04 xong (scheduler email thật). 05 xong
+  (JD có `screener_questions`). 07 xong (pattern public endpoint + trang công khai tách nav).
+- Config: `SCREENER_DEADLINE_HOURS` (vd 72), `FRONTEND_BASE_URL` (build magic-link). Email: Resend (nhắc: chưa xác thực domain → khi verify dùng email của bạn làm applicant).
 
 ---
 
 ## 3. Việc cần làm
 
-### 3.1 Postgres checkpointer · (vd `app/agents/checkpointer.py` + lifespan)
+### 3.1 Bảng screening_session + migration · `app/models/` + Alembic
 
-- Tạo `AsyncPostgresSaver` từ Neon connection (psycopg). Gọi `.setup()` MỘT LẦN (idempotent — tạo bảng checkpoint
-  trong Neon; tách khỏi bảng app). Tạo pool/kết nối trong **lifespan** (một lần, dùng lại — KHÔNG tạo mỗi request).
-- Compile graph với `checkpointer=<AsyncPostgresSaver>` (thay MemorySaver hiện có).
+- `screening_session`: `id`, `token` (unique, indexed), `application_id` (FK), `expires_at`, `used_at` (nullable),
+  `answers` (JSONB, nullable), `created_at`. Migration Alembic tạo bảng.
+- Cập nhật `scripts/reset_demo_data.py`: xóa application thì xóa KÈM screening_session tương ứng (tránh mồ côi, giống checkpoint/Qdrant).
 
-### 3.2 Node screener → interrupt · `app/agents/nodes/screener.py`
+### 3.2 Sinh token + gửi email khi interrupt · `app/tasks/background.py`
 
-- Đổi từ pass-through → gọi cơ chế **interrupt** của LangGraph (vd `interrupt(payload)` trong node, hoặc
-  `interrupt_before=["screener"]` khi compile — chọn theo API phiên bản đang dùng; ưu tiên `interrupt()` dynamic để 08b resume bằng câu trả lời).
-- Payload interrupt ở 08a chỉ là PLACEHOLDER (vd `{"awaiting": "screener_answers", "application_id": ...}`) — câu hỏi thật là 08b.
-- Khi resume, node nhận payload resume (mock ở 08a) rồi tiếp tục (chưa xử lý gì với payload — chỉ đi tiếp).
+- Khi graph interrupt (AWAITING_SCREENER): sinh **token an toàn** (`secrets.token_urlsafe`, KHÔNG tuần tự/đoán được);
+  tạo `screening_session` (application_id, expires_at = now + SCREENER_DEADLINE_HOURS, used_at=NULL).
+- Delegate `scheduler.notify_decision(mode="screener", ...)` (hoặc hàm tương đương) → gửi email câu hỏi kèm
+  magic-link `{FRONTEND_BASE_URL}/screening/{token}`. Lỗi gửi nuốt có kiểm soát (như 04) — không sập; audit.
 
-### 3.3 Định tuyến: đạt → screener · `app/agents/policy.py` (+ graph)
+### 3.3 scheduler: template screener · `app/agents/nodes/scheduler.py` + templates
 
-- `route_after_ranker`: confident + đạt ngưỡng → **`screener`** (thay vì human_review như bản fix trước).
-  uncertain → human_review; confident + thấp → auto_reject(ON)/human_review(OFF) — GIỮ NGUYÊN (không qua screener).
-- Sau screener (khi resume xong): route tiếp → human_review (gate mời chưa xây = hành vi auto_invite TẮT; slot cho 08d).
-- **CHẠY IMPACT ANALYSIS (GitNexus) trước khi sửa `route_after_ranker`** (CLAUDE.md yêu cầu).
+- Thêm `screener_email(candidate_name, job_title, link, deadline)`: mời ứng viên trả lời vài câu hỏi bổ sung qua
+  link, nêu hạn. Template CỐ ĐỊNH (không LLM). scheduler vẫn là điểm phát email DUY NHẤT.
 
-### 3.4 BackgroundTask: xử lý interrupt → AWAITING_SCREENER · `app/tasks/background.py`
+### 3.4 Endpoint công khai · `app/api/routes/` (public)
 
-- Dùng `thread_id = application_id` trong config khi invoke graph (BẮT BUỘC khớp giữa lần chạy đầu và lúc resume).
-- Sau lần invoke đầu: nếu graph DỪNG ở interrupt (kết quả có `__interrupt__` / state báo đang chờ) → set status `AWAITING_SCREENER`, log rõ. KHÔNG coi là "xong".
-- Xử lý vòng lặp event loop cẩn thận (xem Gotchas) — async saver + cách invoke hiện tại (`asyncio.run`) dễ xung đột.
+- `GET /api/public/screening/{token}`: validate token (tồn tại + chưa hết hạn + chưa dùng + application đang
+  AWAITING_SCREENER) → trả **chỉ**: câu hỏi (`screener_questions` của JD) + tiêu đề JD. **KHÔNG** lộ rubric/gate/
+  điểm/parsed_data/nội bộ. Token sai/hết hạn/đã dùng → trạng thái rõ (410/404/409) để UI hiện thông báo phù hợp.
+- `POST /api/public/screening/{token}` (body: answers theo câu hỏi):
+  1. **Row-lock** screening_session/application (SELECT … FOR UPDATE) để chống submit trùng → resume 2 lần.
+  2. Re-validate trong lock: chưa used, chưa hết hạn, application AWAITING_SCREENER.
+  3. **Resume graph**: `Command(resume=answers)` với `thread_id = app-<application_id>` (đúng cơ chế 08a) → graph
+     chạy tiếp từ screener → node kế → trạng thái cuối (human_review, vì gate mời chưa xây).
+  4. Đánh dấu `used_at = now`; lưu `answers` (vào screening_session + state screener của application).
+  5. Trả xác nhận gọn (không lộ điểm/trạng thái nội bộ).
 
-### 3.5 Endpoint resume (dev/test) · `app/api/routes/agents.py`
+### 3.5 Trang công khai form · `app/screening/[token]/page.tsx`
 
-- `POST /api/agents/resume-screener/{application_id}` (body: payload mock tùy chọn):
-  - Load graph cùng `thread_id = application_id`; invoke `Command(resume=<mock payload>)` (hoặc tương đương API version).
-  - Graph chạy tiếp TỪ screener (KHÔNG chạy lại parser/ranker) → node kế → trạng thái cuối.
-  - Cập nhật status theo kết quả; trả outcome. (Đây là chỗ 08b sẽ thay trigger = ứng viên nộp form.)
-  - Validate: chỉ resume được application đang `AWAITING_SCREENER` (else 409).
+- Fetch câu hỏi qua GET public → render form (mỗi câu hỏi 1 ô trả lời). Nộp → POST public → màn xác nhận
+  ("Cảm ơn, câu trả lời đã được ghi nhận"). Token sai/hết hạn/đã nộp → thông báo tương ứng (không form).
+- Tách khỏi nav HR (luồng ứng viên, như /apply). Validate client cơ bản (điền đủ). Chống double-submit.
 
-### 3.6 Test · `app/tests/test_checkpointer.py`
+### 3.6 Hiện câu trả lời cho HR · ReviewCard/chi tiết
 
-- CV đạt → graph dừng ở screener (interrupt) → status AWAITING_SCREENER (mock/gated phù hợp).
-- Resume → graph tiếp tục từ screener → trạng thái cuối; parser/ranker KHÔNG chạy lại.
-- uncertain/low KHÔNG đi qua screener (route như cũ).
-- (Nếu khó test durability trong unit → để phần restart cho Verify thủ công.)
+- Ở `/review` (và/hoặc chi tiết ứng viên), nếu application có `answers` screener → hiện khối "Câu trả lời sàng lọc"
+  (câu hỏi + trả lời) để HR tham khảo khi quyết. Thuần hiển thị.
+
+### 3.7 Gỡ/gate endpoint dev
+
+- `POST /api/agents/resume-screener/{id}` (dev, từ 08a): gỡ, HOẶC gate sau cờ env (chỉ để test nội bộ). Đường thật giờ là token-submit.
+
+### 3.8 Test · `app/tests/test_screening.py`
+
+- Interrupt → screening_session tạo với token + hạn; scheduler gửi email screener (mock).
+- GET token hợp lệ → trả câu hỏi (KHÔNG lộ rubric/điểm). Token sai/hết hạn/đã dùng → lỗi đúng mã.
+- POST token → resume graph (mock/gated) → status chuyển; used_at set; answers lưu; parser/ranker KHÔNG chạy lại.
+- POST lần 2 cùng token → bị từ chối (đã dùng). Row-lock chống double-submit (nếu test được).
 
 ---
 
-## 4. Verify (chạy thật — bao gồm bài test DURABILITY quan trọng nhất)
+## 4. Verify (chạy thật — luồng ứng viên đầy đủ)
 
-1. `make dev-backend`. Nộp CV đạt (backend khớp JD #2, email của bạn) qua `/apply`.
-2. Pipeline chạy parser+ranker → dừng ở screener → `/applications` thấy status **AWAITING_SCREENER** (không đi tiếp, không email). Log: dừng ở interrupt.
-3. Kiểm Postgres: có bản ghi checkpoint cho thread_id = application_id (state đã lưu bền).
-4. **BÀI TEST MẤU CHỐT (durability):** **RESTART backend** (`make dev-backend` lại). State PHẢI còn (trong Neon, không mất như MemorySaver).
-5. Gọi `POST /api/agents/resume-screener/{id}` (payload mock) → graph chạy tiếp TỪ screener → **KHÔNG** chạy lại parser/ranker (kiểm log: không có lời gọi OpenAI parse/rank thứ hai) → route → human_review → status PENDING_REVIEW.
-6. (Nối tiếp) vào `/review` duyệt → thư mời thật (đường cũ vẫn chạy). Đối chứng: CV thấp/uncertain KHÔNG vào screener (đi thẳng review/auto-reject).
-7. `make test` xanh.
+1. `make dev-backend` + `make dev-dashboard`. JD #2 có `screener_questions` (nếu chưa, thêm vài câu qua /jobs).
+2. Nộp CV đạt (backend khớp, **email của bạn**) qua `/apply` → pipeline chấm → dừng ở screener (AWAITING_SCREENER).
+3. **Kiểm hòm thư:** nhận **email câu hỏi kèm magic-link**. Mở link → trang `/screening/{token}` hiện câu hỏi của JD (KHÔNG thấy rubric/điểm).
+4. Điền câu trả lời → Nộp → màn xác nhận. Pipeline **resume** → `/applications` (HR) thấy CV chuyển PENDING_REVIEW (KHÔNG chạy lại parser/ranker — kiểm log).
+5. Vào `/review` → thấy **câu trả lời screener** của ứng viên hiển thị. Duyệt → thư mời thật.
+6. Bảo mật: mở lại link đã nộp → báo "đã nộp/không hợp lệ" (one-time). Sửa token bậy trên URL → báo lỗi. (Nếu chỉnh được `expires_at` về quá khứ → link báo hết hạn.)
+7. `make test` xanh; `pnpm --filter dashboard build` PASS.
 
 ---
 
 ## 5. Definition of Done
 
-- [ ] Graph compile với **AsyncPostgresSaver** (Neon); `.setup()` idempotent; pool tạo một lần ở lifespan.
-- [ ] CV đạt → dừng ở screener (interrupt) → status `AWAITING_SCREENER`; state lưu bền trong Postgres (thread_id=application_id).
-- [ ] **Resume BỀN qua restart backend:** sau khi restart, resume vẫn chạy tiếp từ screener (KHÔNG chạy lại parser/ranker).
-- [ ] Endpoint resume tiếp tục pipeline → human_review → (duyệt) thư mời thật. Validate chỉ resume ca AWAITING_SCREENER (409 else).
-- [ ] Chỉ CV đạt vào screener; uncertain/low giữ route cũ (không hồi quy).
-- [ ] KHÔNG form/email câu hỏi/timeout/gate mời; parser/ranker/scheduler/human_review logic KHÔNG đụng.
-- [ ] `make test` xanh.
+- [ ] Interrupt → sinh token an toàn + screening_session (hạn) + scheduler gửi email magic-link (điểm phát email duy nhất).
+- [ ] `/screening/{token}` hiện câu hỏi JD; nộp → **resume graph bằng câu trả lời** → PENDING_REVIEW (KHÔNG chạy lại parser/ranker).
+- [ ] Câu trả lời lưu + hiện cho HR ở review.
+- [ ] **Bảo mật:** token crypto-random; hết hạn bị từ chối; one-time (dùng lại bị chặn); chỉ resume application AWAITING_SCREENER; **row-lock chống double-submit**.
+- [ ] Public endpoint KHÔNG lộ rubric/gate/điểm/parsed_data (chỉ câu hỏi + tiêu đề JD).
+- [ ] Migration screening_session; reset_demo_data dọn kèm; endpoint dev resume gỡ/gated.
+- [ ] KHÔNG timeout/nhắc (08c), KHÔNG auto-mời (08d), KHÔNG LLM chuẩn hóa câu trả lời; checkpointer 08a không đổi.
+- [ ] `make test` xanh; `pnpm build` PASS.
 
 ---
 
-## 6. ⚠️ GOTCHAS — đọc kỹ, đây là chỗ dễ sa lầy
+## 6. 🔒 BẢO MẬT — đọc kỹ (cốt lõi lát này)
 
-- **thread_id BẮT BUỘC ổn định + khớp:** dùng `application_id`. Lần chạy đầu và lúc resume phải cùng thread_id, nếu không resume không tìm thấy checkpoint.
-- **Kết nối Postgres của checkpointer TÁCH khỏi SQLAlchemy:** LangGraph PostgresSaver dùng psycopg (không phải asyncpg). Cần cấu hình kết nối riêng cho Neon (SSL). Lưu ý Neon pooling (`-pooler`/PgBouncer) có thể cần connection trực tiếp hoặc tham số pool phù hợp — nếu lỗi kết nối/prepared-statement, thử connection không-pooled cho checkpointer.
-- **Vòng lặp event loop (RỦI RO CAO NHẤT):** app hiện invoke graph qua `runner.run_sync` = `asyncio.run(ainvoke)`. `AsyncPostgresSaver` giữ pool gắn với một event loop; `asyncio.run` tạo/đóng loop mỗi lần → dễ "loop is closed"/pool hỏng. Cần: hoặc một event loop bền cho background task, hoặc tạo pool trong cùng loop invoke, hoặc dùng API async xuyên suốt. **Nếu vướng chỗ này → DỪNG, mô tả lỗi, hỏi trước khi hack.**
-- **`.setup()` chạy một lần** (tạo bảng checkpoint) — idempotent; đừng gọi mỗi request.
-- **API version:** interrupt/resume (`interrupt()` + `Command(resume=...)` vs `interrupt_before`) khác nhau theo version — kiểm version cài đặt, dùng đúng.
-- Interrupt payload 08a chỉ placeholder — đừng cố nhét câu hỏi/logic (đó là 08b).
+- **Token không đoán được:** `secrets.token_urlsafe(32)` — KHÔNG dùng id tuần tự / uuid dễ đoán / hash yếu.
+- **Hết hạn:** `expires_at` (config SCREENER_DEADLINE_HOURS); mọi thao tác re-check còn hạn không.
+- **One-time:** đánh dấu `used_at` sau khi resume thành công; token đã dùng → từ chối (tránh resume 2 lần / replay).
+- **Tie đúng trạng thái:** chỉ resume application đang `AWAITING_SCREENER`; khác trạng thái → từ chối (tránh resume ca đã xử lý).
+- **Row-lock chống race:** hai submit đồng thời cùng token KHÔNG được cùng resume graph (state hỏng / xử lý đôi). SELECT … FOR UPDATE trên session/application trong transaction resume; re-validate trong lock.
+- **Không lộ nội bộ:** endpoint/trang công khai chỉ câu hỏi + tiêu đề JD; KHÔNG rubric/gate/điểm/parsed_data (như projection 07).
+- **Lỗi gửi email không sập** (như 04): interrupt vẫn AWAITING_SCREENER, session vẫn tạo; log/audit lỗi để xử (retry/timeout là 08c).
 
 ## 7. Ranh giới & quy ước (theo CLAUDE.md)
 
-- CHỈ động vào: checkpointer + screener-interrupt + routing đạt→screener + BackgroundTask interrupt-handling + resume endpoint + test. KHÔNG đụng parser/ranker/scheduler/human_review logic.
-- Đơn giản trước: chứng minh cơ chế, không tối ưu; payload placeholder; resume thủ công.
-- Async-first; config từ env (checkpointer connection); không hardcode.
-- Commit nhỏ (vd `feat(checkpointer): AsyncPostgresSaver + setup + compile`, `feat(screener): interrupt (pause) + route đạt->screener`, `feat(agents): BackgroundTask AWAITING_SCREENER + resume endpoint`, `test(checkpointer): suspend/resume`).
-- Nghiệp vụ chưa rõ → **PRD.md** (§10, §7.3). Kỹ thuật vướng (event loop/psycopg) → DỪNG, hỏi. ĐỪNG suy diễn/hack im lặng.
-- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhấn mạnh bài test restart-durability), checklist DoD.
+- CHỈ động vào: screening_session + token/email trigger + scheduler screener template + public screening endpoints + trang /screening + hiện answers cho HR + gỡ endpoint dev + migration/test. KHÔNG đụng parser/ranker/checkpointer-08a logic.
+- scheduler = điểm phát email DUY NHẤT (email screener qua scheduler). Template cố định (không LLM).
+- resume dùng đúng thread_id = `app-<application_id>` của 08a. Chạy impact analysis (GitNexus) trước khi sửa background/policy.
+- Commit nhỏ (vd `feat(screener): bảng screening_session + migration`, `feat(screener): token + email magic-link qua scheduler`, `feat(api): public screening GET/POST + resume bằng answers (row-lock)`, `feat(ui): trang /screening form`, `feat(ui): hiện answers cho HR`, `chore: gỡ endpoint dev resume`, `test(screener): token/expiry/one-time/resume`).
+- Nghiệp vụ chưa rõ → **PRD.md** (§7.3, §10, §12.2, §16). Vướng kỹ thuật (resume/lock/token) → DỪNG, hỏi.
+- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhấn: dùng email của bạn, thử one-time/hết hạn), checklist DoD.
 
 ## 8. Sau lát này
 
-Nền suspend/resume xong → **08b** (magic-link form + email bộ câu hỏi → resume bằng câu trả lời thật, thay endpoint test) →
-**08c** (timeout/nhắc/trả lời trễ) → **08d** (cổng auto-mời). Xem ROADMAP.md.
+Screener do ứng viên điều khiển xong → **08c** (timeout: quét deadline, nhắc +24h, timeout→human_review `no_response`,
+trả lời trễ) → **08d** (cổng auto-mời sau screener). Xem ROADMAP.md.

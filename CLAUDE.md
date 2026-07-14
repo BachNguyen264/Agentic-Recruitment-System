@@ -49,18 +49,20 @@ Past scaffold — building real logic slice by slice. Node REAL vs STUB:
 | -------------- | -------- | ----- |
 | `parser`       | ✅ REAL  | CV→JSON via OpenAI `gpt-4.1-mini` (structured output) + certificates/languages/awards/other |
 | `ranker`       | ✅ REAL  | reasoned rubric scoring via `gpt-5-mini` (reasoning_effort=low); embedding = SIDE signal only |
-| `screener`     | 🟡 PARTIAL | **08a DONE:** suspend/resume real (`interrupt()` + AsyncPostgresSaver/Neon, bền qua restart; đạt→screener→resume→human_review). Form magic-link + bộ câu hỏi email + timeout/nhắc + gate auto-mời = 08b/c/d (PRD §10) |
+| `screener`     | 🟡 PARTIAL | **08a+08b DONE:** suspend/resume (`interrupt()` + AsyncPostgresSaver/Neon, bền qua restart) + **magic-link form**: dừng ở screener → email token (qua scheduler) → ứng viên mở `/screening/{token}` trả lời → resume BẰNG câu trả lời → human_review; answers hiện cho HR. Token an toàn/hết hạn/one-time/row-lock. Còn: timeout/nhắc = 08c, gate auto-mời = 08d (PRD §10) |
 | `scheduler`    | ✅ REAL  | sends real invite/rejection email via **Resend** (fixed VN templates); Calendar deferred |
 | `human_review` | ✅ REAL  | ReviewCard + approve/reject → delegates to scheduler; audit-logged (PRD §11) |
 
 Also REAL: JD management (create/edit/close) + embedding to Qdrant (`text-embedding-3-small`, 1536-dim);
 **gate rank** (auto-reject, per-JD toggle, §9); **public CV submission** (`/apply`, guest, safe JD projection +
-server-side magic-byte validation — slice 07); **Screener suspend/resume** (Postgres checkpointer, 08a);
-PWA dashboard; HR pages `/cv-check`, `/applications` (list + score detail), `/review` (queue), `/jobs` (JD UI).
+server-side magic-byte validation — slice 07); **Screener suspend/resume** (Postgres checkpointer, 08a) +
+**magic-link form** (08b: `screening_session` token + email câu hỏi qua scheduler + public `/screening/{token}` +
+`/api/public/screening/{token}` GET/POST + answers hiện cho HR); PWA dashboard; HR pages `/cv-check`,
+`/applications` (list + score detail), `/review` (queue), `/jobs` (JD UI).
 
-**NOT yet done:** Screener 08b (form magic-link + bộ câu hỏi email → resume câu trả lời thật, thay endpoint
-test `/api/agents/resume-screener`) / 08c (timeout/nhắc/trả lời trễ) / 08d (gate auto-mời — §9); object storage
-(local disk for now); HR auth; analytics; observability; anti-prompt-injection; deploy; UI redesign; learning loop.
+**NOT yet done:** Screener 08c (timeout/nhắc/trả lời trễ — quét deadline, +24h nhắc, timeout→human_review
+`no_response`) / 08d (gate auto-mời sau screener — §9); object storage (local disk for now); HR auth; analytics;
+observability; anti-prompt-injection; deploy; UI redesign; learning loop.
 
 `ENABLE_LLM=true` enables real parser+ranker; `false` keeps stubs (for `test_graph`).
 
