@@ -1,103 +1,134 @@
-# SLICE (FIX) — Sửa 2 lỗi từ end-to-end test: (A) CV đạt không gửi mời · (B) badge review dai dẳng · plan one-shot
+# SLICE 08a — Postgres checkpointer + suspend/resume (nền Screener async) · plan one-shot
 
-> **Bản chất:** plan ONE-SHOT sửa 2 lỗi phát hiện qua end-to-end test. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Chủ đề chung:** trạng thái THẬT của hồ sơ phải được phản ánh đúng — cả cách hệ thống ĐẶT trạng thái (A: backend)
-> lẫn cách HIỂN THỊ (B: frontend).
-> Tham chiếu: PRD §8.3, §9, §11, §13. Tuân thủ `CLAUDE.md`.
-
----
-
-## BUG A (backend) — CV đạt bị auto-đặt INTERVIEW_SCHEDULED mà KHÔNG gửi thư mời
-
-**Triệu chứng:** app 17 (91.5đ, đạt) → log `branch=auto status=INTERVIEW_SCHEDULED`, KHÔNG dòng scheduler nào → không thư mời.
-Trạng thái "đã hẹn phỏng vấn" nhưng ứng viên không được báo.
-**Nguyên nhân:** đường "CV đạt tự động" không có cơ chế gửi mời — cổng auto-mời (08d) CHƯA xây.
-**Fix:** CV đạt → `human_review` (HR duyệt → scheduler gửi thư mời THẬT, đúng đường 03b+04). Đối xứng với auto-reject (03c).
-
-### A.1 Định tuyến đường "đạt" → human_review · `app/agents/policy.py` (+ graph/runner)
-
-- `route_after_ranker`: nhánh confident + `score >= SCORE_PASS_THRESHOLD` (không cờ, không low-confidence) →
-  **đổi thành route `human_review`** (thay vì đường tự đặt INTERVIEW_SCHEDULED).
-- 3 nhánh sau sửa (đối xứng, đúng trạng thái hiện có):
-  - uncertain (lỗi/cờ/low-confidence) → human_review.
-  - confident + điểm thấp → auto_reject (gate ON) / human_review (gate OFF). _(giữ nguyên 03c)_
-  - confident + đạt → **human_review** (auto-mời chưa xây, mặc định TẮT). _(sửa)_
-- Nếu đường "đạt" đi qua node screener→scheduler và node đó auto-đặt trạng thái câm → chỉnh route thẳng human_review
-  (screener thật + cổng mời chèn lại ở GĐ3/08d — chừa slot). Runner label: bỏ nhãn "auto" gây hiểu nhầm cho nhánh này.
-
-### A.2 INTERVIEW_SCHEDULED chỉ khi đã gửi mời
-
-- Rà: KHÔNG đường nào đặt `INTERVIEW_SCHEDULED` mà không qua `scheduler.notify_decision("invite")`. Đường hợp lệ
-  duy nhất hiện tại: human_review approve → scheduler gửi mời → set INTERVIEW_SCHEDULED (đã có 03b/04). Giữ đúng vậy.
-- Nếu node scheduler tự động đang đặt INTERVIEW_SCHEDULED như hành vi stub → bỏ.
-
-### A.3 Test
-
-- confident + đạt → `route_after_ranker` = `human_review`; KHÔNG auto-set INTERVIEW_SCHEDULED.
-- Giữ: uncertain→review; confident+thấp→auto_reject(ON)/review(OFF); auto-reject vẫn gửi thư từ chối thật (mock).
+> **Bản chất:** plan ONE-SHOT. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
+> **Mục tiêu (HẸP):** chứng minh pipeline **dừng được ở screener → lưu state xuống Postgres → resume từ đúng điểm
+> dừng**, BỀN qua restart backend. Đây là NỀN cho Screener async; mọi thứ Screener khác (form, email câu hỏi,
+> timeout, gate mời) xây trên nền này ở 08b/c/d.
+> Tham chiếu: PRD §10 (Screener), §7.3, NFR-2 (bất đồng bộ). Tuân thủ `CLAUDE.md`.
+>
+> **⚠️ Đây là lát KHÓ NHẤT tới giờ (bất đồng bộ thật). Scope hẹp có chủ đích. Gặp góc tinh vi → DỪNG, hỏi.**
 
 ---
 
-## BUG B (frontend) — Badge "Cần HR xem xét" hiển thị cả khi hồ sơ đã xử lý xong
+## 1. In scope / Out of scope
 
-**Triệu chứng:** hồ sơ đã REJECTED (auto-từ-chối) hoặc đã quyết vẫn hiện badge "Cần HR xem xét — Điểm 4.5/100 dưới
-ngưỡng..." / "Điểm rubric (20.0) lệch tín hiệu tương đồng (0.5353)" ở danh sách ứng viên.
-**Nguyên nhân:** badge render chỉ vì `escalation_reason`/`uncertainty_flags` CÓ dữ liệu, KHÔNG xét trạng thái.
-**Đúng ra:** badge "cần xem xét" là chỉ báo HÀNH ĐỘNG — chỉ hiện khi `status == PENDING_REVIEW`. Đã xử lý xong
-(REJECTED/INTERVIEW_SCHEDULED) thì KHÔNG hiện nữa; xem lại chỉ thấy trạng thái cuối.
+**In scope:**
 
-### B.1 Gate hiển thị theo trạng thái · `/applications` (list + detail) — `components/*` liên quan
+- Thêm **Postgres checkpointer** (LangGraph `AsyncPostgresSaver`) — kết nối Neon riêng, `.setup()` một lần, compile graph với nó (thay MemorySaver).
+- Đổi node `screener` từ stub pass-through → **interrupt** (pipeline tạm dừng ở đây; payload chỉ là placeholder).
+- Định tuyến: confident + đạt → **screener** (chèn lại vào đường đạt). uncertain / điểm thấp KHÔNG qua screener (giữ nguyên).
+- BackgroundTask: khi graph interrupt → set status `AWAITING_SCREENER`; `thread_id = application_id` (bền, để resume).
+- Endpoint RESUME (dev/test): `POST /api/agents/resume-screener/{id}` (payload mock) → `Command(resume=...)` → graph
+  chạy tiếp TỪ screener → node kế → trạng thái cuối (hiện: human_review, vì gate mời chưa xây).
+- Test.
 
-- Khối/badge "Cần HR xem xét" (+ `escalation_reason`) và các cờ hiển thị dưới dạng "cần chú ý" (vd
-  `score_signal_mismatch`, `weak_match`, `near_threshold`) **CHỈ render khi `status == PENDING_REVIEW`.**
-- Hồ sơ ở trạng thái cuối (REJECTED, INTERVIEW_SCHEDULED, ...) → KHÔNG hiện badge nhắc nhở này; hiện trạng thái
-  cuối (passed/rejected) gọn gàng như bình thường.
-- KHÔNG xóa dữ liệu `escalation_reason`/flags khỏi API/DB — chỉ gate HIỂN THỊ badge "cần xem xét" theo trạng thái.
-  (Tùy chọn: ở trang chi tiết, có thể hiện lý do dạng thông tin trung tính cho hồ sơ đã quyết — KHÔNG bắt buộc, và KHÔNG dùng khung "cần HR xem xét".)
-- `/review` (ReviewCard) KHÔNG đổi: hàng đợi vốn luôn PENDING_REVIEW nên badge vẫn đúng ở đó.
+**Out of scope (KHÔNG làm — là 08b/c/d):**
 
-### B.2 (kiểm tra) badge số ca chờ ở nav
-
-- Badge đếm số ca chờ nav vốn đếm theo PENDING_REVIEW → đảm bảo vẫn đúng (không đếm hồ sơ đã quyết). Chỉ xác nhận, sửa nếu lệch.
+- KHÔNG form magic-link, KHÔNG gửi email câu hỏi (resume bằng endpoint test + payload mock).
+- KHÔNG bộ câu hỏi thật / chuẩn hóa câu trả lời bằng LLM. KHÔNG timeout / nhắc / trả lời trễ.
+- KHÔNG cổng auto-mời (08d). KHÔNG đụng parser/ranker/scheduler/human_review logic.
+- CHỈ CV đạt vào screener; đừng cho low/uncertain qua screener.
 
 ---
 
-## Prerequisites
+## 2. Prerequisites
 
-- 03b (human_review + approve→scheduler) và 04 (scheduler email thật) đã xong — Bug A tái dùng đường đó.
-- Có CV đạt (backend khớp JD #2) + CV thấp để test. Email của bạn để nhận thư mời.
+- Deps: `langgraph-checkpoint-postgres` (cung cấp `AsyncPostgresSaver`) + driver của nó (`psycopg[binary,pool]`). Thêm qua `uv add`.
+- Neon connection string (đã có cho app). **LƯU Ý:** checkpointer dùng kết nối Postgres RIÊNG (psycopg), tách khỏi
+  SQLAlchemy async engine (asyncpg) của app — xem Gotchas.
+- **Kiểm phiên bản LangGraph đang cài** rồi dùng ĐÚNG API checkpointer + interrupt/resume của phiên bản đó (API này
+  đã thay đổi qua các version — đừng dựa theo trí nhớ; đọc docs/version thực tế).
 
-## Verify (chạy thật)
+---
 
-**Bug A:**
+## 3. Việc cần làm
 
-1. `make dev-backend` + `make dev-dashboard`. JD #2 (gate tắt). Nộp CV backend khớp (email của bạn) qua `/apply`.
-2. Kỳ vọng MỚI: hồ sơ vào `/review` (Chờ HR duyệt), đề xuất "mời" — KHÔNG auto INTERVIEW_SCHEDULED, KHÔNG email câm.
-3. Duyệt ca đó → nhận **thư mời THẬT** trong hòm thư → status INTERVIEW_SCHEDULED. Audit: approve + email_sent:invite.
+### 3.1 Postgres checkpointer · (vd `app/agents/checkpointer.py` + lifespan)
 
-**Bug B:** 4. Bật gate auto_reject JD → nộp CV điểm thấp (email của bạn) → auto-REJECTED + thư từ chối thật. Vào `/applications`
-→ hồ sơ REJECTED **KHÔNG** còn badge "Cần HR xem xét"; chỉ hiện trạng thái "Đã từ chối". 5. Hồ sơ đang PENDING_REVIEW (từ bước 2, trước khi duyệt) → **CÓ** badge "Cần HR xem xét" + lý do (đúng). 6. Hồ sơ đã INTERVIEW_SCHEDULED (sau khi duyệt) → KHÔNG badge nhắc nhở; hiện "Đã hẹn phỏng vấn". 7. Badge số ca chờ ở nav = số PENDING_REVIEW (không tính hồ sơ đã quyết). 8. `make test` xanh; `pnpm --filter dashboard build` PASS.
+- Tạo `AsyncPostgresSaver` từ Neon connection (psycopg). Gọi `.setup()` MỘT LẦN (idempotent — tạo bảng checkpoint
+  trong Neon; tách khỏi bảng app). Tạo pool/kết nối trong **lifespan** (một lần, dùng lại — KHÔNG tạo mỗi request).
+- Compile graph với `checkpointer=<AsyncPostgresSaver>` (thay MemorySaver hiện có).
 
-## Definition of Done
+### 3.2 Node screener → interrupt · `app/agents/nodes/screener.py`
 
-- [ ] **A:** CV confident+đạt → human_review (đề xuất "mời"), KHÔNG auto-schedule câm; HR duyệt → thư mời THẬT → INTERVIEW_SCHEDULED.
-- [ ] **A:** INTERVIEW_SCHEDULED chỉ đạt khi thư mời đã gửi; auto-reject + uncertain→review không hồi quy.
-- [ ] **B:** Badge "Cần HR xem xét" (+ escalation/flags "cần chú ý") CHỈ hiện khi status==PENDING_REVIEW; hồ sơ đã quyết không còn badge.
-- [ ] **B:** Không xóa dữ liệu escalation/flags khỏi API/DB (chỉ gate hiển thị); `/review` không đổi; badge nav đếm đúng PENDING_REVIEW.
-- [ ] KHÔNG xây cổng auto-mời (08d), KHÔNG làm screener thật, KHÔNG đụng ranker/parser. scheduler = điểm phát email duy nhất.
-- [ ] `make test` xanh; `pnpm build` PASS.
+- Đổi từ pass-through → gọi cơ chế **interrupt** của LangGraph (vd `interrupt(payload)` trong node, hoặc
+  `interrupt_before=["screener"]` khi compile — chọn theo API phiên bản đang dùng; ưu tiên `interrupt()` dynamic để 08b resume bằng câu trả lời).
+- Payload interrupt ở 08a chỉ là PLACEHOLDER (vd `{"awaiting": "screener_answers", "application_id": ...}`) — câu hỏi thật là 08b.
+- Khi resume, node nhận payload resume (mock ở 08a) rồi tiếp tục (chưa xử lý gì với payload — chỉ đi tiếp).
 
-## Ranh giới & quy ước (theo CLAUDE.md)
+### 3.3 Định tuyến: đạt → screener · `app/agents/policy.py` (+ graph)
 
-- A: chỉ sửa định tuyến đường "đạt" + bỏ auto-set INTERVIEW_SCHEDULED câm + test. B: chỉ sửa LOGIC HIỂN THỊ badge theo trạng thái (không đụng backend cho B).
-- Giữ đối xứng 03c; auto-mời để 08d (giờ = human_review). INTERVIEW_SCHEDULED = "đã báo ứng viên" — chỉ sau khi gửi mời.
-- B là thay đổi hiển thị thuần — KHÔNG đổi dữ liệu API/DB, KHÔNG đụng ReviewCard/review queue.
-- Trước khi sửa `route_after_ranker`, chạy impact analysis (GitNexus) như CLAUDE.md yêu cầu.
-- Commit nhỏ (vd `fix(routing): CV đạt -> human_review (không auto-schedule câm)`, `fix(state): INTERVIEW_SCHEDULED chỉ sau khi gửi mời`, `fix(ui): badge cần-xem-xét chỉ khi PENDING_REVIEW`, `test: cập nhật nhánh đạt`).
-- Nghiệp vụ chưa rõ → tra **PRD.md** (§8.3, §9, §11, §13). PRD chưa đủ → DỪNG, hỏi.
-- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhắc dùng email của người dùng), checklist DoD.
+- `route_after_ranker`: confident + đạt ngưỡng → **`screener`** (thay vì human_review như bản fix trước).
+  uncertain → human_review; confident + thấp → auto_reject(ON)/human_review(OFF) — GIỮ NGUYÊN (không qua screener).
+- Sau screener (khi resume xong): route tiếp → human_review (gate mời chưa xây = hành vi auto_invite TẮT; slot cho 08d).
+- **CHẠY IMPACT ANALYSIS (GitNexus) trước khi sửa `route_after_ranker`** (CLAUDE.md yêu cầu).
 
-## Sau lát này
+### 3.4 BackgroundTask: xử lý interrupt → AWAITING_SCREENER · `app/tasks/background.py`
 
-Vòng lõi đúng cả hai chiều (đạt→mời qua HR, thấp→auto-reject/HR) + hiển thị trạng thái sạch. Rồi vào **GĐ3 Screener
-async** (08a: Postgres checkpointer + suspend/resume); cổng auto-mời (08d) xây sau, thêm nhánh "đạt + auto_invite BẬT → tự mời". Xem ROADMAP.md.
+- Dùng `thread_id = application_id` trong config khi invoke graph (BẮT BUỘC khớp giữa lần chạy đầu và lúc resume).
+- Sau lần invoke đầu: nếu graph DỪNG ở interrupt (kết quả có `__interrupt__` / state báo đang chờ) → set status `AWAITING_SCREENER`, log rõ. KHÔNG coi là "xong".
+- Xử lý vòng lặp event loop cẩn thận (xem Gotchas) — async saver + cách invoke hiện tại (`asyncio.run`) dễ xung đột.
+
+### 3.5 Endpoint resume (dev/test) · `app/api/routes/agents.py`
+
+- `POST /api/agents/resume-screener/{application_id}` (body: payload mock tùy chọn):
+  - Load graph cùng `thread_id = application_id`; invoke `Command(resume=<mock payload>)` (hoặc tương đương API version).
+  - Graph chạy tiếp TỪ screener (KHÔNG chạy lại parser/ranker) → node kế → trạng thái cuối.
+  - Cập nhật status theo kết quả; trả outcome. (Đây là chỗ 08b sẽ thay trigger = ứng viên nộp form.)
+  - Validate: chỉ resume được application đang `AWAITING_SCREENER` (else 409).
+
+### 3.6 Test · `app/tests/test_checkpointer.py`
+
+- CV đạt → graph dừng ở screener (interrupt) → status AWAITING_SCREENER (mock/gated phù hợp).
+- Resume → graph tiếp tục từ screener → trạng thái cuối; parser/ranker KHÔNG chạy lại.
+- uncertain/low KHÔNG đi qua screener (route như cũ).
+- (Nếu khó test durability trong unit → để phần restart cho Verify thủ công.)
+
+---
+
+## 4. Verify (chạy thật — bao gồm bài test DURABILITY quan trọng nhất)
+
+1. `make dev-backend`. Nộp CV đạt (backend khớp JD #2, email của bạn) qua `/apply`.
+2. Pipeline chạy parser+ranker → dừng ở screener → `/applications` thấy status **AWAITING_SCREENER** (không đi tiếp, không email). Log: dừng ở interrupt.
+3. Kiểm Postgres: có bản ghi checkpoint cho thread_id = application_id (state đã lưu bền).
+4. **BÀI TEST MẤU CHỐT (durability):** **RESTART backend** (`make dev-backend` lại). State PHẢI còn (trong Neon, không mất như MemorySaver).
+5. Gọi `POST /api/agents/resume-screener/{id}` (payload mock) → graph chạy tiếp TỪ screener → **KHÔNG** chạy lại parser/ranker (kiểm log: không có lời gọi OpenAI parse/rank thứ hai) → route → human_review → status PENDING_REVIEW.
+6. (Nối tiếp) vào `/review` duyệt → thư mời thật (đường cũ vẫn chạy). Đối chứng: CV thấp/uncertain KHÔNG vào screener (đi thẳng review/auto-reject).
+7. `make test` xanh.
+
+---
+
+## 5. Definition of Done
+
+- [ ] Graph compile với **AsyncPostgresSaver** (Neon); `.setup()` idempotent; pool tạo một lần ở lifespan.
+- [ ] CV đạt → dừng ở screener (interrupt) → status `AWAITING_SCREENER`; state lưu bền trong Postgres (thread_id=application_id).
+- [ ] **Resume BỀN qua restart backend:** sau khi restart, resume vẫn chạy tiếp từ screener (KHÔNG chạy lại parser/ranker).
+- [ ] Endpoint resume tiếp tục pipeline → human_review → (duyệt) thư mời thật. Validate chỉ resume ca AWAITING_SCREENER (409 else).
+- [ ] Chỉ CV đạt vào screener; uncertain/low giữ route cũ (không hồi quy).
+- [ ] KHÔNG form/email câu hỏi/timeout/gate mời; parser/ranker/scheduler/human_review logic KHÔNG đụng.
+- [ ] `make test` xanh.
+
+---
+
+## 6. ⚠️ GOTCHAS — đọc kỹ, đây là chỗ dễ sa lầy
+
+- **thread_id BẮT BUỘC ổn định + khớp:** dùng `application_id`. Lần chạy đầu và lúc resume phải cùng thread_id, nếu không resume không tìm thấy checkpoint.
+- **Kết nối Postgres của checkpointer TÁCH khỏi SQLAlchemy:** LangGraph PostgresSaver dùng psycopg (không phải asyncpg). Cần cấu hình kết nối riêng cho Neon (SSL). Lưu ý Neon pooling (`-pooler`/PgBouncer) có thể cần connection trực tiếp hoặc tham số pool phù hợp — nếu lỗi kết nối/prepared-statement, thử connection không-pooled cho checkpointer.
+- **Vòng lặp event loop (RỦI RO CAO NHẤT):** app hiện invoke graph qua `runner.run_sync` = `asyncio.run(ainvoke)`. `AsyncPostgresSaver` giữ pool gắn với một event loop; `asyncio.run` tạo/đóng loop mỗi lần → dễ "loop is closed"/pool hỏng. Cần: hoặc một event loop bền cho background task, hoặc tạo pool trong cùng loop invoke, hoặc dùng API async xuyên suốt. **Nếu vướng chỗ này → DỪNG, mô tả lỗi, hỏi trước khi hack.**
+- **`.setup()` chạy một lần** (tạo bảng checkpoint) — idempotent; đừng gọi mỗi request.
+- **API version:** interrupt/resume (`interrupt()` + `Command(resume=...)` vs `interrupt_before`) khác nhau theo version — kiểm version cài đặt, dùng đúng.
+- Interrupt payload 08a chỉ placeholder — đừng cố nhét câu hỏi/logic (đó là 08b).
+
+## 7. Ranh giới & quy ước (theo CLAUDE.md)
+
+- CHỈ động vào: checkpointer + screener-interrupt + routing đạt→screener + BackgroundTask interrupt-handling + resume endpoint + test. KHÔNG đụng parser/ranker/scheduler/human_review logic.
+- Đơn giản trước: chứng minh cơ chế, không tối ưu; payload placeholder; resume thủ công.
+- Async-first; config từ env (checkpointer connection); không hardcode.
+- Commit nhỏ (vd `feat(checkpointer): AsyncPostgresSaver + setup + compile`, `feat(screener): interrupt (pause) + route đạt->screener`, `feat(agents): BackgroundTask AWAITING_SCREENER + resume endpoint`, `test(checkpointer): suspend/resume`).
+- Nghiệp vụ chưa rõ → **PRD.md** (§10, §7.3). Kỹ thuật vướng (event loop/psycopg) → DỪNG, hỏi. ĐỪNG suy diễn/hack im lặng.
+- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhấn mạnh bài test restart-durability), checklist DoD.
+
+## 8. Sau lát này
+
+Nền suspend/resume xong → **08b** (magic-link form + email bộ câu hỏi → resume bằng câu trả lời thật, thay endpoint test) →
+**08c** (timeout/nhắc/trả lời trễ) → **08d** (cổng auto-mời). Xem ROADMAP.md.
