@@ -8,6 +8,8 @@ import type {
   PublicJob,
   PublicSubmitResult,
   ReviewDecision,
+  ScreenerForm,
+  ScreenerSubmitResult,
 } from "@ars/shared-types";
 
 // Base URL backend — đọc từ env (NEXT_PUBLIC_API_BASE), mặc định localhost:8000.
@@ -89,6 +91,34 @@ export async function submitApplication(
     throw new Error(detail?.detail ?? `HTTP ${res.status} khi nộp hồ sơ`);
   }
   return (await res.json()) as PublicSubmitResult;
+}
+
+// ── Sàng lọc công khai (screener magic-link — slice 08b) ──
+// Lấy câu hỏi theo token. Token sai/hết hạn/đã nộp → backend trả {detail} → ném message rõ cho UI.
+export async function getScreener(token: string): Promise<ScreenerForm> {
+  const res = await fetch(`${API_BASE}/api/public/screening/${encodeURIComponent(token)}`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? `HTTP ${res.status} khi tải câu hỏi`);
+  }
+  return (await res.json()) as ScreenerForm;
+}
+
+// Nộp câu trả lời (JSON: answers theo thứ tự câu hỏi). Lỗi token → ném {detail} thân thiện.
+export async function submitScreener(
+  token: string,
+  answers: string[],
+): Promise<ScreenerSubmitResult> {
+  const res = await fetch(`${API_BASE}/api/public/screening/${encodeURIComponent(token)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ answers }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? `HTTP ${res.status} khi gửi câu trả lời`);
+  }
+  return (await res.json()) as ScreenerSubmitResult;
 }
 
 // Upload CV -> POST /api/agents/parse-cv (multipart). KHÔNG tự set Content-Type:

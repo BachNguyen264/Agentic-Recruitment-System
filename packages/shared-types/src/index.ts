@@ -74,12 +74,19 @@ export interface ScoreBreakdownRaw {
 // Gợi ý hiển thị cho ReviewCard (PRD §11) — dẫn xuất từ score+flags, KHÔNG tự quyết. Khớp backend.
 export type Recommendation = "invite" | "consider_reject" | "review_carefully";
 
+// Một cặp hỏi–đáp sàng lọc đã lưu — hiện cho HR (khớp ApplicationRead.screener_answers backend).
+export interface ScreenerAnswer {
+  question: string;
+  answer: string;
+}
+
 // Chi tiết: list item + parsed_data + breakdown. escalation_reason + recommendation cho ReviewCard.
 export interface ApplicationDetail extends ApplicationListItem {
   parsed_data: ParsedCV | null;
   score_breakdown: ScoreBreakdownRaw;
   escalation_reason: string | null;
   recommendation: Recommendation;
+  screener_answers: ScreenerAnswer[]; // [] khi chưa/không sàng lọc (08b)
 }
 
 // human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.
@@ -157,6 +164,20 @@ export interface PublicJob {
 // Xác nhận nộp CV — khớp PublicSubmitResponse. KHÔNG có điểm/trạng thái (ứng viên không thấy).
 export interface PublicSubmitResult {
   application_id: number;
+  message: string;
+}
+
+// ── Sàng lọc công khai (screener magic-link — slice 08b) ──
+// Form câu hỏi từ GET /api/public/screening/{token} — khớp PublicScreeningRead (backend).
+// CHỈ tiêu đề JD + câu hỏi (KHÔNG lộ rubric/điểm/parsed_data).
+export interface ScreenerForm {
+  job_title: string;
+  questions: string[];
+}
+
+// Xác nhận nộp câu trả lời — khớp ScreeningSubmitResponse (backend). KHÔNG lộ điểm/trạng thái.
+export interface ScreenerSubmitResult {
+  status: string;
   message: string;
 }
 

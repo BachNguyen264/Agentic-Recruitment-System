@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { ApplicationDetail, JobPosting } from "@ars/shared-types";
 import { ParsedCVResult } from "@/components/ParsedCVResult";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
+import { ScreenerAnswers } from "@/components/ScreenerAnswers";
 import { getApplication, getJob } from "@/lib/api";
 import { statusBadgeClass, statusLabel, toBreakdown } from "@/lib/applications";
 
@@ -77,6 +78,10 @@ export default function ApplicationDetailPage() {
           {/* Điểm đối sánh + từng tiêu chí (tái dùng ở ReviewCard). Cờ "cần chú ý" chỉ hiện khi
               còn chờ quyết — hồ sơ đã quyết xem điểm sạch, không badge cờ (BUG B). */}
           <ScoreBreakdown breakdown={toBreakdown(app)} showFlags={app.status === "PENDING_REVIEW"} />
+
+          {/* Câu trả lời sàng lọc (screener, 08b) — nếu ứng viên đã trả lời form magic-link */}
+          <ScreenerAnswers answers={app.screener_answers} />
+
 
           {/* Ngữ cảnh JD: yêu cầu chính, để HR biết ứng viên được chấm dựa trên gì. */}
           {jobQuery.data && jobQuery.data.requirements.length > 0 && (

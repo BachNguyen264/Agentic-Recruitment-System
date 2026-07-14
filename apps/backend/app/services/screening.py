@@ -100,6 +100,20 @@ async def _load_valid(
     return sess, app_row
 
 
+async def latest_answers(session: AsyncSession, application_id: int) -> list:
+    """Câu trả lời sàng lọc mới nhất (đã nộp) của một application — cho HR xem ở review/chi tiết."""
+    stmt = (
+        select(ScreeningSession.answers)
+        .where(
+            ScreeningSession.application_id == application_id,
+            ScreeningSession.answers.isnot(None),
+        )
+        .order_by(ScreeningSession.created_at.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none() or []
+
+
 async def get_form(session: AsyncSession, token: str) -> tuple[str, list[str]]:
     """GET công khai: validate token (đọc, không khóa) → (job_title, questions). CHỈ dữ liệu an toàn
     (KHÔNG rubric/gate/điểm/parsed_data)."""

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ApplicationDetail, Recommendation } from "@ars/shared-types";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
+import { ScreenerAnswers } from "@/components/ScreenerAnswers";
 import { toBreakdown } from "@/lib/applications";
 
 // THUẦN presentational: nhận callback onApprove/onReject, KHÔNG tự fetch/mutate (page lo useMutation).
@@ -74,6 +75,9 @@ export function ReviewCard({ app, onApprove, onReject, submitting = false }: Rev
           {app.escalation_reason}
         </div>
       )}
+
+      {/* Câu trả lời sàng lọc (screener, 08b) — hiển thị cho HR khi ứng viên đã trả lời */}
+      <ScreenerAnswers answers={app.screener_answers} />
 
       {/* Điểm từng tiêu chí (tái dùng ScoreBreakdown từ 03a) */}
       <ScoreBreakdown breakdown={toBreakdown(app)} />

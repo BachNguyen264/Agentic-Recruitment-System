@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 from app.api.deps import DBSession
 from app.schemas.application import ApplicationCreate, ApplicationRead, ReviewRequest
-from app.services import application_service
+from app.services import application_service, screening
 from app.services import review as review_service
 from app.tasks.background import process_application
 from app.tools import cv_storage
@@ -61,7 +61,9 @@ async def get_application(application_id: int, session: DBSession) -> Applicatio
     app_row = await application_service.get_application(session, application_id)
     if app_row is None:
         raise HTTPException(status_code=404, detail="Application không tồn tại")
-    return ApplicationRead.model_validate(app_row)
+    # Chi tiết: kèm câu trả lời sàng lọc (nếu có) cho HR (PRD §7.3, §11).
+    answers = await screening.latest_answers(session, application_id)
+    return ApplicationRead.model_validate(app_row).model_copy(update={"screener_answers": answers})
 
 
 @router.post(

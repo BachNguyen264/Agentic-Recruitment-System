@@ -50,6 +50,9 @@ class ApplicationRead(BaseModel):
     # Screener async (PRD §10)
     screener_sent_at: datetime | None
     screener_deadline: datetime | None
+    # Câu trả lời sàng lọc [{question, answer}] — hiện cho HR (PRD §7.3, §11). Rỗng nếu chưa/không
+    # sàng lọc. CHỈ populate ở endpoint chi tiết (list để rỗng, tránh N+1).
+    screener_answers: list = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
