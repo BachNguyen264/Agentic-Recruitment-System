@@ -20,8 +20,8 @@ install: ## Cài đặt phụ thuộc
 	cd apps/backend && uv sync
 	pnpm install
 
-dev-backend: ## FastAPI dev server
-	cd apps/backend && uv run uvicorn app.main:app --reload --port 8000
+dev-backend: ## FastAPI dev server (qua `python -m app`: set SelectorEventLoop cho psycopg async trên Windows)
+	cd apps/backend && uv run python -m app
 
 dev-dashboard: ## Next.js dashboard
 	pnpm --filter dashboard dev
