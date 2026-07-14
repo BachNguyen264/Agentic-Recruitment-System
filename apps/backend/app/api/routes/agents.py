@@ -6,18 +6,46 @@ import os
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from app.agents.nodes.parser import parse_cv
 from app.agents.nodes.ranker import rank_cv
 from app.api.deps import DBSession
-from app.models.application import Application
+from app.models.application import Application, ApplicationStatus
 from app.schemas.agent import ParseCVResponse
 from app.schemas.rank import RankCvRequest, RankCvResponse
 from app.services import job_service
+from app.tasks import background
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+@router.post(
+    "/resume-screener/{application_id}",
+    summary="[dev/08a] Resume screener bằng payload mock (PRD §10)",
+)
+async def resume_screener_endpoint(
+    application_id: int,
+    session: DBSession,
+    payload: dict | None = Body(default=None),
+) -> dict:
+    """Tiếp tục pipeline TỪ điểm dừng screener (suspend/resume — PRD §10). Chỉ resume ca đang
+    `AWAITING_SCREENER` (else 409). KHÔNG chạy lại parser/ranker (checkpointer nạp state cũ).
+
+    08a: trigger = endpoint test + payload MOCK. 08b sẽ thay bằng ứng viên nộp form magic-link
+    (payload = câu trả lời THẬT)."""
+    app_row = await session.get(Application, application_id)
+    if app_row is None:
+        raise HTTPException(status_code=404, detail="Application không tồn tại")
+    if app_row.status != ApplicationStatus.AWAITING_SCREENER.value:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Application {application_id} không ở AWAITING_SCREENER (hiện: {app_row.status}).",
+        )
+    return await background.resume_screener(
+        session, application_id, payload or {"awaiting": "screener_answers", "mock": True}
+    )
 
 
 @router.post("/parse-cv", response_model=ParseCVResponse, summary="Parse CV đồng bộ (iterate chất lượng)")

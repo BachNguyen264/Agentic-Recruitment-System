@@ -10,7 +10,7 @@ hiện chạy thẳng một mạch (chưa suspend).
 from __future__ import annotations
 
 from app.agents.nodes import scheduler
-from app.agents.runner import run_with_trace
+from app.agents.runner import resume_with_trace, run_with_trace
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.models.application import Application, ApplicationStatus
@@ -91,7 +91,16 @@ async def process_application(application_id: int, *, force_review: bool = False
                     uncertainty_flags=flags, detail=detail, commit=False,
                 )
 
-            application.status = final.get("status", application.status)
+            # Ca ĐẠT dừng ở screener (interrupt) → AWAITING_SCREENER (chưa quyết, chờ resume — PRD §10).
+            # KHÔNG coi là "xong": state đã lưu bền ở checkpointer (thread_id=app-id); email/quyết định
+            # chỉ xảy ra SAU khi resume. final.status ở đây là RANKING (screener chưa trả) nên set tường minh.
+            suspended = out.get("suspended", False)
+            persisted_status = (
+                ApplicationStatus.AWAITING_SCREENER.value
+                if suspended
+                else final.get("status", application.status)
+            )
+            application.status = persisted_status
             application.parsed_data = final.get("parsed_data") or {}
             application.score = final.get("score")
             application.score_breakdown = {
@@ -122,7 +131,7 @@ async def process_application(application_id: int, *, force_review: bool = False
             await session.commit()
             logger.info(
                 "BG: xong application_id=%s -> branch=%s status=%s",
-                application_id, out["branch"], final.get("status"),
+                application_id, out["branch"], persisted_status,
             )
 
             # Gate auto-từ-chối (PRD §9): quyết định (REJECTED) ĐÃ commit → gửi thư từ chối THẬT qua
@@ -152,3 +161,53 @@ async def process_application(application_id: int, *, force_review: bool = False
                     session, application_id=application_id, node="system",
                     action="error", escalation_reason="technical_error", commit=True,
                 )
+
+
+async def resume_screener(
+    session, application_id: int, resume_payload: dict
+) -> dict:
+    """Resume pipeline TỪ screener (08a: dev/test — 08b sẽ thay trigger = ứng viên nộp form magic-link).
+
+    `Command(resume=payload)` cấp câu trả lời (mock ở 08a) cho `interrupt()` → screener chạy tiếp →
+    human_review → PENDING_REVIEW. KHÔNG chạy lại parser/ranker (checkpointer nạp state cũ — PRD §10).
+    Persist status/flags + audit các node resume. Chữ ký khớp gọi từ endpoint (đã validate AWAITING_SCREENER).
+    """
+    logger.info("BG-resume: resume screener application_id=%s", application_id)
+    out = await resume_with_trace(application_id=application_id, resume_payload=resume_payload)
+    final = out["final"]
+
+    application = await session.get(Application, application_id)
+    if application is None:
+        logger.warning("BG-resume: application_id=%s không tồn tại — bỏ qua", application_id)
+        return {"application_id": application_id, "status": None, "branch": out["branch"]}
+
+    for step in out["trace"]:  # trace resume: screener (+ human_review). parser/ranker KHÔNG chạy lại.
+        node = step["node"]
+        if node == "screener":
+            action = "screener_resumed"
+        elif node == "human_review":
+            action = "queued_for_human_review"
+        else:
+            action = "stub_pass_through"
+        await audit_service.record(
+            session, application_id=application_id, node=node, action=action,
+            confidence=step.get("confidence"), uncertainty_flags=step.get("uncertainty_flags", []),
+            detail={"status": step.get("status")}, commit=False,
+        )
+
+    application.status = final.get("status", application.status)
+    application.confidence = final.get("confidence")
+    application.uncertainty_flags = final.get("uncertainty_flags", []) or []
+    application.escalation_reason = final.get("escalation_reason")
+
+    await audit_service.record(
+        session, application_id=application_id, node="system",
+        action=f"route:{out['branch']}", escalation_reason=final.get("escalation_reason"),
+        detail={"final_status": final.get("status"), "resumed": True}, commit=False,
+    )
+    await session.commit()
+    logger.info(
+        "BG-resume: xong application_id=%s -> branch=%s status=%s",
+        application_id, out["branch"], final.get("status"),
+    )
+    return {"application_id": application_id, "status": final.get("status"), "branch": out["branch"]}
