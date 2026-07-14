@@ -18,6 +18,7 @@ from app.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
     from app.models.audit_log import AuditLog
+    from app.models.screening_session import ScreeningSession
 
 
 class ApplicationStatus(str, enum.Enum):
@@ -64,6 +65,9 @@ class Application(Base, TimestampMixin):
     screener_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     audit_logs: Mapped[list[AuditLog]] = relationship(
+        back_populates="application", cascade="all, delete-orphan", passive_deletes=True
+    )
+    screening_sessions: Mapped[list[ScreeningSession]] = relationship(
         back_populates="application", cascade="all, delete-orphan", passive_deletes=True
     )
 

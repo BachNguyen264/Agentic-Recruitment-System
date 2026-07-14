@@ -32,6 +32,7 @@ from app.core.qdrant_client import qdrant_client
 from app.models.application import Application
 from app.models.audit_log import AuditLog
 from app.models.job_posting import JobPosting
+from app.models.screening_session import ScreeningSession
 from app.services.qdrant_service import jd_point_id
 
 # Bảng checkpoint của LangGraph AsyncPostgresSaver (khóa theo thread_id). checkpoint_migrations =
@@ -96,14 +97,24 @@ async def reset(
             else []
         )
 
-        print(f"== Application sẽ xóa ({len(apps)}) — audit_log con cascade theo ==")
+        print(f"== Application sẽ xóa ({len(apps)}) — audit_log + screening_session con cascade theo ==")
         for a in apps:
             n_audit = (
                 await session.execute(
                     select(func.count()).select_from(AuditLog).where(AuditLog.application_id == a.id)
                 )
             ).scalar_one()
-            print(f"  id={a.id} job_id={a.job_id} status={a.status} email={a.applicant_email} audit_children={n_audit}")
+            n_screen = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(ScreeningSession)
+                    .where(ScreeningSession.application_id == a.id)
+                )
+            ).scalar_one()
+            print(
+                f"  id={a.id} job_id={a.job_id} status={a.status} email={a.applicant_email} "
+                f"audit_children={n_audit} screening_sessions={n_screen}"
+            )
 
         print(f"\n== Job_posting sẽ xóa ({len(jobs)}) — kèm xóa vector Qdrant ==")
         for j in jobs:

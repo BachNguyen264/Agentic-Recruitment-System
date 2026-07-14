@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Scaffold: KHÔNG gọi LLM trong pipeline (PRD §17). Slice-01 bật cho RIÊNG parser
     # (chỉ node parser đọc cờ này; các node khác vẫn stub bất kể giá trị).
     enable_llm: bool = False
+    # Bật endpoint DEV (vd resume-screener thủ công của 08a). Mặc định TẮT — đường thật của
+    # Screener là magic-link form (08b). Chỉ bật khi cần test nội bộ (KHÔNG bật ở production).
+    enable_dev_endpoints: bool = False
 
     # ── LLM provider (slice-01 Parser dùng OpenAI — PRD §7.1) ─────────
     # KHÔNG hardcode key/model. PARSER_MODEL mặc định gpt-4.1-mini (rẻ, đủ tốt cho trích xuất).
@@ -61,6 +64,11 @@ class Settings(BaseSettings):
     confidence_threshold: float = 0.6
     screener_deadline_hours: int = 72
     screener_reminder_hours: int = 24
+
+    # ── Screener magic-link (08b — PRD §7.3, §10, §12.2) ─────────────
+    # Gốc URL frontend công khai để dựng magic-link trong email Screener:
+    # {frontend_base_url}/screening/{token}. Dev: dashboard Next chạy :3000. Đổi khi deploy.
+    frontend_base_url: str = "http://localhost:3000"
 
     # ── Hạ tầng ──────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/recruitment"

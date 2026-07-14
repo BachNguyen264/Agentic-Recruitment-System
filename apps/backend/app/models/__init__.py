@@ -4,5 +4,6 @@ from app.models.application import Application, ApplicationStatus
 from app.models.audit_log import AuditLog
 from app.models.base import Base
 from app.models.job_posting import JobPosting
+from app.models.screening_session import ScreeningSession
 
-__all__ = ["Base", "JobPosting", "Application", "ApplicationStatus", "AuditLog"]
+__all__ = ["Base", "JobPosting", "Application", "ApplicationStatus", "AuditLog", "ScreeningSession"]

@@ -18,6 +18,16 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def _include_object(object_, name, type_, reflected, compare_to) -> bool:  # noqa: ANN001
+    """Chỉ autogenerate cho bảng THUỘC model app (Base.metadata). Bỏ qua bảng ngoài — nhất là các
+    bảng checkpoint của LangGraph (`checkpoints`/`checkpoint_blobs`/`checkpoint_writes`/
+    `checkpoint_migrations`) do AsyncPostgresSaver tự quản (PRD §10). Nếu không, autogenerate sẽ đề
+    xuất DROP chúng → mất suspend/resume 08a. Giữ nguyên bảng app không có trong DB (reflected=False)."""
+    if type_ == "table" and reflected and name not in target_metadata.tables:
+        return False
+    return True
+
+
 def run_migrations_offline() -> None:
     context.configure(
         url=settings.database_url,
@@ -25,13 +35,19 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=_include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def _do_run_migrations(connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        include_object=_include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
