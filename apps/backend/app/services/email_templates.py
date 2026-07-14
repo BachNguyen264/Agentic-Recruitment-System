@@ -46,6 +46,36 @@ def invite_email(candidate_name: str | None, job_title: str | None) -> tuple[str
     return subject, html
 
 
+def screener_email(
+    candidate_name: str | None,
+    job_title: str | None,
+    *,
+    form_url: str,
+    deadline_text: str,
+) -> tuple[str, str]:
+    """Thư mời trả lời bộ câu hỏi sàng lọc qua magic-link (PRD §7.3, §10). CỐ ĐỊNH, không LLM.
+
+    `form_url` do hệ thống dựng (FRONTEND_BASE_URL + token urlsafe) — vẫn escape quote vì nằm trong
+    `href="..."`. Trả (subject, html)."""
+    name = _esc(candidate_name, fallback="Ứng viên")
+    title = _esc(job_title, fallback="vị trí ứng tuyển")
+    href = _html.escape(form_url, quote=True)
+    deadline = _esc(deadline_text, fallback="thời gian quy định")
+    subject = _subject_safe(
+        f"Bổ sung thông tin ứng tuyển — vị trí {job_title}" if job_title else "Bổ sung thông tin ứng tuyển",
+        fallback="Bổ sung thông tin ứng tuyển",
+    )
+    html = _wrap(
+        f"<p>Kính gửi {name},</p>"
+        f"<p>Cảm ơn bạn đã ứng tuyển vị trí <strong>{title}</strong>. Để tiếp tục quy trình, vui lòng "
+        f"dành ít phút trả lời một vài câu hỏi bổ sung qua liên kết dưới đây trong vòng <strong>{deadline}</strong>.</p>"
+        f'<p><a href="{href}">Trả lời câu hỏi sàng lọc</a></p>'
+        "<p>Nếu nút không bấm được, hãy sao chép liên kết này vào trình duyệt:</p>"
+        f'<p style="word-break:break-all;color:#475569">{href}</p>'
+    )
+    return subject, html
+
+
 def rejection_email(candidate_name: str | None, job_title: str | None) -> tuple[str, str]:
     """Thư từ chối — cảm ơn, rất tiếc chưa phù hợp, chúc may mắn. Trả (subject, html)."""
     name = _esc(candidate_name, fallback="Ứng viên")

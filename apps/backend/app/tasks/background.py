@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from app.agents.nodes import scheduler
 from app.agents.runner import resume_with_trace, run_with_trace
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
 from app.models.application import Application, ApplicationStatus
@@ -131,6 +132,19 @@ async def process_application(application_id: int, *, force_review: bool = False
                 reject_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
                 reject_title = job.title if job is not None else "vị trí ứng tuyển"
 
+            # Screener (08b): dừng ở screener → TẠO screening_session (token + hạn + ảnh chụp câu hỏi)
+            # trong CÙNG commit với AWAITING_SCREENER (nguyên tử). Gom dữ liệu email vào locals để gửi
+            # magic-link SAU commit (cô lập khỏi handler lỗi, như auto_reject).
+            if suspended:
+                from app.services import screening  # import trễ: tránh vòng import screening↔background
+
+                questions = list(getattr(job, "screener_questions", None) or []) if job else []
+                screening_row = screening.create_session(session, application_id, questions)
+                screener_token = screening_row.token
+                screener_email_to = application.applicant_email
+                screener_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
+                screener_title = job.title if job is not None else "vị trí ứng tuyển"
+
             await session.commit()
             logger.info(
                 "BG: xong application_id=%s -> branch=%s status=%s",
@@ -153,6 +167,24 @@ async def process_application(application_id: int, *, force_review: bool = False
                         "BG: notify_decision(reject) lỗi SAU khi REJECTED đã commit app=%s",
                         application_id,
                     )
+
+            # Screener (08b): AWAITING_SCREENER + session ĐÃ commit → gửi email magic-link qua scheduler
+            # (điểm phát email DUY NHẤT). CÔ LẬP: lỗi gửi KHÔNG reset AWAITING_SCREENER — hồ sơ vẫn chờ,
+            # session vẫn còn → 08c (nhắc/timeout) xử lý. magic-link = FRONTEND_BASE_URL/screening/token.
+            if suspended:
+                try:
+                    form_url = f"{settings.frontend_base_url.rstrip('/')}/screening/{screener_token}"
+                    await scheduler.notify_screener(
+                        session, application_id=application_id,
+                        applicant_email=screener_email_to, candidate_name=screener_name,
+                        job_title=screener_title, form_url=form_url,
+                        deadline_text=f"{settings.screener_deadline_hours} giờ",
+                    )
+                except Exception:  # noqa: BLE001 — AWAITING_SCREENER đã commit; lỗi email KHÔNG làm sập
+                    logger.exception(
+                        "BG: notify_screener lỗi SAU khi AWAITING_SCREENER đã commit app=%s",
+                        application_id,
+                    )
         except Exception:  # noqa: BLE001 — lỗi kỹ thuật -> PENDING_REVIEW[error] (PRD §13)
             logger.exception("BG: lỗi xử lý application_id=%s", application_id)
             await session.rollback()
@@ -167,13 +199,16 @@ async def process_application(application_id: int, *, force_review: bool = False
 
 
 async def resume_screener(
-    session, application_id: int, resume_payload: dict
+    session, application_id: int, resume_payload: dict, *, pre_commit=None
 ) -> dict:
-    """Resume pipeline TỪ screener (08a: dev/test — 08b sẽ thay trigger = ứng viên nộp form magic-link).
+    """Resume pipeline TỪ screener. Dùng chung cho endpoint dev (08a) VÀ nộp form magic-link (08b).
 
-    `Command(resume=payload)` cấp câu trả lời (mock ở 08a) cho `interrupt()` → screener chạy tiếp →
-    human_review → PENDING_REVIEW. KHÔNG chạy lại parser/ranker (checkpointer nạp state cũ — PRD §10).
-    Persist status/flags + audit các node resume. Chữ ký khớp gọi từ endpoint (đã validate AWAITING_SCREENER).
+    `Command(resume=payload)` cấp câu trả lời cho `interrupt()` → screener chạy tiếp → human_review →
+    PENDING_REVIEW. KHÔNG chạy lại parser/ranker (checkpointer nạp state cũ — PRD §10). Persist
+    status/flags + audit các node resume. Chữ ký khớp gọi từ endpoint (đã validate AWAITING_SCREENER).
+
+    `pre_commit` (08b): callback chạy TRƯỚC commit thành công (trong CÙNG transaction) — dùng để đánh
+    dấu `screening_session.used_at`/`answers` nguyên tử với việc resume (one-time). KHÔNG chạy khi lỗi.
 
     LƯU Ý (dual-write): checkpoint chạy autocommit (tiến ĐỘC LẬP với session SQLAlchemy). Nếu persist
     DB lỗi SAU khi checkpoint đã tới END → KHÔNG để hồ sơ kẹt CÂM ở AWAITING_SCREENER: nuốt lỗi kỹ
@@ -213,6 +248,8 @@ async def resume_screener(
             action=f"route:{out['branch']}", escalation_reason=final.get("escalation_reason"),
             detail={"final_status": final.get("status"), "resumed": True}, commit=False,
         )
+        if pre_commit is not None:  # 08b: đánh dấu used_at/answers CÙNG transaction (nguyên tử, one-time).
+            pre_commit()
         await session.commit()
         logger.info(
             "BG-resume: xong application_id=%s -> branch=%s status=%s",

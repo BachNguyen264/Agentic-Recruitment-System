@@ -16,7 +16,7 @@ from app.agents.state import RecruitmentState
 from app.core.logging import get_logger
 from app.models.application import ApplicationStatus
 from app.services import audit_service, email_service
-from app.services.email_templates import invite_email, rejection_email
+from app.services.email_templates import invite_email, rejection_email, screener_email
 
 logger = get_logger("app.agents.scheduler")
 
@@ -57,6 +57,43 @@ async def notify_decision(
         detail={"mode": mode, "to": applicant_email}, commit=True,
     )
     return {"mode": mode, "email_sent": True}
+
+
+async def notify_screener(
+    session: AsyncSession,
+    *,
+    application_id: int,
+    applicant_email: str,
+    candidate_name: str,
+    job_title: str,
+    form_url: str,
+    deadline_text: str,
+) -> dict:
+    """Gửi thư mời trả lời bộ câu hỏi sàng lọc qua magic-link (PRD §7.3, §10). Điểm phát email DUY
+    NHẤT (như notify_decision). Template CỐ ĐỊNH (không LLM). Lỗi gửi → nuốt có kiểm soát + audit
+    ``email_failed``, KHÔNG raise: hồ sơ vẫn AWAITING_SCREENER + session vẫn tạo → 08c retry/timeout."""
+    subject, html = screener_email(
+        candidate_name, job_title, form_url=form_url, deadline_text=deadline_text
+    )
+    try:
+        await email_service.send_email(to=applicant_email, subject=subject, html=html)
+    except Exception as exc:  # noqa: BLE001 — nuốt có kiểm soát: email lỗi KHÔNG làm sập luồng
+        logger.warning(
+            "[scheduler] app=%s: GỬI EMAIL screener THẤT BẠI tới %s: %s",
+            application_id, applicant_email, exc,
+        )
+        await audit_service.record(
+            session, application_id=application_id, node="scheduler", action="email_failed",
+            detail={"mode": "screener", "to": applicant_email, "error": str(exc)}, commit=True,
+        )
+        return {"mode": "screener", "email_sent": False, "error": str(exc)}
+
+    logger.info("[scheduler] app=%s: đã gửi email screener tới %s", application_id, applicant_email)
+    await audit_service.record(
+        session, application_id=application_id, node="scheduler", action="email_sent:screener",
+        detail={"mode": "screener", "to": applicant_email}, commit=True,
+    )
+    return {"mode": "screener", "email_sent": True}
 
 
 def scheduler_node(state: RecruitmentState) -> dict:
