@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.agents import checkpointer
 from app.api.routes import agents, applications, health, jobs, public
 from app.core.config import settings
 from app.core.database import engine
@@ -30,8 +31,11 @@ async def lifespan(app: FastAPI):
         settings.enable_llm,
         settings.confidence_threshold,
     )
+    # Checkpointer Postgres (PRD §10): pool + bảng checkpoint Neon, compile graph — MỘT LẦN ở đây.
+    await checkpointer.setup_checkpointer()
     yield
     # Đóng kết nối sạch.
+    await checkpointer.teardown_checkpointer()
     await redis_client.aclose()
     await qdrant_client.close()
     await engine.dispose()

@@ -64,6 +64,11 @@ class Settings(BaseSettings):
 
     # ── Hạ tầng ──────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/recruitment"
+    # Kết nối RIÊNG cho LangGraph checkpointer (psycopg, PRD §10 Screener suspend/resume). Để rỗng →
+    # suy ra từ database_url: dùng endpoint Neon TRỰC TIẾP (bỏ -pooler) tránh PgBouncer phá prepared
+    # statements của psycopg. Đặt tay khi cần (vd URL không-pooled khác). Xem checkpointer_conninfo.
+    checkpointer_database_url: str | None = None
+    checkpointer_pool_max_size: int = 5
     redis_url: str = "redis://localhost:6379"
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str | None = None
@@ -97,6 +102,39 @@ class Settings(BaseSettings):
         if host_is_local:
             return {}
         return {"ssl": True, "statement_cache_size": 0}
+
+    @property
+    def checkpointer_conninfo(self) -> str:
+        """libpq conninfo (URL) cho psycopg của LangGraph checkpointer (PRD §10).
+
+        Nếu ``checkpointer_database_url`` được đặt thì dùng nguyên. Nếu KHÔNG, suy ra từ
+        ``database_url`` (URL asyncpg của app):
+          - scheme ``postgresql+asyncpg`` → ``postgresql`` (psycopg hiểu libpq URL).
+          - Neon: dùng endpoint TRỰC TIẾP (bỏ ``-pooler``) — PgBouncer chế độ transaction làm hỏng
+            prepared statements của psycopg (checkpointer prepare các câu lệnh của nó).
+          - non-local: thêm ``sslmode=require`` (Neon bắt buộc SSL).
+        """
+        if self.checkpointer_database_url:
+            return self.checkpointer_database_url
+
+        from urllib.parse import urlsplit, urlunsplit
+
+        parts = urlsplit(self.database_url)
+        host = parts.hostname or ""
+        is_local = "localhost" in host or "127.0.0.1" in host
+        new_host = host if is_local else host.replace("-pooler", "")
+        userinfo = ""
+        if parts.username:
+            userinfo = parts.username
+            if parts.password:
+                userinfo += f":{parts.password}"
+            userinfo += "@"
+        port = f":{parts.port}" if parts.port else ""
+        netloc = f"{userinfo}{new_host}{port}"
+        query = parts.query
+        if not is_local and "sslmode" not in query:
+            query = f"{query}&sslmode=require" if query else "sslmode=require"
+        return urlunsplit(("postgresql", netloc, parts.path, query, ""))
 
 
 @lru_cache
