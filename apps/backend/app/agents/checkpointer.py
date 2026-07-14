@@ -74,6 +74,11 @@ def get_graph() -> Any:
     Fallback: singleton MemorySaver (test/an toàn khi checkpointer chưa lên) — suspend KHÔNG bền."""
     if _graph is not None:
         return _graph
+    # setup_checkpointer là fail-fast ở lifespan nên nhánh này KHÔNG xảy ra ở tiến trình boot đúng.
+    # Nếu tới đây (vd checkpointer bị bỏ qua tương lai) → suspend KHÔNG bền qua restart: cảnh báo rõ.
     from app.agents.graph import recruitment_graph
 
+    logger.warning(
+        "get_graph(): checkpointer Postgres CHƯA setup → dùng MemorySaver (suspend KHÔNG bền qua restart)."
+    )
     return recruitment_graph

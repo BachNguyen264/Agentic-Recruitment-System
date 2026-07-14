@@ -88,3 +88,95 @@ async def test_uncertain_does_not_go_through_screener() -> None:
     msgs = snap.values.get("messages", [])
     assert _count(msgs, "[human_review]") == 1
     assert _count(msgs, "[screener]") == 0  # bất định đi thẳng review, KHÔNG qua screener
+
+
+# ── background.resume_screener: persist + error handling (mock resume_with_trace + DB) ──
+
+
+class _FakeSession:
+    """AsyncSession tối thiểu cho resume_screener (mock — KHÔNG chạm DB thật)."""
+
+    def __init__(self, rows: dict) -> None:
+        self._rows = rows
+        self.added: list = []
+        self.commits = 0
+        self.rollbacks = 0
+
+    async def get(self, model, pk):  # noqa: ANN001
+        return self._rows.get((model, pk))
+
+    def add(self, obj) -> None:
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        pass
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def refresh(self, _obj) -> None:
+        pass
+
+    async def rollback(self) -> None:
+        self.rollbacks += 1
+
+
+async def _await_value(value):
+    return value
+
+
+def _resume_out() -> dict:
+    return {
+        "branch": "human_review",
+        "final": {
+            "status": ApplicationStatus.PENDING_REVIEW.value,
+            "confidence": 1.0,
+            "uncertainty_flags": [],
+            "escalation_reason": None,
+        },
+        "trace": [
+            {"node": "screener", "status": "SCREENING", "uncertainty_flags": []},
+            {"node": "human_review", "status": "PENDING_REVIEW", "uncertainty_flags": []},
+        ],
+        "suspended": False,
+    }
+
+
+async def test_resume_screener_persists_pending_review(monkeypatch) -> None:
+    from app.models.application import Application
+    from app.models.audit_log import AuditLog
+    from app.tasks import background
+
+    app_row = Application(id=5, applicant_email="a@e.com", job_id=2, status="AWAITING_SCREENER")
+    session = _FakeSession({(Application, 5): app_row})
+    monkeypatch.setattr(background, "resume_with_trace", lambda **_kw: _await_value(_resume_out()))
+
+    res = await background.resume_screener(session, 5, {"mock": True})
+
+    assert app_row.status == ApplicationStatus.PENDING_REVIEW.value
+    assert res["status"] == ApplicationStatus.PENDING_REVIEW.value and res["branch"] == "human_review"
+    actions = [(a.node, a.action) for a in session.added if isinstance(a, AuditLog)]
+    assert ("screener", "screener_resumed") in actions
+    assert ("human_review", "queued_for_human_review") in actions
+
+
+async def test_resume_screener_error_escalates_not_stuck(monkeypatch) -> None:
+    # resume lỗi kỹ thuật (vd commit Neon lỗi sau khi checkpoint đã tiến) KHÔNG được để hồ sơ kẹt câm
+    # ở AWAITING_SCREENER → nuốt lỗi → PENDING_REVIEW[error] (hiện trong hàng chờ HR).
+    from app.models.application import Application
+    from app.tasks import background
+
+    app_row = Application(id=6, applicant_email="a@e.com", job_id=2, status="AWAITING_SCREENER")
+    session = _FakeSession({(Application, 6): app_row})
+
+    async def boom(**_kw):
+        raise RuntimeError("neon blip during resume")
+
+    monkeypatch.setattr(background, "resume_with_trace", boom)
+
+    res = await background.resume_screener(session, 6, {"mock": True})  # KHÔNG raise ra ngoài
+
+    assert app_row.status == ApplicationStatus.PENDING_REVIEW.value  # KHÔNG kẹt ở AWAITING_SCREENER
+    assert app_row.escalation_reason  # có lý do lỗi cho HR
+    assert session.rollbacks == 1
+    assert res["branch"] == "error"

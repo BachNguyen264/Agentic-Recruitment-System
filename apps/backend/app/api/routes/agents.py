@@ -34,7 +34,12 @@ async def resume_screener_endpoint(
     `AWAITING_SCREENER` (else 409). KHÔNG chạy lại parser/ranker (checkpointer nạp state cũ).
 
     08a: trigger = endpoint test + payload MOCK. 08b sẽ thay bằng ứng viên nộp form magic-link
-    (payload = câu trả lời THẬT)."""
+    (payload = câu trả lời THẬT).
+
+    Guard hiện tại đủ cho 08a (dev, một người gọi). TODO 08b (khi trigger thành form CÔNG KHAI):
+    validate token magic-link + KHÓA hàng (SELECT ... FOR UPDATE / advisory lock trên application_id)
+    để 2 request resume đồng thời (ứng viên double-click) không cùng Command(resume) trên một thread.
+    """
     app_row = await session.get(Application, application_id)
     if app_row is None:
         raise HTTPException(status_code=404, detail="Application không tồn tại")
