@@ -62,8 +62,13 @@ class Settings(BaseSettings):
     # ── Ngưỡng pipeline (PRD §5 trụ cột 3 · §9 gate · §10 screener) ──
     # Đọc từ env; tinh chỉnh thực nghiệm ở Chương 4 (PRD §18).
     confidence_threshold: float = 0.6
-    screener_deadline_hours: int = 72
-    screener_reminder_hours: int = 24
+    # float (không int) để VERIFY 08c đặt ngưỡng NHỎ dưới 1 giờ (vd deadline 0.033h≈2 phút,
+    # reminder 0.017h≈1 phút) mà không cần đơn vị giây riêng. Prod vẫn dùng số giờ (72/24).
+    screener_deadline_hours: float = 72
+    screener_reminder_hours: float = 24
+    # Chu kỳ quét deadline (08c, in-process sweep — PRD §10 FR-SCR-3/4). Giây để verify đặt nhỏ
+    # (vd 20). Sweep chạy như asyncio task ở lifespan (KHÔNG Redis polling — CLAUDE.md).
+    screener_sweep_interval_seconds: int = 600
 
     # ── Screener magic-link (08b — PRD §7.3, §10, §12.2) ─────────────
     # Gốc URL frontend công khai để dựng magic-link trong email Screener:

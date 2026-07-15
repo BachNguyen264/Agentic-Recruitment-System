@@ -42,6 +42,13 @@ class ScreeningSession(Base, TimestampMixin):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # ── Screener timeout (08c — PRD §10 FR-SCR-3/4) ──
+    # reminded_at: đã gửi email NHẮC (once-only — sweep set để không nhắc lần hai).
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # timed_out_at: đã hết hạn KHÔNG phản hồi → resume no_response → human_review. Đánh dấu để sweep
+    # idempotent (không xử timeout hai lần) + phân biệt "hết hạn" với "đã trả lời" (used_at) cho trả lời trễ.
+    timed_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     application: Mapped[Application | None] = relationship(back_populates="screening_sessions")
 
     def __repr__(self) -> str:  # pragma: no cover
