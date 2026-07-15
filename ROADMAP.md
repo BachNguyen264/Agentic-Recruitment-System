@@ -58,8 +58,13 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   câu trả lời → human_review; answers hiện cho HR. Bảo mật: token crypto-random, hết hạn, one-time, row-lock
   chống double-submit, chỉ resume AWAITING_SCREENER. Verified live (API + browser) + adversarial security review
   (0 finding). Chuẩn hóa answers bằng LLM = hoãn (lưu thô). Endpoint dev resume gated ENABLE_DEV_ENDPOINTS.
-- **08c — Timeout + reminder + late reply** (§10). Periodic deadline sweep; one reminder at +24h; timeout →
-  human_review (`no_response`, NEVER auto-reject); handle late replies.
+- **08c — Timeout + reminder + late reply** (§10) — ✅ **DONE.** Seam `ScreeningTimeoutScheduler` +
+  `InProcessScheduler` (sweep loop ở lifespan, quét Postgres — KHÔNG Redis); handler nghiệp vụ
+  (`send_screening_reminder`/`handle_screening_timeout`) TÁCH khỏi cơ chế (đổi QStash sau không sửa nghiệp vụ).
+  Nhắc **một lần** `+REMINDER_HOURS` (`reminded_at` chặn lặp); hết hạn `+DEADLINE_HOURS` → resume `no_response`
+  → human_review + cờ (**NEVER auto-reject**), `timed_out_at` idempotent; trả lời trễ → thông báo êm (410).
+  Cột `reminded_at`/`timed_out_at`. Verified live (nhắc→timeout→PENDING_REVIEW[no_response] + trả lời trễ + đối
+  chứng trong hạn + HR thấy nhãn no_response) + adversarial review (0 finding).
 - **08d — Gate invite** (§9). After screener: auto-invite on + clean → scheduler; off/flagged → human_review. Completes the second gate.
   → **Milestone:** full Screener; complete async pipeline (major technical highlight).
 
@@ -122,8 +127,9 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [x] 07 public CV submission (`/apply`, guest)
 - [x] **08a Postgres checkpointer + suspend/resume** (durable qua restart, verified live)
 - [x] **08b Magic-link form + email câu hỏi** (token/expiry/one-time/row-lock, verified live + security review)
+- [x] **08c timeout/nhắc/trả lời trễ** (in-process sweep sau seam, nhắc-1-lần, timeout→human_review[no_response], verified live)
 - [ ] 06 object storage (deferred to near-deploy)
-- [ ] **08c timeout/nhắc/trả lời trễ ← NEXT** · 08d gate auto-mời
+- [ ] **08d gate auto-mời sau screener ← NEXT** (hoàn tất gate thứ hai, §9)
 - [ ] 09 HR auth
 - [ ] 10 analytics · 11 observability · 12 anti-injection · UI redesign · 13 deploy
 - [ ] 14 LLM-suggested rubric · 15 optional

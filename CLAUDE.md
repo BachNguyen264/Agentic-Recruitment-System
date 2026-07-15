@@ -49,7 +49,7 @@ Past scaffold — building real logic slice by slice. Node REAL vs STUB:
 | -------------- | -------- | ----- |
 | `parser`       | ✅ REAL  | CV→JSON via OpenAI `gpt-4.1-mini` (structured output) + certificates/languages/awards/other |
 | `ranker`       | ✅ REAL  | reasoned rubric scoring via `gpt-5-mini` (reasoning_effort=low); embedding = SIDE signal only |
-| `screener`     | 🟡 PARTIAL | **08a+08b DONE:** suspend/resume (`interrupt()` + AsyncPostgresSaver/Neon, bền qua restart) + **magic-link form**: dừng ở screener → email token (qua scheduler) → ứng viên mở `/screening/{token}` trả lời → resume BẰNG câu trả lời → human_review; answers hiện cho HR. Token an toàn/hết hạn/one-time/row-lock. Còn: timeout/nhắc = 08c, gate auto-mời = 08d (PRD §10) |
+| `screener`     | 🟡 PARTIAL | **08a+08b+08c DONE:** suspend/resume (`interrupt()` + AsyncPostgresSaver/Neon) + **magic-link form** (token/hết hạn/one-time/row-lock → resume BẰNG câu trả lời) + **timeout/nhắc** (in-process sweep quét Postgres qua seam `ScreeningTimeoutScheduler`/`InProcessScheduler` ở lifespan: nhắc 1 lần `+REMINDER_HOURS` → hết hạn `+DEADLINE_HOURS` resume `no_response` → human_review, **KHÔNG auto-reject**; trả lời trễ báo êm). Answers hiện cho HR. Còn: gate auto-mời = 08d (PRD §10, §9) |
 | `scheduler`    | ✅ REAL  | sends real invite/rejection email via **Resend** (fixed VN templates); Calendar deferred |
 | `human_review` | ✅ REAL  | ReviewCard + approve/reject → delegates to scheduler; audit-logged (PRD §11) |
 
@@ -57,12 +57,14 @@ Also REAL: JD management (create/edit/close) + embedding to Qdrant (`text-embedd
 **gate rank** (auto-reject, per-JD toggle, §9); **public CV submission** (`/apply`, guest, safe JD projection +
 server-side magic-byte validation — slice 07); **Screener suspend/resume** (Postgres checkpointer, 08a) +
 **magic-link form** (08b: `screening_session` token + email câu hỏi qua scheduler + public `/screening/{token}` +
-`/api/public/screening/{token}` GET/POST + answers hiện cho HR); PWA dashboard; HR pages `/cv-check`,
+`/api/public/screening/{token}` GET/POST + answers hiện cho HR) + **timeout/nhắc/trả lời trễ** (08c: seam
+`ScreeningTimeoutScheduler`+`InProcessScheduler` sweep quét Postgres ở lifespan; handler nghiệp vụ
+`screening_timeout.send_screening_reminder`/`handle_screening_timeout` tách khỏi cơ chế; cột `reminded_at`/
+`timed_out_at`; timeout resume `no_response` → human_review); PWA dashboard; HR pages `/cv-check`,
 `/applications` (list + score detail), `/review` (queue), `/jobs` (JD UI).
 
-**NOT yet done:** Screener 08c (timeout/nhắc/trả lời trễ — quét deadline, +24h nhắc, timeout→human_review
-`no_response`) / 08d (gate auto-mời sau screener — §9); object storage (local disk for now); HR auth; analytics;
-observability; anti-prompt-injection; deploy; UI redesign; learning loop.
+**NOT yet done:** Screener 08d (gate auto-mời sau screener — §9); object storage (local disk for now); HR auth;
+analytics; observability; anti-prompt-injection; deploy; UI redesign; learning loop.
 
 `ENABLE_LLM=true` enables real parser+ranker; `false` keeps stubs (for `test_graph`).
 
@@ -125,10 +127,11 @@ observability; anti-prompt-injection; deploy; UI redesign; learning loop.
 ## Current boundaries
 
 - NO Supervisor Agent / dynamic orchestration — fixed pipeline (PRD §5).
-- Nodes not yet in scope stay STUB: `screener` (still stub). NOT yet built: gate INVITE (§9), Screener async
-  (§10), object storage, auth, analytics, observability, anti-injection, deploy, UI redesign, learning loop —
-  keep stub + TODO pointing to PRD; don't build outside the current slice.
-- NO Redis-polling worker queue — use BackgroundTasks.
+- Screener REAL through 08c (suspend/resume + magic-link + timeout/nhắc/trả lời trễ). NOT yet built: gate INVITE
+  sau screener (§9, 08d), object storage, auth, analytics, observability, anti-injection, deploy, UI redesign,
+  learning loop — keep stub + TODO pointing to PRD; don't build outside the current slice.
+- NO Redis-polling worker queue — use BackgroundTasks. Screener timeout = **in-process sweep** (asyncio task ở
+  lifespan quét Postgres, KHÔNG Redis) sau seam `ScreeningTimeoutScheduler` (đổi QStash sau không sửa nghiệp vụ).
 - **Ranker:** score is ONLY the reasoned rubric (weights from the JD); cosine/embedding is a SIDE signal, NOT in
   the score, NO JD chunking. confidence/flags = DETERMINISTIC heuristic (don't ask the LLM to self-score).
 - **scheduler is the SOLE email-send point** — don't scatter sends.
@@ -161,6 +164,12 @@ observability; anti-prompt-injection; deploy; UI redesign; learning loop.
   `app/__main__.py` (win32-guarded, at module scope) BEFORE uvicorn creates its loop. Run the backend via
   `python -m app` (what `make dev-backend` now does), NOT `uvicorn app.main:app` directly. Linux/prod = no-op.
   Checkpointer connects to Neon's DIRECT endpoint (strip `-pooler`) to avoid PgBouncer prepared-statement issues.
+- **Screener timeout sweep (08c) lifecycle:** the `InProcessScheduler` sweep task starts in lifespan AFTER
+  `setup_checkpointer()` (timeout resume needs the compiled graph) and stops BEFORE teardown. It runs in the MAIN
+  event loop (await graph resume directly — NO `asyncio.run` per-item, that was the 08a per-request trap). Each
+  due session is processed in its OWN transaction with `SELECT … FOR UPDATE` + in-lock re-check; idempotency =
+  `reminded_at`/`timed_out_at` + `status == AWAITING_SCREENER` filter. Verify with tiny env thresholds
+  (`SCREENER_DEADLINE_HOURS`/`REMINDER_HOURS` are **float** → set <1h; `SCREENER_SWEEP_INTERVAL_SECONDS` low) then RESTORE.
 
 ---
 

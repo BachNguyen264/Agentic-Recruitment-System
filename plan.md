@@ -1,12 +1,11 @@
-# SLICE 08b — Magic-link form + email câu hỏi (Screener do ứng viên điều khiển) · plan one-shot
+# SLICE 08c — Screener timeout: nhắc + hết hạn + trả lời trễ (in-process sweep, có seam) · plan one-shot
 
 > **Bản chất:** plan ONE-SHOT. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Mục tiêu:** khi pipeline dừng ở screener (08a), hệ thống **gửi email kèm magic-link** → ứng viên mở link thấy
-> **form câu hỏi (cố định theo JD)** → nộp → **resume pipeline bằng chính câu trả lời** (thay endpoint dev). Câu
-> trả lời được lưu + hiện cho HR. Ghép: suspend/resume (08a) + email (04) + cửa ứng viên (07).
-> Tham chiếu: PRD §7.3 (Screener), §10, §12.2 (FR-AP-3), §16 (ScreeningSession). Tuân thủ `CLAUDE.md`.
->
-> **⚠️ Cốt lõi lát này = BẢO MẬT MAGIC-LINK (token). Đọc kỹ mục "Bảo mật" — làm đúng từ đầu.**
+> **Mục tiêu:** xử lý ca ứng viên KHÔNG trả lời screener: quét deadline định kỳ (trong tiến trình), **nhắc một lần**,
+> **hết hạn → human_review với cờ `no_response`** (KHÔNG BAO GIỜ auto-từ-chối — im lặng ≠ từ chối), và xử lý
+> **trả lời trễ** êm. Chọn Hướng A (in-process sweep, quét Postgres — không đụng Redis) sau một seam mỏng để sau
+> đổi QStash không sửa nghiệp vụ.
+> Tham chiếu: PRD §10 (FR-SCR-3/4/5), §13. Tuân thủ `CLAUDE.md` (KHÔNG worker polling Redis).
 
 ---
 
@@ -14,133 +13,124 @@
 
 **In scope:**
 
-- Bảng `screening_session` (token, application_id, expires_at, used_at, answers) + migration Alembic.
-- Khi interrupt (BackgroundTask): sinh token an toàn + tạo screening_session + delegate **scheduler** gửi email câu hỏi kèm magic-link.
-- scheduler: thêm template email "screener" (magic-link + hạn) — vẫn là điểm phát email DUY NHẤT.
-- Endpoint CÔNG KHAI: `GET /api/public/screening/{token}` (validate token → trả câu hỏi + tiêu đề JD, KHÔNG lộ nội bộ);
-  `POST /api/public/screening/{token}` (nộp câu trả lời → validate → row-lock → **resume graph bằng câu trả lời** → đánh dấu used → lưu answers).
-- Trang công khai `/screening/[token]` (hiện câu hỏi, form, nộp, xác nhận) — tách khỏi nav HR.
-- Hiện câu trả lời screener cho HR (thêm nhỏ ở ReviewCard/chi tiết).
-- Gỡ/gate endpoint dev `resume-screener` (token-submit là đường thật).
+- **Seam scheduling:** interface `ScreeningTimeoutScheduler` (mỏng) + implementation `InProcessScheduler` (sweep loop
+  trong lifespan). **Handler nghiệp vụ (gửi nhắc / xử lý timeout) tách riêng, KHÔNG phụ thuộc cơ chế.**
+- Sweep loop: mỗi N phút quét `screening_session` (Postgres) tìm ca cần nhắc / đã hết hạn → gọi handler tương ứng.
+- Nhắc MỘT LẦN qua scheduler (email nhắc). Cột `reminded_at` (once-only).
+- Timeout: resume graph với tín hiệu `no_response` → screener node → route **human_review** + cờ `no_response`.
+  KHÔNG auto-từ-chối. Đánh dấu session timed-out.
+- Trả lời trễ: ứng viên mở link sau hết hạn → thông báo êm ("thời hạn đã qua, hồ sơ đang được xem xét"); (tùy chọn nhẹ: đính câu trả lời trễ cho HR tham khảo). KHÔNG resume lại (đã timeout).
+- HR thấy cờ/tình trạng `no_response`.
 
-**Out of scope (KHÔNG làm — là 08c/08d/sau):**
+**Out of scope (KHÔNG làm):**
 
-- KHÔNG timeout/nhắc lịch/trả lời trễ (08c). KHÔNG cổng auto-mời (08d).
-- KHÔNG dùng LLM chuẩn hóa/hỏi lại câu trả lời (lưu answers THÔ + hiện cho HR; tinh chỉnh để sau).
-- KHÔNG đụng parser/ranker logic; KHÔNG đổi cơ chế checkpointer 08a (chỉ đổi trigger resume).
+- KHÔNG QStash / hạ tầng scheduling phân tán (chỉ InProcess sau seam — QStash là bản nâng cấp deploy).
+- KHÔNG cổng auto-mời (08d). KHÔNG LLM chuẩn hóa câu trả lời. KHÔNG đụng checkpointer-08a / cơ chế token-08b (chỉ thêm timeout).
+- KHÔNG đụng parser/ranker logic.
 
 ---
 
 ## 2. Prerequisites
 
-- 08a xong (suspend/resume + AsyncPostgresSaver + screener interrupt). 04 xong (scheduler email thật). 05 xong
-  (JD có `screener_questions`). 07 xong (pattern public endpoint + trang công khai tách nav).
-- Config: `SCREENER_DEADLINE_HOURS` (vd 72), `FRONTEND_BASE_URL` (build magic-link). Email: Resend (nhắc: chưa xác thực domain → khi verify dùng email của bạn làm applicant).
+- 08b xong (screening_session + token + resume bằng answers). 08a (suspend/resume). 04 (scheduler email).
+- Config: `SCREENER_DEADLINE_HOURS` (đã có 08b, vd 72), `SCREENER_REMINDER_HOURS` (vd 24), `SCREENER_SWEEP_INTERVAL_MINUTES` (vd 10).
+  **Cho verify:** các giá trị này đọc từ env → khi test đặt NHỎ (deadline 2 phút, reminder 1 phút, sweep 20 giây) để quan sát, không phải chờ 72h.
 
 ---
 
 ## 3. Việc cần làm
 
-### 3.1 Bảng screening_session + migration · `app/models/` + Alembic
+### 3.1 Seam scheduling · `app/services/screening_scheduler.py`
 
-- `screening_session`: `id`, `token` (unique, indexed), `application_id` (FK), `expires_at`, `used_at` (nullable),
-  `answers` (JSONB, nullable), `created_at`. Migration Alembic tạo bảng.
-- Cập nhật `scripts/reset_demo_data.py`: xóa application thì xóa KÈM screening_session tương ứng (tránh mồ côi, giống checkpoint/Qdrant).
+- Interface MỎNG (Protocol/ABC): `ScreeningTimeoutScheduler` với, tối thiểu:
+  - `async def start() / stop()` — vòng đời (InProcess: khởi/dừng sweep loop). Gọi ở lifespan.
+  - (đủ cho seam QStash sau) `async def on_session_created(session)` — InProcess = no-op (sweep đọc DB); QStash sau = đăng ký callback.
+- `InProcessScheduler` implements: `start()` chạy một asyncio background task = **sweep loop** (mỗi
+  `SCREENER_SWEEP_INTERVAL_MINUTES`). Sweep loop chạy trong event loop chính của backend → await graph resume +
+  AsyncPostgresSaver tự nhiên (KHÔNG dính bẫy asyncio.run per-request của 08a — đây là task bền trong loop chính).
+- **Handler nghiệp vụ ĐỂ RIÊNG** (vd trong screening service), scheduler chỉ _gọi_ chúng:
+  - `async def send_screening_reminder(session)` · `async def handle_screening_timeout(session)`.
+  - → đổi InProcess↔QStash sau này KHÔNG đụng 2 handler này.
+- Chọn implementation qua config (mặc định InProcess). App phụ thuộc INTERFACE, không phụ thuộc InProcess trực tiếp.
 
-### 3.2 Sinh token + gửi email khi interrupt · `app/tasks/background.py`
+### 3.2 Cột session · migration
 
-- Khi graph interrupt (AWAITING_SCREENER): sinh **token an toàn** (`secrets.token_urlsafe`, KHÔNG tuần tự/đoán được);
-  tạo `screening_session` (application_id, expires_at = now + SCREENER_DEADLINE_HOURS, used_at=NULL).
-- Delegate `scheduler.notify_decision(mode="screener", ...)` (hoặc hàm tương đương) → gửi email câu hỏi kèm
-  magic-link `{FRONTEND_BASE_URL}/screening/{token}`. Lỗi gửi nuốt có kiểm soát (như 04) — không sập; audit.
+- Thêm `reminded_at` (nullable) vào `screening_session` (đánh dấu đã nhắc — once-only). (`expires_at` đã có.)
+  Cân nhắc `status`/`timed_out_at` nếu cần phân biệt used vs timed-out. Migration Alembic (nhớ `include_object` guard như 08b để KHÔNG drop bảng checkpoint).
 
-### 3.3 scheduler: template screener · `app/agents/nodes/scheduler.py` + templates
+### 3.3 Sweep loop — nội dung mỗi vòng
 
-- Thêm `screener_email(candidate_name, job_title, link, deadline)`: mời ứng viên trả lời vài câu hỏi bổ sung qua
-  link, nêu hạn. Template CỐ ĐỊNH (không LLM). scheduler vẫn là điểm phát email DUY NHẤT.
+- **Cần nhắc:** session `used_at IS NULL` + `reminded_at IS NULL` + quá mốc nhắc (created_at + REMINDER_HOURS) + chưa hết hạn →
+  `send_screening_reminder`: gửi email nhắc (qua scheduler, template nhắc) + set `reminded_at`. **Row-lock** khi xử lý để không nhắc trùng.
+- **Hết hạn:** session `used_at IS NULL` + quá `expires_at` → `handle_screening_timeout`: **resume graph** với payload
+  `{"no_response": true}` (thread_id=app-<id>) → screener node → route human_review + cờ `no_response` + escalation_reason
+  ("ứng viên không phản hồi sàng lọc"). Đánh dấu session timed-out. **KHÔNG auto-từ-chối.** Row-lock.
+- Idempotent + an toàn: lỗi một session không được làm chết cả vòng sweep (try/except từng session + log).
 
-### 3.4 Endpoint công khai · `app/api/routes/` (public)
+### 3.4 Screener node xử lý resume timeout · `app/agents/nodes/screener.py`
 
-- `GET /api/public/screening/{token}`: validate token (tồn tại + chưa hết hạn + chưa dùng + application đang
-  AWAITING_SCREENER) → trả **chỉ**: câu hỏi (`screener_questions` của JD) + tiêu đề JD. **KHÔNG** lộ rubric/gate/
-  điểm/parsed_data/nội bộ. Token sai/hết hạn/đã dùng → trạng thái rõ (410/404/409) để UI hiện thông báo phù hợp.
-- `POST /api/public/screening/{token}` (body: answers theo câu hỏi):
-  1. **Row-lock** screening_session/application (SELECT … FOR UPDATE) để chống submit trùng → resume 2 lần.
-  2. Re-validate trong lock: chưa used, chưa hết hạn, application AWAITING_SCREENER.
-  3. **Resume graph**: `Command(resume=answers)` với `thread_id = app-<application_id>` (đúng cơ chế 08a) → graph
-     chạy tiếp từ screener → node kế → trạng thái cuối (human_review, vì gate mời chưa xây).
-  4. Đánh dấu `used_at = now`; lưu `answers` (vào screening_session + state screener của application).
-  5. Trả xác nhận gọn (không lộ điểm/trạng thái nội bộ).
+- Node phân biệt hai kiểu resume: câu trả lời thật (08b) vs tín hiệu `no_response` (timeout). Với `no_response`:
+  set cờ `no_response` + escalation_reason, KHÔNG lưu answers, tiếp tục → human_review. Nhánh nhỏ, KHÔNG đụng logic khác.
 
-### 3.5 Trang công khai form · `app/screening/[token]/page.tsx`
+### 3.5 scheduler: template nhắc · `app/agents/nodes/scheduler.py` + templates
 
-- Fetch câu hỏi qua GET public → render form (mỗi câu hỏi 1 ô trả lời). Nộp → POST public → màn xác nhận
-  ("Cảm ơn, câu trả lời đã được ghi nhận"). Token sai/hết hạn/đã nộp → thông báo tương ứng (không form).
-- Tách khỏi nav HR (luồng ứng viên, như /apply). Validate client cơ bản (điền đủ). Chống double-submit.
+- `screener_reminder_email(candidate_name, job_title, link, deadline)` — nhắc lịch sự, cùng magic-link (token cũ còn hạn), nêu hạn. Cố định (không LLM). scheduler vẫn điểm phát email duy nhất.
 
-### 3.6 Hiện câu trả lời cho HR · ReviewCard/chi tiết
+### 3.6 Trả lời trễ · endpoint public POST screening (08b)
 
-- Ở `/review` (và/hoặc chi tiết ứng viên), nếu application có `answers` screener → hiện khối "Câu trả lời sàng lọc"
-  (câu hỏi + trả lời) để HR tham khảo khi quyết. Thuần hiển thị.
+- Nếu session đã timed-out/hết hạn khi ứng viên nộp: trả thông báo êm ("Thời hạn đã qua; hồ sơ của bạn đang được
+  xem xét"), KHÔNG resume (graph đã đi tiếp qua timeout). (Tùy chọn nhẹ: lưu câu trả lời trễ vào application cho HR
+  xem, đánh dấu "trả lời sau hạn" — không bắt buộc.)
 
-### 3.7 Gỡ/gate endpoint dev
+### 3.7 HR thấy no_response · ReviewCard/chi tiết
 
-- `POST /api/agents/resume-screener/{id}` (dev, từ 08a): gỡ, HOẶC gate sau cờ env (chỉ để test nội bộ). Đường thật giờ là token-submit.
+- Ca timed-out hiện rõ (vd nhãn "Không phản hồi sàng lọc") để HR biết vì sao vào review. Thuần hiển thị.
 
-### 3.8 Test · `app/tests/test_screening.py`
+### 3.8 Test · `app/tests/test_screener_timeout.py`
 
-- Interrupt → screening_session tạo với token + hạn; scheduler gửi email screener (mock).
-- GET token hợp lệ → trả câu hỏi (KHÔNG lộ rubric/điểm). Token sai/hết hạn/đã dùng → lỗi đúng mã.
-- POST token → resume graph (mock/gated) → status chuyển; used_at set; answers lưu; parser/ranker KHÔNG chạy lại.
-- POST lần 2 cùng token → bị từ chối (đã dùng). Row-lock chống double-submit (nếu test được).
+- Nhắc gửi ĐÚNG MỘT LẦN (reminded_at chặn lần hai). Trả lời trước hạn → không nhắc/không timeout (không hồi quy).
+- Timeout → resume `no_response` → human_review + cờ; **KHÔNG auto-từ-chối**; parser/ranker không chạy lại.
+- Trả lời trễ → thông báo êm, không resume lại. Sweep idempotent (chạy 2 lần không xử lý đôi).
+- (Có thể inject thời gian/hạ ngưỡng để test không phải chờ thật.)
 
 ---
 
-## 4. Verify (chạy thật — luồng ứng viên đầy đủ)
+## 4. Verify (chạy thật — ĐẶT NGƯỠNG NHỎ để quan sát)
 
-1. `make dev-backend` + `make dev-dashboard`. JD #2 có `screener_questions` (nếu chưa, thêm vài câu qua /jobs).
-2. Nộp CV đạt (backend khớp, **email của bạn**) qua `/apply` → pipeline chấm → dừng ở screener (AWAITING_SCREENER).
-3. **Kiểm hòm thư:** nhận **email câu hỏi kèm magic-link**. Mở link → trang `/screening/{token}` hiện câu hỏi của JD (KHÔNG thấy rubric/điểm).
-4. Điền câu trả lời → Nộp → màn xác nhận. Pipeline **resume** → `/applications` (HR) thấy CV chuyển PENDING_REVIEW (KHÔNG chạy lại parser/ranker — kiểm log).
-5. Vào `/review` → thấy **câu trả lời screener** của ứng viên hiển thị. Duyệt → thư mời thật.
-6. Bảo mật: mở lại link đã nộp → báo "đã nộp/không hợp lệ" (one-time). Sửa token bậy trên URL → báo lỗi. (Nếu chỉnh được `expires_at` về quá khứ → link báo hết hạn.)
-7. `make test` xanh; `pnpm --filter dashboard build` PASS.
+1. Đặt env NHỎ: `SCREENER_DEADLINE_HOURS` ~ 2 phút (hoặc thêm cờ giây), `SCREENER_REMINDER_HOURS` ~ 1 phút, `SCREENER_SWEEP_INTERVAL_MINUTES` ~ 20 giây. `make dev-backend`.
+2. Nộp CV đạt (email của bạn) qua `/apply` → screener email → **KHÔNG trả lời**, chờ.
+3. Tới mốc nhắc → nhận **email nhắc** (một lần; chờ thêm không nhận lần hai).
+4. Tới hạn → sweep xử timeout → `/applications` thấy CV vào **PENDING_REVIEW** với nhãn **"Không phản hồi sàng lọc"** (KHÔNG bị từ chối); log: resume no_response, parser/ranker KHÔNG chạy lại.
+5. Trả lời trễ: mở lại magic-link sau hạn → thông báo "thời hạn đã qua / đang xem xét".
+6. Đối chứng: nộp CV khác + **trả lời trong hạn** → resume bình thường (không nhắc, không timeout).
+7. `make test` xanh. (Nhớ trả env về giá trị thật sau verify.)
 
 ---
 
 ## 5. Definition of Done
 
-- [ ] Interrupt → sinh token an toàn + screening_session (hạn) + scheduler gửi email magic-link (điểm phát email duy nhất).
-- [ ] `/screening/{token}` hiện câu hỏi JD; nộp → **resume graph bằng câu trả lời** → PENDING_REVIEW (KHÔNG chạy lại parser/ranker).
-- [ ] Câu trả lời lưu + hiện cho HR ở review.
-- [ ] **Bảo mật:** token crypto-random; hết hạn bị từ chối; one-time (dùng lại bị chặn); chỉ resume application AWAITING_SCREENER; **row-lock chống double-submit**.
-- [ ] Public endpoint KHÔNG lộ rubric/gate/điểm/parsed_data (chỉ câu hỏi + tiêu đề JD).
-- [ ] Migration screening_session; reset_demo_data dọn kèm; endpoint dev resume gỡ/gated.
-- [ ] KHÔNG timeout/nhắc (08c), KHÔNG auto-mời (08d), KHÔNG LLM chuẩn hóa câu trả lời; checkpointer 08a không đổi.
-- [ ] `make test` xanh; `pnpm build` PASS.
+- [ ] Seam `ScreeningTimeoutScheduler` + `InProcessScheduler` (sweep loop ở lifespan); handler nghiệp vụ (reminder/timeout) TÁCH riêng, không phụ thuộc cơ chế.
+- [ ] Nhắc gửi đúng MỘT LẦN qua scheduler; `reminded_at` chặn lặp.
+- [ ] Timeout → resume `no_response` → human_review + cờ, **KHÔNG auto-từ-chối**; parser/ranker không chạy lại.
+- [ ] Trả lời trễ xử lý êm (không resume lại, thông báo rõ). HR thấy nhãn no_response.
+- [ ] Sweep quét Postgres (KHÔNG Redis), idempotent, lỗi một session không chết cả vòng; chạy trong event loop chính (không dính bẫy asyncio.run).
+- [ ] Migration `reminded_at` (+ include_object guard). KHÔNG QStash, KHÔNG auto-mời, KHÔNG LLM chuẩn hóa; checkpointer/token-08b không đổi.
+- [ ] `make test` xanh.
 
 ---
 
-## 6. 🔒 BẢO MẬT — đọc kỹ (cốt lõi lát này)
+## 6. Ranh giới & quy ước (theo CLAUDE.md)
 
-- **Token không đoán được:** `secrets.token_urlsafe(32)` — KHÔNG dùng id tuần tự / uuid dễ đoán / hash yếu.
-- **Hết hạn:** `expires_at` (config SCREENER_DEADLINE_HOURS); mọi thao tác re-check còn hạn không.
-- **One-time:** đánh dấu `used_at` sau khi resume thành công; token đã dùng → từ chối (tránh resume 2 lần / replay).
-- **Tie đúng trạng thái:** chỉ resume application đang `AWAITING_SCREENER`; khác trạng thái → từ chối (tránh resume ca đã xử lý).
-- **Row-lock chống race:** hai submit đồng thời cùng token KHÔNG được cùng resume graph (state hỏng / xử lý đôi). SELECT … FOR UPDATE trên session/application trong transaction resume; re-validate trong lock.
-- **Không lộ nội bộ:** endpoint/trang công khai chỉ câu hỏi + tiêu đề JD; KHÔNG rubric/gate/điểm/parsed_data (như projection 07).
-- **Lỗi gửi email không sập** (như 04): interrupt vẫn AWAITING_SCREENER, session vẫn tạo; log/audit lỗi để xử (retry/timeout là 08c).
+- CHỈ động vào: seam scheduler + sweep + handler reminder/timeout + screener node nhánh no_response + template nhắc + trả lời trễ + hiển thị + migration/test. KHÔNG đụng parser/ranker/checkpointer-08a/token-08b logic.
+- **Im lặng ≠ từ chối:** timeout LUÔN → human_review, KHÔNG BAO GIỜ auto-reject. scheduler = điểm phát email duy nhất.
+- Seam MỎNG: một Protocol + InProcess; handler tách khỏi cơ chế (đổi QStash sau không sửa nghiệp vụ). KHÔNG framework/factory thừa.
+- Sweep chạy trong loop chính (asyncio task ở lifespan) — dùng đúng đường async, không asyncio.run per-item.
+- Config từ env (deadline/reminder/sweep interval); verify đặt nhỏ rồi TRẢ VỀ giá trị thật. Chạy impact analysis (GitNexus) trước khi sửa screener/policy.
+- Commit nhỏ (vd `feat(screener): seam ScreeningTimeoutScheduler + InProcess sweep`, `feat(screener): reminder once + timeout->human_review(no_response)`, `feat(screener): trả lời trễ + hiển thị no_response`, `feat(db): reminded_at migration`, `test(screener): reminder/timeout/late`).
+- Nghiệp vụ chưa rõ → **PRD.md** (§10). Vướng kỹ thuật (sweep/resume/loop) → DỪNG, hỏi.
+- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhấn: đặt ngưỡng nhỏ rồi trả về), checklist DoD.
 
-## 7. Ranh giới & quy ước (theo CLAUDE.md)
+## 7. Sau lát này
 
-- CHỈ động vào: screening_session + token/email trigger + scheduler screener template + public screening endpoints + trang /screening + hiện answers cho HR + gỡ endpoint dev + migration/test. KHÔNG đụng parser/ranker/checkpointer-08a logic.
-- scheduler = điểm phát email DUY NHẤT (email screener qua scheduler). Template cố định (không LLM).
-- resume dùng đúng thread_id = `app-<application_id>` của 08a. Chạy impact analysis (GitNexus) trước khi sửa background/policy.
-- Commit nhỏ (vd `feat(screener): bảng screening_session + migration`, `feat(screener): token + email magic-link qua scheduler`, `feat(api): public screening GET/POST + resume bằng answers (row-lock)`, `feat(ui): trang /screening form`, `feat(ui): hiện answers cho HR`, `chore: gỡ endpoint dev resume`, `test(screener): token/expiry/one-time/resume`).
-- Nghiệp vụ chưa rõ → **PRD.md** (§7.3, §10, §12.2, §16). Vướng kỹ thuật (resume/lock/token) → DỪNG, hỏi.
-- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhấn: dùng email của bạn, thử one-time/hết hạn), checklist DoD.
-
-## 8. Sau lát này
-
-Screener do ứng viên điều khiển xong → **08c** (timeout: quét deadline, nhắc +24h, timeout→human_review `no_response`,
-trả lời trễ) → **08d** (cổng auto-mời sau screener). Xem ROADMAP.md.
+Screener async ĐẦY ĐỦ (nhận → hỏi → chờ → nhắc → hết hạn/trả lời). Còn **08d** (cổng auto-mời sau screener) là hoàn tất
+gate thứ hai + đối xứng auto-reject. Rồi hết GĐ3. Xem ROADMAP.md. (Ghi chú deploy: body-size limit + rate-limit public endpoints; đổi InProcess→QStash — cả hai ở GĐ5.)
