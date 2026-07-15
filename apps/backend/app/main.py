@@ -18,6 +18,7 @@ from app.core.database import engine
 from app.core.logging import get_logger, setup_logging
 from app.core.qdrant_client import qdrant_client
 from app.core.redis_client import redis_client
+from app.services import screening_scheduler
 
 logger = get_logger("app.main")
 
@@ -33,13 +34,19 @@ async def lifespan(app: FastAPI):
     )
     # Checkpointer Postgres (PRD §10): pool + bảng checkpoint Neon, compile graph — MỘT LẦN ở đây.
     await checkpointer.setup_checkpointer()
+    # Sweep timeout Screener (08c, PRD §10 FR-SCR-3/4): SAU checkpointer (sweep resume graph cần
+    # graph đã compile với saver). Task ở event loop chính. Đổi InProcess↔QStash không đụng nghiệp vụ.
+    scheduler = screening_scheduler.get_scheduler()
+    await scheduler.start()
+    app.state.screening_scheduler = scheduler
     yield
-    # Đóng kết nối sạch.
+    # Đóng kết nối sạch — dừng sweep TRƯỚC khi đóng checkpointer (sweep dùng graph/pool).
+    await scheduler.stop()
     await checkpointer.teardown_checkpointer()
     await redis_client.aclose()
     await qdrant_client.close()
     await engine.dispose()
-    logger.info("Backend tắt — đã đóng kết nối Redis/Qdrant/DB.")
+    logger.info("Backend tắt — đã đóng sweep + Redis/Qdrant/DB.")
 
 
 app = FastAPI(
