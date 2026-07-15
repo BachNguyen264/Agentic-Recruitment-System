@@ -92,8 +92,11 @@ async def _load_valid(
         raise TokenNotFound("Liên kết không hợp lệ.")
     if sess.used_at is not None:
         raise TokenUsed("Bạn đã gửi câu trả lời cho liên kết này rồi.")
-    if sess.expires_at <= _now():
-        raise TokenExpired("Liên kết đã hết hạn.")
+    # Trả lời TRỄ (08c · PRD §10 FR-SCR-5): đã timeout hoặc quá hạn → thông báo ÊM (đang xem xét),
+    # KHÔNG resume lại (graph đã đi tiếp qua timeout → human_review). timed_out_at check TRƯỚC status
+    # để có thông điệp trấn an (410) thay vì 409 "sai trạng thái" khi app đã sang PENDING_REVIEW.
+    if sess.timed_out_at is not None or sess.expires_at <= _now():
+        raise TokenExpired("Thời hạn trả lời đã qua. Hồ sơ của bạn vẫn đang được bộ phận tuyển dụng xem xét.")
     app_row = await session.get(Application, sess.application_id)
     if app_row is None or app_row.status != ApplicationStatus.AWAITING_SCREENER.value:
         raise NotAwaitingScreener("Hồ sơ không ở trạng thái chờ trả lời sàng lọc.")
