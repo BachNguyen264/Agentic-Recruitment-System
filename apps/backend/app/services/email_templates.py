@@ -76,6 +76,38 @@ def screener_email(
     return subject, html
 
 
+def screener_reminder_email(
+    candidate_name: str | None,
+    job_title: str | None,
+    *,
+    form_url: str,
+    deadline_text: str,
+) -> tuple[str, str]:
+    """Thư NHẮC trả lời bộ câu hỏi sàng lọc (08c · PRD §10 FR-SCR-3). Gửi MỘT LẦN khi quá mốc nhắc mà
+    chưa phản hồi; DÙNG LẠI magic-link cũ (token còn hạn). Cùng cơ chế escape như screener_email
+    (name/title escape HTML; form_url trong href escape quote). Trả (subject, html)."""
+    name = _esc(candidate_name, fallback="Ứng viên")
+    title = _esc(job_title, fallback="vị trí ứng tuyển")
+    href = _html.escape(form_url, quote=True)
+    deadline = _esc(deadline_text, fallback="thời gian còn lại")
+    subject = _subject_safe(
+        f"Nhắc: bổ sung thông tin ứng tuyển — vị trí {job_title}"
+        if job_title
+        else "Nhắc: bổ sung thông tin ứng tuyển",
+        fallback="Nhắc: bổ sung thông tin ứng tuyển",
+    )
+    html = _wrap(
+        f"<p>Kính gửi {name},</p>"
+        f"<p>Chúng tôi nhận thấy bạn chưa hoàn tất phần câu hỏi bổ sung cho vị trí "
+        f"<strong>{title}</strong>. Đây là lời nhắc thân thiện — vui lòng dành ít phút trả lời qua "
+        f"liên kết dưới đây trong vòng <strong>{deadline}</strong> để chúng tôi tiếp tục xem xét hồ sơ của bạn.</p>"
+        f'<p><a href="{href}">Trả lời câu hỏi sàng lọc</a></p>'
+        "<p>Nếu nút không bấm được, hãy sao chép liên kết này vào trình duyệt:</p>"
+        f'<p style="word-break:break-all;color:#475569">{href}</p>'
+    )
+    return subject, html
+
+
 def rejection_email(candidate_name: str | None, job_title: str | None) -> tuple[str, str]:
     """Thư từ chối — cảm ơn, rất tiếc chưa phù hợp, chúc may mắn. Trả (subject, html)."""
     name = _esc(candidate_name, fallback="Ứng viên")
