@@ -245,16 +245,21 @@ export function JobForm({
             </span>
           </span>
         </label>
-        <label className="flex items-start gap-3 opacity-50">
+        <label className="flex items-start gap-3">
           <input
             type="checkbox"
             checked={form.gate_config.auto_invite}
-            disabled
+            onChange={(e) =>
+              set("gate_config", { ...form.gate_config, auto_invite: e.target.checked })
+            }
             className="mt-0.5 h-4 w-4 rounded border-slate-300"
           />
           <span className="text-sm">
             <span className="font-medium text-slate-800">Auto-mời</span>
-            <span className="block text-slate-500">Dùng cho vòng Screener — sẽ bật sau.</span>
+            <span className="block text-slate-500">
+              Tự động mời ca ĐẠT + đã trả lời sàng lọc (tự tin, không cờ) + gửi thư mời. Ca bất định /
+              không phản hồi vẫn về HR. Mặc định TẮT.
+            </span>
           </span>
         </label>
       </fieldset>
