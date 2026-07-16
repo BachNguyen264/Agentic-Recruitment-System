@@ -32,6 +32,14 @@ def _auto_reject_enabled(state: RecruitmentState) -> bool:
     return bool(gate.get("auto_reject"))
 
 
+def _auto_invite_enabled(state: RecruitmentState) -> bool:
+    """Gate auto-mời của JD (PRD §9 FR-GATE-1, 08d). Đọc từ `input.jd.gate_config` (ảnh chụp lúc CV vào
+    pipeline — đối xứng auto_reject; cấu hình theo từng JD). Mặc định TẮT."""
+    jd = (state.get("input") or {}).get("jd") or {}
+    gate = jd.get("gate_config") or {}
+    return bool(gate.get("auto_invite"))
+
+
 def route_after_ranker(state: RecruitmentState) -> str:
     """Định tuyến sau ranker (PRD §8.3, §9) — THỨ TỰ ƯU TIÊN AN TOÀN TRƯỚC. Tên nhánh khớp key trong
     add_conditional_edges (graph.py). Chỉ ca điểm thấp SẠCH + gate BẬT rời human_review (→ auto_reject);
@@ -50,3 +58,19 @@ def route_after_ranker(state: RecruitmentState) -> str:
     if not state.get("require_human_review"):
         return "screener"  # ĐẠT ngưỡng → Screener async (08a): dừng hỏi ứng viên rồi mới → human_review
     return "auto_reject" if _auto_reject_enabled(state) else "human_review"
+
+
+def route_after_screener(state: RecruitmentState) -> str:
+    """Định tuyến SAU khi screener resume (PRD §9 §10, 08d) — GATE AUTO-MỜI, đối xứng auto_reject.
+    THỨ TỰ ƯU TIÊN AN TOÀN TRƯỚC. Tên nhánh khớp key add_conditional_edges (graph.py).
+
+    1) Ca KHÔNG sạch (no_response timeout / cờ bất định / low-confidence / lỗi) → `human_review` LUÔN —
+       gate KHÔNG xét (§9 FR-GATE-2 "cờ thắng gate"). Đây là chốt an toàn: im lặng/bất định ≠ mời.
+    2) Ca SẠCH (đã trả lời, tự tin, không cờ) → gate JD: auto_invite BẬT → `auto_invite` (thư mời THẬT
+       qua scheduler, KHÔNG cần HR); TẮT → `human_review` (HR đọc câu trả lời rồi mới duyệt — mặc định).
+
+    KHÔNG chấm NỘI DUNG câu trả lời: đủ điều kiện = qua rank (đã tới screener) + đã trả lời + không cờ.
+    Answers vẫn lưu cho HR/phỏng vấn (08b). Mặc định auto_invite TẮT → hành vi sau-screener KHÔNG đổi."""
+    if should_review(state):
+        return "human_review"
+    return "auto_invite" if _auto_invite_enabled(state) else "human_review"
