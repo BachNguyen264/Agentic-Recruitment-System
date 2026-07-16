@@ -1,16 +1,15 @@
 """graph.py — pipeline LangGraph CỐ ĐỊNH (PRD §5 trụ cột 1: KHÔNG Supervisor).
 
     START -> parser -> ranker --[route_after_ranker]--> human_review -> END
-                                  ├--(đạt)------------> screener ==(suspend/resume)==> human_review -> END
+                                  ├--(đạt)-> screener ==(resume)==[route_after_screener]--> human_review -> END
+                                  │                                    └--(sạch+auto_invite)-> scheduler -> END
                                   └--(điểm thấp sạch)-> gate (auto-reject) -> END
 
-GATE RANK (PRD §8.3, §9) + SCREENER ASYNC (PRD §10): conditional sau ranker route 3 nhánh —
-human_review (bất định), screener (ĐẠT ngưỡng → DỪNG hỏi ứng viên, suspend/resume, rồi human_review),
-gate (điểm thấp SẠCH + JD bật auto_reject). Checkpointer = AsyncPostgresSaver ở prod (compile_graph
+GATE RANK (PRD §8.3, §9) + SCREENER ASYNC (PRD §10) + GATE MỜI (§9, 08d): conditional sau ranker route 3
+nhánh — human_review (bất định), screener (ĐẠT → suspend/resume), gate (điểm thấp SẠCH + auto_reject).
+Sau screener resume, conditional route_after_screener: ca sạch + JD auto_invite → scheduler (auto-mời
+thư mời THẬT ở background), else → human_review. Checkpointer = AsyncPostgresSaver ở prod (compile_graph
 nhận saver; xem app/agents/checkpointer.py) — MemorySaver chỉ khi chưa setup (test/fallback).
-
-TODO (PRD §9, 08d): GATE MỜI sau screener (auto-mời) — hiện screener → human_review (auto-mời TẮT).
-`scheduler_node` giữ làm STUB dự trữ (KHÔNG reachable — mời thật đi qua human_review→notify_decision).
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ from app.agents.nodes.parser import parser_node
 from app.agents.nodes.ranker import ranker_node
 from app.agents.nodes.scheduler import scheduler_node
 from app.agents.nodes.screener import screener_node
-from app.agents.policy import route_after_ranker
+from app.agents.policy import route_after_ranker, route_after_screener
 from app.agents.state import RecruitmentState
 
 
@@ -48,10 +47,15 @@ def build_graph() -> StateGraph:
         {"screener": "screener", "human_review": "human_review", "auto_reject": "gate"},
     )
 
-    # Nhánh ĐẠT: screener DỪNG (suspend/resume, PRD §10) → xong thì về human_review (auto-mời 08d chưa
-    # xây → mặc định TẮT: HR duyệt rồi scheduler mới gửi thư MỜI thật, đường 03b+04).
-    graph.add_edge("screener", "human_review")
-    # scheduler_node: STUB dự trữ, KHÔNG reachable (giữ node cho slot 08d auto-mời). Không có cạnh vào.
+    # Nhánh ĐẠT: screener DỪNG (suspend/resume, PRD §10). Khi RESUME xong → GATE AUTO-MỜI (PRD §9, 08d):
+    # ca sạch + JD auto_invite BẬT → scheduler (auto-mời); else → human_review. route_after_screener CHỈ
+    # chạy lúc resume (lần đầu interrupt() suspend TRƯỚC cạnh ra). Mặc định auto_invite TẮT → human_review.
+    graph.add_conditional_edges(
+        "screener",
+        route_after_screener,
+        {"auto_invite": "scheduler", "human_review": "human_review"},
+    )
+    # scheduler = node AUTO-MỜI (08d): marker SCHEDULING → background gửi thư mời thật → INTERVIEW_SCHEDULED.
     graph.add_edge("scheduler", END)
     # Nhánh review (bất định) + sau screener.
     graph.add_edge("human_review", END)

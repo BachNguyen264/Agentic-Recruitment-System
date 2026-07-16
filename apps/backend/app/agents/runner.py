@@ -63,7 +63,9 @@ def _branch(*, suspended: bool, nodes_run: set[str]) -> str:
         return "screener"
     if "gate" in nodes_run:  # gate auto-từ-chối (PRD §9) — điểm phát email ở background.
         return "auto_reject"
-    return "human_review"  # terminal cho ca bất định VÀ ca đạt sau khi resume screener.
+    if "scheduler" in nodes_run:  # gate auto-MỜI (PRD §9, 08d) — thư mời THẬT gửi ở background (resume).
+        return "auto_invite"
+    return "human_review"  # terminal cho ca bất định VÀ ca đạt (gate mời TẮT) sau khi resume screener.
 
 
 async def _stream_collect(graph: Any, graph_input: Any, config: dict[str, Any]) -> tuple[Any, list[dict[str, Any]]]:

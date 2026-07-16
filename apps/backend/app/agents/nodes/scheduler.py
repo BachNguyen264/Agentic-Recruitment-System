@@ -107,12 +107,13 @@ async def notify_screener(
 
 
 def scheduler_node(state: RecruitmentState) -> dict:
-    # STUB & hiện KHÔNG reachable từ routing (route_after_ranker không trả "screener" — BUG A fix):
-    # thư MỜI THẬT + INTERVIEW_SCHEDULED CHỈ đặt qua human_review → scheduler.notify_decision("invite")
-    # (03b/04). Node này KHÔNG tự đặt INTERVIEW_SCHEDULED (tránh trạng thái "đã hẹn" câm không có email).
-    # TODO (PRD §9, 08d): cổng auto-mời — nhánh auto_invite BẬT gọi notify_decision("invite") ở đây.
+    # 08d — nhánh AUTO-MỜI (reachable qua route_after_screener khi ca sạch + JD auto_invite BẬT). MARKER
+    # thuần: đặt SCHEDULING = "đã quyết mời, chờ gửi thư" (KHÔNG phải INTERVIEW_SCHEDULED — thư mời chưa
+    # gửi). Node KHÔNG có DB session → KHÔNG gửi email ở đây; điểm phát email DUY NHẤT là
+    # scheduler.notify_decision("invite") gọi ở background.resume_screener SAU graph (đối xứng gate node
+    # 03c). INTERVIEW_SCHEDULED chỉ đặt khi thư mời ĐÃ gửi (tránh "trạng thái nói dối" — plan §3.2).
     return {
         "status": ApplicationStatus.SCHEDULING.value,
-        "result": {"action": "scheduler_stub", "note": "chưa gửi mời — mời thật qua human_review"},
-        "messages": ["[scheduler] stub (chưa reachable) — mời thật đi qua human_review→notify_decision"],
+        "result": {"action": "auto_invite", "note": "quyết định mời — background gửi thư mời thật"},
+        "messages": ["[scheduler] auto-mời: SCHEDULING → background gửi thư mời (notify_decision invite)"],
     }
