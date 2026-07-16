@@ -267,25 +267,34 @@ async def resume_screener(
         )
 
         # Gửi thư MỜI THẬT qua scheduler (điểm phát email DUY NHẤT). INTERVIEW_SCHEDULED CHỈ đặt khi thư
-        # mời ĐÃ gửi — KHÔNG "trạng thái nói dối" (plan §3.2): gửi lỗi → PENDING_REVIEW cho HR xử lý (đối
-        # xứng CÓ KIỂM SOÁT với auto_reject). notify_decision tự nuốt lỗi gửi + audit, trả email_sent.
+        # mời ĐÃ gửi — KHÔNG "trạng thái nói dối" (plan §3.2): gửi lỗi → PENDING_REVIEW cho HR xử lý.
+        # CÔ LẬP khỏi outer handler (CLAUDE.md — như auto_reject 03c): một khi ĐÃ VÀO nhánh gửi mời, thư
+        # mời CÓ THỂ đã tới ứng viên; nếu lỗi email/audit/commit sau đó rơi ra outer except → rollback →
+        # PENDING_REVIEW[error] rồi HR TỪ CHỐI = "mời xong lại từ chối". Nuốt + log tại đây: case giữ
+        # trạng thái đã commit (SCHEDULING = trung gian trung thực, KHÔNG giả "đã hẹn") để đối soát sau.
         if auto_invite:
-            result = await scheduler.notify_decision(
-                session, "invite", application_id=application_id,
-                applicant_email=invite_email_to, candidate_name=invite_name, job_title=invite_title,
-            )
-            if result.get("email_sent"):
-                application.status = ApplicationStatus.INTERVIEW_SCHEDULED.value
-                await audit_service.record(
-                    session, application_id=application_id, node="gate", action="auto_invite",
-                    detail={"final_status": application.status}, commit=True,
+            try:
+                result = await scheduler.notify_decision(
+                    session, "invite", application_id=application_id,
+                    applicant_email=invite_email_to, candidate_name=invite_name, job_title=invite_title,
                 )
-            else:  # thư mời trượt → KHÔNG giả "đã hẹn": về HR (PENDING_REVIEW) + lý do rõ.
-                application.status = ApplicationStatus.PENDING_REVIEW.value
-                application.escalation_reason = "Auto-mời: gửi thư mời thất bại — cần HR xử lý."
-                await audit_service.record(
-                    session, application_id=application_id, node="gate", action="auto_invite_failed",
-                    escalation_reason="invite_email_failed", commit=True,
+                if result.get("email_sent"):
+                    application.status = ApplicationStatus.INTERVIEW_SCHEDULED.value
+                    await audit_service.record(
+                        session, application_id=application_id, node="gate", action="auto_invite",
+                        detail={"final_status": application.status}, commit=True,
+                    )
+                else:  # thư mời chưa gửi (notify_decision nuốt lỗi gửi) → về HR để xử lý.
+                    application.status = ApplicationStatus.PENDING_REVIEW.value
+                    application.escalation_reason = "Auto-mời: gửi thư mời thất bại — cần HR xử lý."
+                    await audit_service.record(
+                        session, application_id=application_id, node="gate", action="auto_invite_failed",
+                        escalation_reason="invite_email_failed", commit=True,
+                    )
+            except Exception:  # noqa: BLE001 — CÔ LẬP: lỗi SAU khi có thể đã gửi thư KHÔNG reset case về error
+                logger.exception(
+                    "BG-resume: auto_invite dispatch lỗi app=%s — giữ trạng thái đã commit, KHÔNG reset error",
+                    application_id,
                 )
             return {"application_id": application_id, "status": application.status, "branch": out["branch"]}
 

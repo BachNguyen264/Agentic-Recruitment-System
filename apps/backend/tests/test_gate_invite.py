@@ -249,3 +249,26 @@ async def test_resume_human_review_branch_never_invites(monkeypatch) -> None:
 
     res = await background.resume_screener(session, 9, {"no_response": True})
     assert res["branch"] == "human_review" and app_row.status == ApplicationStatus.PENDING_REVIEW.value
+
+
+async def test_resume_auto_invite_dispatch_error_isolated(monkeypatch) -> None:
+    """BUG (adversarial 08d): lỗi SAU khi VÀO nhánh gửi mời (thư mời CÓ THỂ đã gửi) KHÔNG được để outer
+    handler reset về PENDING_REVIEW[error] → tránh "mời xong lại từ chối". Dispatch phải CÔ LẬP (như
+    auto_reject 03c): case giữ SCHEDULING (đã commit), KHÔNG rơi vào nhánh lỗi kỹ thuật."""
+    from app.agents.nodes import scheduler
+    from app.tasks import background
+
+    app_row = Application(id=11, applicant_email="me@e.com", job_id=2, status="AWAITING_SCREENER")
+    session = _FakeSession({(Application, 11): app_row})
+    monkeypatch.setattr(background, "resume_with_trace", lambda **_kw: _await_value(_auto_invite_out()))
+
+    async def raising_notify(*_a, **_kw):  # lỗi SAU khi có thể đã gửi thư (vd commit audit lỗi)
+        raise RuntimeError("neon blip after invite email may have been sent")
+
+    monkeypatch.setattr(scheduler, "notify_decision", raising_notify)
+
+    await background.resume_screener(session, 11, {"answers": [{"question": "Q", "answer": "A"}]})
+
+    # KHÔNG reset về PENDING_REVIEW[error]: giữ SCHEDULING (trạng thái đã commit ở main commit).
+    assert app_row.status == ApplicationStatus.SCHEDULING.value
+    assert app_row.escalation_reason != "Lỗi kỹ thuật khi resume screener (error)."
