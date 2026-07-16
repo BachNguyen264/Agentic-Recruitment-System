@@ -224,10 +224,12 @@ async def resume_screener(
             logger.warning("BG-resume: application_id=%s không tồn tại — bỏ qua", application_id)
             return {"application_id": application_id, "status": None, "branch": out["branch"]}
 
-        for step in out["trace"]:  # trace resume: screener (+ human_review). parser/ranker KHÔNG chạy lại.
+        for step in out["trace"]:  # trace resume: screener (+ human_review / scheduler). parser/ranker KHÔNG chạy lại.
             node = step["node"]
             if node == "screener":
                 action = "screener_resumed"
+            elif node == "scheduler":  # 08d gate auto-mời — quyết định mời (thư mời gửi post-commit dưới)
+                action = "auto_invite"
             elif node == "human_review":
                 action = "queued_for_human_review"
             else:
@@ -248,6 +250,14 @@ async def resume_screener(
             action=f"route:{out['branch']}", escalation_reason=final.get("escalation_reason"),
             detail={"final_status": final.get("status"), "resumed": True}, commit=False,
         )
+        # 08d — GATE AUTO-MỜI: ca sạch + JD auto_invite ON đã route → scheduler (status=SCHEDULING). Gom
+        # dữ liệu email vào locals để gửi thư mời SAU commit (cô lập, như auto_reject ở process_application).
+        auto_invite = out["branch"] == "auto_invite"
+        if auto_invite:
+            invite_email_to = application.applicant_email
+            invite_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
+            invite_title = ((final.get("input") or {}).get("jd") or {}).get("title") or "vị trí ứng tuyển"
+
         if pre_commit is not None:  # 08b: đánh dấu used_at/answers CÙNG transaction (nguyên tử, one-time).
             pre_commit()
         await session.commit()
@@ -255,6 +265,30 @@ async def resume_screener(
             "BG-resume: xong application_id=%s -> branch=%s status=%s",
             application_id, out["branch"], final.get("status"),
         )
+
+        # Gửi thư MỜI THẬT qua scheduler (điểm phát email DUY NHẤT). INTERVIEW_SCHEDULED CHỈ đặt khi thư
+        # mời ĐÃ gửi — KHÔNG "trạng thái nói dối" (plan §3.2): gửi lỗi → PENDING_REVIEW cho HR xử lý (đối
+        # xứng CÓ KIỂM SOÁT với auto_reject). notify_decision tự nuốt lỗi gửi + audit, trả email_sent.
+        if auto_invite:
+            result = await scheduler.notify_decision(
+                session, "invite", application_id=application_id,
+                applicant_email=invite_email_to, candidate_name=invite_name, job_title=invite_title,
+            )
+            if result.get("email_sent"):
+                application.status = ApplicationStatus.INTERVIEW_SCHEDULED.value
+                await audit_service.record(
+                    session, application_id=application_id, node="gate", action="auto_invite",
+                    detail={"final_status": application.status}, commit=True,
+                )
+            else:  # thư mời trượt → KHÔNG giả "đã hẹn": về HR (PENDING_REVIEW) + lý do rõ.
+                application.status = ApplicationStatus.PENDING_REVIEW.value
+                application.escalation_reason = "Auto-mời: gửi thư mời thất bại — cần HR xử lý."
+                await audit_service.record(
+                    session, application_id=application_id, node="gate", action="auto_invite_failed",
+                    escalation_reason="invite_email_failed", commit=True,
+                )
+            return {"application_id": application_id, "status": application.status, "branch": out["branch"]}
+
         return {"application_id": application_id, "status": final.get("status"), "branch": out["branch"]}
     except Exception:  # noqa: BLE001 — resume lỗi kỹ thuật: KHÔNG để hồ sơ kẹt câm ở AWAITING_SCREENER
         logger.exception("BG-resume: lỗi resume application_id=%s", application_id)

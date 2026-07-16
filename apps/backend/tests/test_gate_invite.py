@@ -119,3 +119,133 @@ async def test_graph_clean_resume_gate_off_human_review() -> None:
     msgs = snap.values.get("messages", [])
     assert sum("[human_review]" in m for m in msgs) == 1
     assert sum("[scheduler]" in m for m in msgs) == 0
+
+
+# ── background.resume_screener: nhánh auto_invite → thư mời THẬT; lỗi gửi KHÔNG "nói dối" ──
+
+from app.models.application import Application  # noqa: E402
+from app.models.audit_log import AuditLog  # noqa: E402
+
+
+class _FakeSession:
+    def __init__(self, rows: dict) -> None:
+        self._rows = rows
+        self.added: list = []
+        self.commits = 0
+
+    async def get(self, model, pk):  # noqa: ANN001
+        return self._rows.get((model, pk))
+
+    def add(self, obj) -> None:
+        self.added.append(obj)
+
+    async def flush(self) -> None:
+        pass
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def rollback(self) -> None:
+        pass
+
+    async def refresh(self, _obj) -> None:
+        pass
+
+
+async def _await_value(v):
+    return v
+
+
+def _auto_invite_out() -> dict:
+    return {
+        "branch": "auto_invite",
+        "final": {
+            "status": ApplicationStatus.SCHEDULING.value,
+            "parsed_data": {"full_name": "Nguyễn Văn A"},
+            "input": {"jd": {"title": "Backend Intern"}},
+            "confidence": 1.0,
+            "uncertainty_flags": [],
+            "escalation_reason": None,
+        },
+        "trace": [
+            {"node": "screener", "status": "SCHEDULING", "uncertainty_flags": []},
+            {"node": "scheduler", "status": "SCHEDULING", "uncertainty_flags": []},
+        ],
+        "suspended": False,
+    }
+
+
+async def test_resume_auto_invite_sends_invite_and_schedules(monkeypatch) -> None:
+    """auto_invite + email gửi OK → INTERVIEW_SCHEDULED + delegate scheduler(invite) đúng + audit."""
+    from app.agents.nodes import scheduler
+    from app.tasks import background
+
+    app_row = Application(id=7, applicant_email="me@e.com", job_id=2, status="AWAITING_SCREENER")
+    session = _FakeSession({(Application, 7): app_row})
+    monkeypatch.setattr(background, "resume_with_trace", lambda **_kw: _await_value(_auto_invite_out()))
+
+    captured: dict = {}
+
+    async def fake_notify(_s, mode, **kw):  # noqa: ANN001 — khớp chữ ký notify_decision
+        captured.update(mode=mode, **kw)
+        return {"mode": mode, "email_sent": True}
+
+    monkeypatch.setattr(scheduler, "notify_decision", fake_notify)
+
+    res = await background.resume_screener(session, 7, {"answers": [{"question": "Q", "answer": "A"}]})
+
+    assert app_row.status == ApplicationStatus.INTERVIEW_SCHEDULED.value  # chỉ đặt khi thư mời đã gửi
+    assert res["status"] == ApplicationStatus.INTERVIEW_SCHEDULED.value and res["branch"] == "auto_invite"
+    assert captured["mode"] == "invite" and captured["applicant_email"] == "me@e.com"
+    assert captured["candidate_name"] == "Nguyễn Văn A" and captured["job_title"] == "Backend Intern"
+    actions = [(a.node, a.action) for a in session.added if isinstance(a, AuditLog)]
+    assert ("gate", "auto_invite") in actions
+
+
+async def test_resume_auto_invite_email_fail_goes_review_no_lie(monkeypatch) -> None:
+    """auto_invite + email gửi TRƯỢT → KHÔNG đặt INTERVIEW_SCHEDULED (không "nói dối") → PENDING_REVIEW + cờ."""
+    from app.agents.nodes import scheduler
+    from app.tasks import background
+
+    app_row = Application(id=8, applicant_email="me@e.com", job_id=2, status="AWAITING_SCREENER")
+    session = _FakeSession({(Application, 8): app_row})
+    monkeypatch.setattr(background, "resume_with_trace", lambda **_kw: _await_value(_auto_invite_out()))
+
+    async def fake_notify(_s, mode, **kw):  # noqa: ANN001 — email trượt (notify_decision nuốt lỗi)
+        return {"mode": mode, "email_sent": False, "error": "resend down"}
+
+    monkeypatch.setattr(scheduler, "notify_decision", fake_notify)
+
+    res = await background.resume_screener(session, 8, {"answers": [{"question": "Q", "answer": "A"}]})
+
+    assert app_row.status == ApplicationStatus.PENDING_REVIEW.value  # KHÔNG giả "đã hẹn"
+    assert app_row.escalation_reason and "thư mời" in app_row.escalation_reason
+    assert res["status"] == ApplicationStatus.PENDING_REVIEW.value
+    actions = [(a.node, a.action) for a in session.added if isinstance(a, AuditLog)]
+    assert ("gate", "auto_invite_failed") in actions
+
+
+async def test_resume_human_review_branch_never_invites(monkeypatch) -> None:
+    """Không hồi quy: branch human_review (gate OFF / no_response) KHÔNG gọi scheduler (không auto-mời)."""
+    from app.agents.nodes import scheduler
+    from app.tasks import background
+
+    app_row = Application(id=9, applicant_email="me@e.com", job_id=2, status="AWAITING_SCREENER")
+    session = _FakeSession({(Application, 9): app_row})
+    hr_out = {
+        "branch": "human_review",
+        "final": {"status": ApplicationStatus.PENDING_REVIEW.value, "confidence": 1.0,
+                  "uncertainty_flags": [], "escalation_reason": None},
+        "trace": [{"node": "screener", "status": "SCREENING", "uncertainty_flags": []},
+                  {"node": "human_review", "status": "PENDING_REVIEW", "uncertainty_flags": []}],
+        "suspended": False,
+    }
+    monkeypatch.setattr(background, "resume_with_trace", lambda **_kw: _await_value(hr_out))
+
+    async def boom_notify(*_a, **_kw):
+        raise AssertionError("notify_decision KHÔNG được gọi cho branch human_review")
+
+    monkeypatch.setattr(scheduler, "notify_decision", boom_notify)
+
+    res = await background.resume_screener(session, 9, {"no_response": True})
+    assert res["branch"] == "human_review" and app_row.status == ApplicationStatus.PENDING_REVIEW.value
