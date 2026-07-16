@@ -44,9 +44,12 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 
 ---
 
-## 🔵 PHASE 3 — Screener async (PRD §10 — the HARDEST part)
+## ✅ PHASE 3 — Screener async (PRD §10 — the HARDEST part) — **COMPLETE**
 
 > Pipeline pauses waiting for the applicant, then wakes. Split small; most complex. Depends on 04 (email) + 07.
+> Done end-to-end (08a suspend/resume · 08b magic-link form · 08c timeout/nhắc/trả lời trễ · 08d gate auto-mời).
+> Full autonomous pipeline: CV → score → (đạt → screener async → auto-mời/HR · thấp → auto-từ-chối/HR · bất
+> định → HR), mọi kết quả ra email thật, hai gate cấu hình được, ca bất định luôn về người.
 
 - **08a — Postgres checkpointer + suspend/resume** (NFR-2, §10) — ✅ **DONE.** MemorySaver → AsyncPostgresSaver
   (Neon direct); pipeline pauses at screener (`interrupt()`), state durable, resumes from the pause point (bền
@@ -65,8 +68,13 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   → human_review + cờ (**NEVER auto-reject**), `timed_out_at` idempotent; trả lời trễ → thông báo êm (410).
   Cột `reminded_at`/`timed_out_at`. Verified live (nhắc→timeout→PENDING_REVIEW[no_response] + trả lời trễ + đối
   chứng trong hạn + HR thấy nhãn no_response) + adversarial review (0 finding).
-- **08d — Gate invite** (§9). After screener: auto-invite on + clean → scheduler; off/flagged → human_review. Completes the second gate.
-  → **Milestone:** full Screener; complete async pipeline (major technical highlight).
+- **08d — Gate invite** (§9) — ✅ **DONE.** `route_after_screener` (đối xứng `route_after_ranker`): ca SẠCH (đã
+  trả lời, tự tin, không cờ) + JD `auto_invite` ON → `scheduler_node` (SCHEDULING) → `resume_screener` gửi thư
+  mời THẬT qua scheduler → INTERVIEW_SCHEDULED; no_response/cờ/low-conf/OFF → human_review ("cờ thắng gate").
+  INTERVIEW_SCHEDULED chỉ đặt khi email đã gửi; dispatch CÔ LẬP khỏi error handler (adversarial review bắt +
+  fix bug reset-về-error sau khi mời). Toggle auto_invite ở form JD. Verified live (A auto-mời→thư mời thật+
+  INTERVIEW_SCHEDULED · B gate OFF→/review · C timeout+gate ON→/review an toàn).
+  → **Milestone:** full Screener + hai gate cấu hình được — **GĐ3 (Screener async) HOÀN TẤT.**
 
 ---
 
@@ -128,8 +136,8 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [x] **08a Postgres checkpointer + suspend/resume** (durable qua restart, verified live)
 - [x] **08b Magic-link form + email câu hỏi** (token/expiry/one-time/row-lock, verified live + security review)
 - [x] **08c timeout/nhắc/trả lời trễ** (in-process sweep sau seam, nhắc-1-lần, timeout→human_review[no_response], verified live)
+- [x] **08d gate auto-mời sau screener** (route_after_screener; ca sạch+auto_invite→thư mời thật→INTERVIEW_SCHEDULED; cờ thắng gate; verified live) — **GĐ3 XONG**
 - [ ] 06 object storage (deferred to near-deploy)
-- [ ] **08d gate auto-mời sau screener ← NEXT** (hoàn tất gate thứ hai, §9)
-- [ ] 09 HR auth
+- [ ] **09 HR auth ← NEXT (GĐ4)**
 - [ ] 10 analytics · 11 observability · 12 anti-injection · UI redesign · 13 deploy
 - [ ] 14 LLM-suggested rubric · 15 optional

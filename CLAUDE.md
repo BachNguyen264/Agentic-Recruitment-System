@@ -49,7 +49,7 @@ Past scaffold — building real logic slice by slice. Node REAL vs STUB:
 | -------------- | -------- | ----- |
 | `parser`       | ✅ REAL  | CV→JSON via OpenAI `gpt-4.1-mini` (structured output) + certificates/languages/awards/other |
 | `ranker`       | ✅ REAL  | reasoned rubric scoring via `gpt-5-mini` (reasoning_effort=low); embedding = SIDE signal only |
-| `screener`     | 🟡 PARTIAL | **08a+08b+08c DONE:** suspend/resume (`interrupt()` + AsyncPostgresSaver/Neon) + **magic-link form** (token/hết hạn/one-time/row-lock → resume BẰNG câu trả lời) + **timeout/nhắc** (in-process sweep quét Postgres qua seam `ScreeningTimeoutScheduler`/`InProcessScheduler` ở lifespan: nhắc 1 lần `+REMINDER_HOURS` → hết hạn `+DEADLINE_HOURS` resume `no_response` → human_review, **KHÔNG auto-reject**; trả lời trễ báo êm). Answers hiện cho HR. Còn: gate auto-mời = 08d (PRD §10, §9) |
+| `screener`     | ✅ REAL  | **08a–08d DONE (GĐ3 hết):** suspend/resume (`interrupt()` + AsyncPostgresSaver/Neon) + **magic-link form** (token/hết hạn/one-time/row-lock → resume BẰNG câu trả lời) + **timeout/nhắc** (in-process sweep sau seam `ScreeningTimeoutScheduler`/`InProcessScheduler`: nhắc 1 lần → hết hạn resume `no_response` → human_review, KHÔNG auto-reject; trả lời trễ báo êm) + **gate auto-mời 08d** (sau resume: ca sạch + JD `auto_invite` ON → thư mời THẬT qua scheduler → INTERVIEW_SCHEDULED; no_response/cờ/low-conf/OFF → human_review; "cờ thắng gate"). Answers hiện cho HR (PRD §9, §10) |
 | `scheduler`    | ✅ REAL  | sends real invite/rejection email via **Resend** (fixed VN templates); Calendar deferred |
 | `human_review` | ✅ REAL  | ReviewCard + approve/reject → delegates to scheduler; audit-logged (PRD §11) |
 
@@ -60,10 +60,12 @@ server-side magic-byte validation — slice 07); **Screener suspend/resume** (Po
 `/api/public/screening/{token}` GET/POST + answers hiện cho HR) + **timeout/nhắc/trả lời trễ** (08c: seam
 `ScreeningTimeoutScheduler`+`InProcessScheduler` sweep quét Postgres ở lifespan; handler nghiệp vụ
 `screening_timeout.send_screening_reminder`/`handle_screening_timeout` tách khỏi cơ chế; cột `reminded_at`/
-`timed_out_at`; timeout resume `no_response` → human_review); PWA dashboard; HR pages `/cv-check`,
-`/applications` (list + score detail), `/review` (queue), `/jobs` (JD UI).
+`timed_out_at`; timeout resume `no_response` → human_review) + **gate auto-mời** (08d: `route_after_screener`
+đối xứng `route_after_ranker`; ca sạch + JD `auto_invite` → `scheduler_node` (SCHEDULING) → `resume_screener`
+gửi thư mời THẬT → INTERVIEW_SCHEDULED; dispatch CÔ LẬP khỏi error handler; toggle auto_invite ở form JD);
+PWA dashboard; HR pages `/cv-check`, `/applications` (list + score detail), `/review` (queue), `/jobs` (JD UI).
 
-**NOT yet done:** Screener 08d (gate auto-mời sau screener — §9); object storage (local disk for now); HR auth;
+**GĐ3 (Screener async) HOÀN TẤT.** **NOT yet done:** object storage (local disk for now); HR auth (GĐ4);
 analytics; observability; anti-prompt-injection; deploy; UI redesign; learning loop.
 
 `ENABLE_LLM=true` enables real parser+ranker; `false` keeps stubs (for `test_graph`).
@@ -127,9 +129,10 @@ analytics; observability; anti-prompt-injection; deploy; UI redesign; learning l
 ## Current boundaries
 
 - NO Supervisor Agent / dynamic orchestration — fixed pipeline (PRD §5).
-- Screener REAL through 08c (suspend/resume + magic-link + timeout/nhắc/trả lời trễ). NOT yet built: gate INVITE
-  sau screener (§9, 08d), object storage, auth, analytics, observability, anti-injection, deploy, UI redesign,
-  learning loop — keep stub + TODO pointing to PRD; don't build outside the current slice.
+- Screener REAL (08a–08d complete: suspend/resume + magic-link + timeout/nhắc/trả lời trễ + gate auto-mời). Cả
+  HAI gate (§9) đã xây: auto-reject (03c) + auto-mời (08d). NOT yet built: object storage, auth, analytics,
+  observability, anti-injection, deploy, UI redesign, learning loop — keep stub + TODO pointing to PRD; don't
+  build outside the current slice.
 - NO Redis-polling worker queue — use BackgroundTasks. Screener timeout = **in-process sweep** (asyncio task ở
   lifespan quét Postgres, KHÔNG Redis) sau seam `ScreeningTimeoutScheduler` (đổi QStash sau không sửa nghiệp vụ).
 - **Ranker:** score is ONLY the reasoned rubric (weights from the JD); cosine/embedding is a SIDE signal, NOT in
@@ -158,6 +161,10 @@ analytics; observability; anti-prompt-injection; deploy; UI redesign; learning l
   uncertainty signal — the gate uses it as its trigger. uncertainty = error / uncertainty_flags / low-confidence only.
 - **Post-commit email dispatch must be isolated from the technical-error handler:** a decision already committed
   (e.g. auto-reject → REJECTED) must SURVIVE an email/audit failure — don't let an escaping exception reset status.
+  Applies to BOTH gates: auto-mời (08d, in `resume_screener`) wraps `notify_decision("invite")` + status-write
+  in its OWN try/except — once the invite email MAY have gone out, a later commit blip must NOT fall to the outer
+  handler (→ PENDING_REVIEW[error] → HR từ chối = "mời xong lại từ chối"). INTERVIEW_SCHEDULED is set ONLY after
+  `email_sent` is true (email-first, then status — no "trạng thái nói dối"); on send-fail → human_review.
 - **LLM/embedding/Qdrant errors must NOT crash the pipeline** → try/except sets a flag (`parse_failed`/`rank_failed`) + escalation.
 - **Windows dev + psycopg async:** the Screener checkpointer (`AsyncPostgresSaver`, PRD §10) uses psycopg async,
   which CANNOT run on Windows' default `ProactorEventLoop` — it needs `WindowsSelectorEventLoopPolicy`, set in
@@ -180,7 +187,7 @@ Lookup order: **PRD.md** (business, what the system should do) → **CLAUDE.md**
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Agentic-Recruitment-System** (936 symbols, 1341 relationships, 24 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Agentic-Recruitment-System** (1617 symbols, 2652 relationships, 60 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
