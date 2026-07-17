@@ -13,6 +13,13 @@ export interface HealthStatus {
   };
 }
 
+// ── Auth HR (slice 09, PRD §4) — CHỈ HR Admin; ứng viên là guest ──
+// Khớp HrUserRead (backend GET /api/auth/me + trả về login). KHÔNG có password_hash.
+export interface HrUser {
+  id: number;
+  email: string;
+}
+
 // Trạng thái CV — khớp state machine PRD §13.
 export type ApplicationStatus =
   | "SUBMITTED"

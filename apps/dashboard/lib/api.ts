@@ -1,6 +1,7 @@
 import type {
   ApplicationDetail,
   ApplicationListItem,
+  HrUser,
   JobMutationResult,
   JobPosting,
   JobPostingInput,
@@ -15,8 +16,25 @@ import type {
 // Base URL backend — đọc từ env (NEXT_PUBLIC_API_BASE), mặc định localhost:8000.
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
+// Auth slice 09: MỌI request gửi kèm cookie (credentials) để backend đọc JWT httpOnly. Cross-domain
+// (Vercel+Render) hoạt động nhờ CORS allow_credentials + cookie SameSite=None (cấu hình qua ENV).
+const CREDENTIALS: RequestCredentials = "include";
+
+// 401 giữa phiên (hết hạn/đăng xuất nơi khác) trên các call DỮ LIỆU HR → về /login. CHỈ ở browser;
+// tránh vòng lặp khi đã ở /login. Các call auth (login/getMe/logout) KHÔNG dùng đường này (tự xử lý).
+function redirectToLogin(): void {
+  if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+    const next = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = `/login?next=${next}`;
+  }
+}
+
 export async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await fetch(`${API_BASE}${path}`, { credentials: CREDENTIALS });
+  if (res.status === 401) {
+    redirectToLogin();
+    throw new Error("Chưa đăng nhập");
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status} khi GET ${path}`);
   return (await res.json()) as T;
 }
@@ -38,9 +56,44 @@ async function sendJson<T>(method: string, path: string, body: unknown): Promise
     method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    credentials: CREDENTIALS,
   });
+  if (res.status === 401) {
+    redirectToLogin();
+    throw new Error("Chưa đăng nhập");
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status} khi ${method} ${path}`);
   return (await res.json()) as T;
+}
+
+// ── Auth HR (slice 09, PRD §4) ──
+// login: KHÔNG đi qua redirect chung — sai mật khẩu (401) hiện lỗi INLINE ở form. Message chung từ
+// backend (không lộ email tồn tại).
+export async function login(email: string, password: string): Promise<HrUser> {
+  const res = await fetch(`${API_BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+    credentials: CREDENTIALS,
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? "Đăng nhập thất bại.");
+  }
+  return (await res.json()) as HrUser;
+}
+
+export async function logout(): Promise<void> {
+  await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: CREDENTIALS });
+}
+
+// getMe: dùng cho guard trang HR. Trả HrUser nếu đã đăng nhập; null nếu 401 (guard tự redirect —
+// KHÔNG dùng redirect chung để layout kiểm soát trạng thái loading/lỗi). Lỗi khác (backend sập) → ném.
+export async function getMe(): Promise<HrUser | null> {
+  const res = await fetch(`${API_BASE}/api/auth/me`, { credentials: CREDENTIALS });
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error(`HTTP ${res.status} khi kiểm tra phiên đăng nhập`);
+  return (await res.json()) as HrUser;
 }
 
 // ── Màn HR ứng viên (slice 03a, CHỈ ĐỌC) ──
@@ -84,7 +137,12 @@ export async function submitApplication(
   form.append("job_id", String(jobId));
   form.append("applicant_email", email);
   form.append("file", file);
-  const res = await fetch(`${API_BASE}/api/public/applications`, { method: "POST", body: form });
+  // Public (guest) — không cần cookie; credentials include vô hại + nhất quán.
+  const res = await fetch(`${API_BASE}/api/public/applications`, {
+    method: "POST",
+    body: form,
+    credentials: CREDENTIALS,
+  });
   if (!res.ok) {
     // Backend trả {detail} (vd JD đã đóng / file sai) — hiện message thân thiện cho ứng viên.
     const detail = await res.json().catch(() => null);
@@ -96,7 +154,9 @@ export async function submitApplication(
 // ── Sàng lọc công khai (screener magic-link — slice 08b) ──
 // Lấy câu hỏi theo token. Token sai/hết hạn/đã nộp → backend trả {detail} → ném message rõ cho UI.
 export async function getScreener(token: string): Promise<ScreenerForm> {
-  const res = await fetch(`${API_BASE}/api/public/screening/${encodeURIComponent(token)}`);
+  const res = await fetch(`${API_BASE}/api/public/screening/${encodeURIComponent(token)}`, {
+    credentials: CREDENTIALS,
+  });
   if (!res.ok) {
     const detail = await res.json().catch(() => null);
     throw new Error(detail?.detail ?? `HTTP ${res.status} khi tải câu hỏi`);
@@ -113,6 +173,7 @@ export async function submitScreener(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ answers }),
+    credentials: CREDENTIALS,
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => null);
@@ -126,10 +187,16 @@ export async function submitScreener(
 export async function parseCv(file: File): Promise<ParseCvResponse> {
   const form = new FormData();
   form.append("file", file);
+  // /api/agents/* nay là HR-only (slice 09) — /cv-check nằm trong khu vực đã đăng nhập.
   const res = await fetch(`${API_BASE}/api/agents/parse-cv`, {
     method: "POST",
     body: form,
+    credentials: CREDENTIALS,
   });
+  if (res.status === 401) {
+    redirectToLogin();
+    throw new Error("Chưa đăng nhập");
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status} khi phân tích CV`);
   return (await res.json()) as ParseCvResponse;
 }
