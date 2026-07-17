@@ -64,9 +64,14 @@ server-side magic-byte validation — slice 07); **Screener suspend/resume** (Po
 đối xứng `route_after_ranker`; ca sạch + JD `auto_invite` → `scheduler_node` (SCHEDULING) → `resume_screener`
 gửi thư mời THẬT → INTERVIEW_SCHEDULED; dispatch CÔ LẬP khỏi error handler; toggle auto_invite ở form JD);
 PWA dashboard; HR pages `/cv-check`, `/applications` (list + score detail), `/review` (queue), `/jobs` (JD UI).
+**HR auth (09, GĐ4 XONG):** `hr_user` (email + bcrypt hash) + seed từ env (`scripts/seed_hr_admin.py`,
+idempotent); JWT HS256 trong cookie httpOnly (`core/security.py` — bcrypt trực tiếp + pyjwt, KHÔNG passlib);
+`require_hr` dependency áp cấp-router lên `/api/jobs|applications|agents` + `GET /api/auth/me`; `login/logout/me`
+(lỗi login CHUNG, chống enumeration + timing). Frontend: nhóm route `app/(hr)/` một guard gọi `/api/auth/me`
+(KHÔNG middleware — cross-domain), `/login`, logout, `credentials:"include"`. Public/*+/apply+/screening MỞ.
 
-**GĐ3 (Screener async) HOÀN TẤT.** **NOT yet done:** object storage (local disk for now); HR auth (GĐ4);
-analytics; observability; anti-prompt-injection; deploy; UI redesign; learning loop.
+**GĐ4 (HR auth) HOÀN TẤT.** **NOT yet done:** object storage (local disk for now); analytics; observability;
+anti-prompt-injection; deploy; UI redesign; learning loop.
 
 `ENABLE_LLM=true` enables real parser+ranker; `false` keeps stubs (for `test_graph`).
 
@@ -130,9 +135,14 @@ analytics; observability; anti-prompt-injection; deploy; UI redesign; learning l
 
 - NO Supervisor Agent / dynamic orchestration — fixed pipeline (PRD §5).
 - Screener REAL (08a–08d complete: suspend/resume + magic-link + timeout/nhắc/trả lời trễ + gate auto-mời). Cả
-  HAI gate (§9) đã xây: auto-reject (03c) + auto-mời (08d). NOT yet built: object storage, auth, analytics,
-  observability, anti-injection, deploy, UI redesign, learning loop — keep stub + TODO pointing to PRD; don't
-  build outside the current slice.
+  HAI gate (§9) đã xây: auto-reject (03c) + auto-mời (08d). HR auth (09) DONE: một vai HR-admin, seed từ env,
+  KHÔNG đăng ký/quên/reset/RBAC/OAuth; ứng viên GUEST vĩnh viễn (KHÔNG account). NOT yet built: object storage,
+  analytics, observability, anti-injection, deploy, UI redesign, learning loop — keep stub + TODO pointing to
+  PRD; don't build outside the current slice.
+- **Auth boundary (09):** `require_hr` bảo vệ MỌI router HR (`/api/jobs|applications|agents` + `/api/auth/me`).
+  GIỮ MỞ tuyệt đối: `/api/public/*`, `/api/auth/login|logout`, health — ứng viên guest KHÔNG bị chặn. Thêm
+  router/endpoint HR mới → NHỚ áp `require_hr` (hoặc thêm vào `_HR_ONLY` trong `main.py`). Cookie Secure/SameSite/
+  domain đọc TỪ ENV (dev: lax+insecure; prod cross-domain: none+secure) — đừng hardcode.
 - NO Redis-polling worker queue — use BackgroundTasks. Screener timeout = **in-process sweep** (asyncio task ở
   lifespan quét Postgres, KHÔNG Redis) sau seam `ScreeningTimeoutScheduler` (đổi QStash sau không sửa nghiệp vụ).
 - **Ranker:** score is ONLY the reasoned rubric (weights from the JD); cosine/embedding is a SIDE signal, NOT in
@@ -177,6 +187,20 @@ analytics; observability; anti-prompt-injection; deploy; UI redesign; learning l
   due session is processed in its OWN transaction with `SELECT … FOR UPDATE` + in-lock re-check; idempotency =
   `reminded_at`/`timed_out_at` + `status == AWAITING_SCREENER` filter. Verify with tiny env thresholds
   (`SCREENER_DEADLINE_HOURS`/`REMINDER_HOURS` are **float** → set <1h; `SCREENER_SWEEP_INTERVAL_SECONDS` low) then RESTORE.
+- **passlib is dead — use `bcrypt` directly (09):** passlib 1.7.4 (2020, unmaintained) CRASHES against bcrypt 5.0
+  (`detect_wrap_bug` → `ValueError: password cannot be longer than 72 bytes`). `core/security.py` calls `bcrypt`
+  (pyca) directly + `pyjwt` for HS256. bcrypt truncates >72 bytes silently → we RAISE instead. Don't re-add passlib.
+- **Login email = `str`, NOT `EmailStr` (09):** `EmailStr` rejects special-use TLDs (`.local`, internal domains)
+  → an HR account seeded with such a domain could never log in (422). It's just a DB-matched identifier; validating
+  format adds no security. Normalize `strip().lower()` in the handler. Login errors are GENERIC (no user enumeration)
+  + verify a REAL dummy hash when email is unknown (constant-time-ish, no timing leak).
+- **Frontend HR guard = `app/(hr)/` route group + `/api/auth/me`, NOT Next.js middleware (09):** middleware runs at
+  the frontend edge and can't read the httpOnly cookie once backend is on a different domain (Vercel + Render) — it
+  would pass in dev then silently fail on deploy. The real boundary is `require_hr` (backend); the layout guard is UX.
+  URLs unchanged (route groups are transparent). `/login`, `/apply`, `/screening` live OUTSIDE `(hr)/`.
+- **Alembic `include_object` guard is already global** in `env.py` (protects the 4 LangGraph checkpoint tables from
+  autogenerate DROP). New model migrations inherit it — but STILL eyeball the autogen file + confirm the 4 tables
+  survive (`SELECT … LIKE 'checkpoint%'`) before/after `upgrade head`.
 
 ---
 

@@ -1,13 +1,12 @@
-# SLICE 08d — Cổng auto-mời sau screener (hoàn tất gate thứ hai) · plan one-shot
+# SLICE 09 — Auth HR (tự làm, một vai, seed sẵn) · plan one-shot
 
 > **Bản chất:** plan ONE-SHOT. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Mục tiêu:** thêm cổng auto-MỜI SAU screener — khi HR bật `auto_invite` cho một JD, ca SẠCH (đã trả lời screener,
-> tự tin, không cờ) tự động được mời + gửi thư mời THẬT (qua scheduler) → INTERVIEW_SCHEDULED; khi tắt / có cờ /
-> không phản hồi → human_review. Đối xứng với auto-reject (03c). Hoàn tất gate thứ hai → **hết GĐ3**.
-> Tham chiếu: PRD §9 (hai gate + FR-GATE), §8.3, §13. Tuân thủ `CLAUDE.md`.
+> **Mục tiêu:** bảo vệ toàn bộ khu vực HR bằng đăng nhập — HR admin login → truy cập dashboard/JD/review/gate;
+> chưa đăng nhập → chặn. Ứng viên VẪN guest (public /apply, /screening mở). Một vai (HR-admin), tài khoản SEED sẵn.
+> Điều kiện tiên quyết để deploy. Tham chiếu: PRD §4 (vai trò), §14. Tuân thủ `CLAUDE.md`.
 >
-> **Đối xứng 03c:** gate chỉ áp ca CONFIDENT/SẠCH; ca bất định/`no_response` LUÔN → human_review (cờ thắng gate).
-> Cấu hình THEO JD (`gate_config.auto_invite` đã có, mặc định TẮT). Toggle UI đã có ở form JD (05).
+> **Cách làm:** tự làm — **JWT trong cookie httpOnly + băm mật khẩu bcrypt** (dùng thư viện cho crypto, KHÔNG tự chế).
+> KHÔNG Clerk/Neon Auth, KHÔNG OAuth. Một vai HR (KHÔNG Super Admin/RBAC). KHÔNG flow quên/reset/quản-lý tài khoản.
 
 ---
 
@@ -15,95 +14,117 @@
 
 **In scope:**
 
-- Định tuyến SAU screener (khi screener resume xong): ca sạch + `auto_invite` ON → **auto-invite**; else → human_review.
-- Nhánh auto-invite: delegate `scheduler.notify_decision("invite")` (thư mời THẬT) → INTERVIEW_SCHEDULED → audit. Trong pipeline, KHÔNG cần HR.
-- Đảm bảo an toàn: `no_response` (timeout), cờ bất định, low-confidence, gate OFF → human_review (gate no-op).
-- Test (mock scheduler/email) + verify thật (auto-mời gửi thư mời tự động tới email của bạn).
+- Model `hr_user` + migration (nhớ `include_object` guard — đừng drop bảng checkpoint).
+- Seed tài khoản HR admin ban đầu từ env (idempotent). Băm mật khẩu bcrypt (passlib).
+- JWT (ký/verify) + config (JWT_SECRET, hạn, cookie settings **đọc từ env** để deploy cross-domain OK).
+- Endpoints: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
+- Auth dependency → **bảo vệ mọi endpoint HR**; endpoint CÔNG KHAI giữ MỞ.
+- Frontend: trang `/login` + bảo vệ mọi trang HR (chưa auth → redirect /login) + nút logout + xử lý 401 + trạng thái auth.
 
 **Out of scope (KHÔNG làm):**
 
-- KHÔNG đánh giá NỘI DUNG câu trả lời screener để quyết (xem ghi chú thiết kế §3.1) — auto-invite dựa trên đã-trả-lời + điểm rank + không cờ; nội dung answers giữ cho HR/phỏng vấn.
-- KHÔNG đụng checkpointer-08a / token-08b / timeout-08c logic. KHÔNG đụng parser/ranker/auto-reject-03c.
-- KHÔNG UI mới (toggle auto_invite đã có ở form JD 05 — chỉ cần bỏ trạng thái "disabled/sẽ bật sau" nếu còn).
+- KHÔNG đăng ký/quên mật khẩu/reset/UI quản lý tài khoản. (Endpoint-bí-mật-có-key tạo/xóa/reset = TÙY CHỌN, chỉ nếu dư thời gian — KHÔNG làm trong lát này.)
+- KHÔNG Super Admin / RBAC / nhiều vai. KHÔNG OAuth/social login/SSO. KHÔNG Clerk/Neon Auth.
+- KHÔNG đụng pipeline/agents logic. KHÔNG khóa luồng ứng viên (guest).
 
 ---
 
 ## 2. Prerequisites
 
-- 08a/b/c xong (screener async đầy đủ; ca đạt đi qua screener rồi resume). 04 (scheduler email). 03c (mẫu gate auto-reject để đối xứng).
-- `gate_config.auto_invite` đã có trên JD (mặc định false). `SCORE_PASS_THRESHOLD`, `CONFIDENCE_THRESHOLD` đã có.
+- Deps: `passlib[bcrypt]` + `python-jose` (hoặc `pyjwt`) cho JWT. Thêm qua `uv add`.
+- Config env: `JWT_SECRET` (mạnh, random), `JWT_EXPIRY_MINUTES`, `HR_ADMIN_EMAIL`, `HR_ADMIN_PASSWORD` (seed),
+  cookie settings (`COOKIE_SECURE`, `COOKIE_SAMESITE`, `COOKIE_DOMAIN` — để dev vs prod khác nhau). Cập nhật `.env.example` (giá trị mẫu, KHÔNG commit mật khẩu thật).
 
 ---
 
 ## 3. Việc cần làm
 
-### 3.1 Định tuyến sau screener · `app/agents/policy.py` (+ graph)
+### 3.1 Model + seed · `app/models/hr_user.py` + `scripts/seed_hr_admin.py`
 
-- Thêm quyết định SAU khi screener node resume (route_after_screener), theo THỨ TỰ ƯU TIÊN (an toàn trước):
-  1. **`no_response` / cờ bất định / low-confidence** → `human_review` (gate KHÔNG xét — ca không sạch LUÔN về người).
-  2. **Ca sạch** (đã trả lời, confident, không cờ):
-     - JD `gate_config.auto_invite == True` → **`auto_invite`**.
-     - ngược lại (OFF) → `human_review`.
-- Đọc `gate_config` theo `job_id`. Log/audit rõ nhánh + lý do. **Mặc định auto_invite TẮT → hành vi hiện tại (sau screener → human_review) KHÔNG đổi.**
-- **Ghi chú thiết kế (không code):** auto-invite KHÔNG chấm nội dung câu trả lời — đủ điều kiện = qua rank (đã tới screener) + đã trả lời + không cờ. Answers vẫn lưu, hiện cho HR/dùng khi phỏng vấn. Vì gate mặc định TẮT, mặc định vẫn có người xem (đọc answers) trước khi mời.
+- `hr_user`: `id`, `email` (unique), `password_hash`, `created_at`. Migration Alembic (**include_object guard**).
+- Seed script: đọc `HR_ADMIN_EMAIL`/`HR_ADMIN_PASSWORD` từ env → tạo hr_user nếu CHƯA tồn tại (băm bcrypt), idempotent. (Dùng lúc setup/deploy.)
+- **`reset_demo_data.py` KHÔNG xóa hr_user** (tài khoản không phải demo data).
 
-### 3.2 Nhánh auto-invite · node/logic
+### 3.2 Crypto + JWT · `app/core/security.py`
 
-- Route = `auto_invite`: delegate `scheduler.notify_decision(mode="invite")` (điểm phát email DUY NHẤT → thư mời THẬT) →
-  status `INTERVIEW_SCHEDULED` → audit (node="gate", action="auto_invite" + "email_sent:invite"). Chạy trong pipeline (async task), KHÔNG HR.
-- Lỗi gửi email nuốt có kiểm soát (như 04/03c): INTERVIEW_SCHEDULED chỉ đặt khi mời đã gửi; lỗi → audit email_failed + xử lý nhất quán (đừng đặt trạng thái "đã mời" nếu email trượt — cân nhắc để human_review nếu gửi lỗi, tránh lặp lại bug "trạng thái nói dối").
-- Đối xứng đúng với nhánh auto_reject của 03c (dùng lại pattern).
+- `hash_password` / `verify_password` bằng **passlib bcrypt** (KHÔNG tự chế băm).
+- `create_access_token(sub)` / `decode_token` bằng JWT ký `JWT_SECRET`, hạn `JWT_EXPIRY_MINUTES`.
 
-### 3.3 UI (nhỏ, nếu cần) · form JD (05)
+### 3.3 Endpoints auth · `app/api/routes/auth.py`
 
-- Nếu toggle `auto_invite` ở form JD đang disabled/nhãn "sẽ bật sau" → bật cho dùng thật, kèm ghi chú ngắn ("tự động mời ca đạt + đã trả lời sàng lọc; ca bất định/không phản hồi vẫn về HR"). Nếu đã bật sẵn thì bỏ qua.
+- `POST /api/auth/login` (body: email + password): verify → tạo JWT → set **cookie httpOnly** (Secure/SameSite theo env).
+  Sai → 401 **thông báo chung** ("email hoặc mật khẩu không đúng" — KHÔNG tiết lộ email có tồn tại không).
+- `POST /api/auth/logout`: xóa cookie.
+- `GET /api/auth/me`: đọc cookie → trả HR user hiện tại (id/email); không auth → 401. (Frontend dùng để biết đã đăng nhập chưa.)
 
-### 3.4 Test · `app/tests/test_gate_invite.py` (mock scheduler/email)
+### 3.4 Bảo vệ endpoint HR · dependency
 
-- auto_invite ON + ca sạch (đã trả lời, confident, không cờ) → route `auto_invite`; scheduler.notify_decision(invite) gọi; INTERVIEW_SCHEDULED.
-- auto_invite OFF + ca sạch → `human_review` (như hiện tại), KHÔNG gọi scheduler.
-- `no_response` (timeout) + gate ON → `human_review` (an toàn), KHÔNG auto-invite.
-- Ca có cờ bất định + gate ON → `human_review` (an toàn).
-- Lỗi gửi mời → không đặt INTERVIEW_SCHEDULED sai (nhất quán).
+- `require_hr` (FastAPI dependency): đọc cookie JWT → verify → nạp hr_user; thiếu/sai/hết hạn → 401.
+- **Áp `require_hr` cho MỌI router HR:** `/api/jobs/*` (tạo/sửa/list/detail/đóng/gate), `/api/applications/*` (list/detail/review), `/api/agents/*` (parse-cv/rank-cv — công cụ HR/dev).
+- **GIỮ MỞ (KHÔNG áp auth):** `/api/public/*` (JD công khai, nộp CV), `/api/public/screening/*` (GET+POST), `/api/auth/login`, `/api/auth/logout`, health check. → **Ứng viên guest không bị chặn.**
+- CORS: cho phép credentials (cookie) từ origin frontend.
+
+### 3.5 Frontend · trang login + bảo vệ trang HR
+
+- `/login`: form email + mật khẩu → POST login → thành công redirect dashboard; lỗi hiện thông báo chung.
+- **Bảo vệ mọi trang HR** (`/`, `/applications`, `/applications/[id]`, `/review`, `/jobs`, `/jobs/*`, `/cv-check`): chưa đăng nhập → redirect `/login` (middleware Next.js hoặc kiểm `GET /api/auth/me` ở layout HR).
+- **GIỮ MỞ:** `/apply`, `/apply/[jobId]`, `/screening/[token]`, `/login` — công khai, KHÔNG redirect.
+- Nút **Logout** ở nav HR (gọi logout → về /login). Xử lý **401 từ API** → redirect /login. Trạng thái auth qua `/api/auth/me`.
+- Gọi API kèm credentials (cookie) — cấu hình fetch/TanStack Query gửi cookie.
+
+### 3.6 Test · `app/tests/test_auth.py`
+
+- login đúng → cookie set + /me trả user; sai mật khẩu → 401 chung.
+- Endpoint HR không cookie → 401; có cookie hợp lệ → 200.
+- Endpoint public (nộp CV, screening) KHÔNG cookie → VẪN 200 (guest không bị chặn).
+- Băm mật khẩu: verify đúng/sai; hash không lưu plaintext.
 
 ---
 
-## 4. Verify (chạy thật — auto-mời gửi thư mời THẬT tới email của bạn)
+## 4. Verify (chạy thật)
 
-1. `make dev-backend` + `make dev-dashboard`. Bật auto_invite cho JD #2 (qua form JD /jobs hoặc PATCH gate).
-2. Nộp CV đạt (backend khớp, **email của bạn**) qua `/apply` → pipeline chấm → dừng screener → nhận email câu hỏi.
-3. **Trả lời screener** (trong hạn) qua magic-link → resume → ca SẠCH + auto_invite ON → **auto-invite tự động** → INTERVIEW_SCHEDULED, KHÔNG cần vào /review.
-4. **Kiểm hòm thư:** nhận **thư mời THẬT** — hệ thống tự gửi, không thao tác HR. Audit: gate/auto_invite + email_sent:invite.
-5. An toàn: tắt auto_invite → lặp lại → sau khi trả lời screener, ca vào `/review` (không tự mời). Một ca để **timeout** (không trả lời) + auto_invite BẬT → vẫn vào `/review` nhãn no_response (KHÔNG auto-mời).
-6. Đối chứng auto-reject (03c) vẫn đúng: CV thấp + gate auto_reject ON → auto-từ-chối.
-7. `make test` xanh.
+1. Seed admin: chạy `seed_hr_admin.py` (env có HR_ADMIN_EMAIL/PASSWORD). `make dev-backend` + `make dev-dashboard`.
+2. **Chưa đăng nhập:** mở `/applications` (hoặc `/jobs`, `/review`) → **redirect `/login`**. Gọi `GET /api/applications` (Postman, không cookie) → **401**.
+3. **Guest vẫn chạy:** mở `/apply` → hiện JD OPEN + nộp được CV (KHÔNG bị chặn). Mở magic-link `/screening/{token}` → form vẫn mở. → xác nhận ứng viên không bị khóa.
+4. **Đăng nhập:** `/login` với tài khoản seed → vào dashboard; `/applications`, `/jobs`, `/review` truy cập được; thao tác HR (tạo JD, duyệt) chạy.
+5. Sai mật khẩu → thông báo chung (không lộ email tồn tại hay không).
+6. **Logout** → về /login; truy cập lại trang HR → bị chặn.
+7. Luồng end-to-end vẫn nguyên: nộp CV qua /apply (guest) → pipeline chấm → đăng nhập HR thấy hồ sơ trên /applications.
+8. `make test` xanh; `pnpm --filter dashboard build` PASS.
 
 ---
 
 ## 5. Definition of Done
 
-- [ ] Sau screener: ca sạch + auto_invite ON → auto-invite (thư mời THẬT, verify hòm thư) → INTERVIEW_SCHEDULED + audit.
-- [ ] `no_response` / cờ / low-confidence / gate OFF → human_review (auto-invite KHÔNG áp — verify timeout + gate ON vẫn về HR).
-- [ ] Mặc định auto_invite TẮT → hành vi sau-screener KHÔNG đổi so với trước 08d.
-- [ ] INTERVIEW_SCHEDULED chỉ đặt khi thư mời đã gửi; lỗi gửi xử lý nhất quán (không "trạng thái nói dối").
-- [ ] scheduler = điểm phát email DUY NHẤT; đối xứng đúng auto-reject 03c; parser/ranker/screener-08abc/auto-reject không hồi quy.
-- [ ] Toggle auto_invite ở form JD dùng được (bỏ trạng thái "sẽ bật sau" nếu còn).
-- [ ] `make test` xanh.
+- [ ] `hr_user` + migration (include_object guard); seed admin từ env idempotent; bcrypt băm mật khẩu.
+- [ ] login/logout/me hoạt động; JWT trong cookie httpOnly; sai đăng nhập → 401 chung.
+- [ ] MỌI endpoint + trang HR được bảo vệ (chưa auth → 401/redirect login).
+- [ ] Endpoint + trang CÔNG KHAI (/apply, /screening, login) VẪN mở — ứng viên guest KHÔNG bị chặn (verify).
+- [ ] Cookie settings (Secure/SameSite/domain) đọc từ env (sẵn sàng cross-domain khi deploy).
+- [ ] KHÔNG đăng ký/quên/reset/quản-lý-tài-khoản; KHÔNG Super Admin/RBAC/OAuth; pipeline/agents không đụng.
+- [ ] `reset_demo_data` KHÔNG xóa hr_user; `make test` xanh; `pnpm build` PASS.
 
 ---
 
-## 6. Ranh giới & quy ước (theo CLAUDE.md)
+## 6. 🔒 BẢO MẬT — đọc kỹ
 
-- CHỈ động vào: route sau screener + nhánh auto-invite + (nhỏ) bật toggle auto_invite + test. KHÔNG đụng checkpointer/token/timeout/parser/ranker/auto-reject logic.
-- An toàn số 1: ca không sạch (no_response/cờ/low-conf) LUÔN → human_review; gate chỉ áp ca sạch. "Cờ thắng gate."
-- Tái dùng scheduler (điểm phát email duy nhất) + pattern nhánh auto_reject 03c. Cấu hình theo JD; mặc định TẮT.
-- INTERVIEW_SCHEDULED = "đã mời" — chỉ sau khi thư mời gửi (đừng lặp bug trạng-thái-nói-dối).
-- Chạy impact analysis trước khi sửa policy (GitNexus nếu có, không thì grep-based). Commit nhỏ (vd `feat(gate): route sau screener + nhánh auto-invite`, `feat(ui): bật toggle auto_invite JD`, `test(gate): auto-invite + an toàn no_response/cờ`).
-- Nghiệp vụ chưa rõ → **PRD.md** (§9, §8.3). Vướng → DỪNG, hỏi.
-- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhấn: email của bạn + thử timeout/gate), checklist DoD.
+- **Mật khẩu:** bcrypt qua passlib. KHÔNG plaintext, KHÔNG tự chế băm/salt.
+- **JWT:** ký bằng `JWT_SECRET` mạnh (từ env, KHÔNG hardcode); hạn hợp lý.
+- **Cookie:** `httpOnly` (JS không đọc được → chống XSS lấy token); `Secure` (HTTPS ở prod); `SameSite` (chống CSRF; dev Lax, prod cross-domain None+Secure). Đọc từ env.
+- **Không lộ thông tin:** lỗi đăng nhập chung chung (không nói email tồn tại hay không).
+- **Không khóa nhầm guest:** public/applicant endpoints + trang PHẢI mở (kiểm kỹ ở verify).
+- Rate-limit đăng nhập (chống brute-force): ghi chú deploy-time (proxy) — không bắt buộc code ở lát này; có thể thêm giới hạn đơn giản nếu nhanh.
 
-## 7. Sau lát này — HẾT GĐ3
+## 7. Ranh giới & quy ước (theo CLAUDE.md)
 
-Toàn bộ pipeline tự trị hoàn chỉnh: parser→ranker→(đạt→screener async→auto-mời/HR · thấp→auto-từ-chối/HR · bất định→HR),
-mọi kết quả ra email thật, hai gate cấu hình được, ca bất định luôn về người. Kế tiếp: **GĐ4 (auth HR)** rồi **GĐ5**
-(analytics/observability/anti-injection/**UI redesign**/deploy). Xem ROADMAP.md.
+- CHỈ động vào: hr_user/seed + security(crypto/JWT) + auth endpoints + require_hr dependency áp lên router HR + frontend login/bảo-vệ-trang + test. KHÔNG đụng pipeline/agents.
+- Một vai HR; seed sẵn; KHÔNG account-management/quên-reset (endpoint-key tùy chọn = việc riêng sau nếu dư giờ).
+- Public endpoints/trang giữ MỞ tuyệt đối. Cookie settings từ env cho deploy. Crypto dùng thư viện.
+- Chạy impact analysis trước khi sửa router (GitNexus nếu có, không thì grep-based). Commit nhỏ (vd `feat(auth): hr_user + seed + bcrypt/JWT`, `feat(auth): login/logout/me + require_hr bảo vệ router HR`, `feat(ui): trang login + bảo vệ trang HR + logout`, `test(auth): login + bảo vệ + guest mở`).
+- Nghiệp vụ chưa rõ → **PRD.md** (§4). Vướng → DỪNG, hỏi.
+- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhấn: guest vẫn nộp được + trang HR bị chặn khi chưa login), checklist DoD.
+
+## 8. Sau lát này
+
+HR được bảo vệ, ứng viên vẫn guest → sẵn sàng deploy. Kế tiếp (đường về đích): **06 object storage** → **13 deploy** →
+**UI redesign** → (tùy chọn: 10 analytics tí hon, 12 chống prompt injection). Observability đã BỎ. Xem ROADMAP.md.

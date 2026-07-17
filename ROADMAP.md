@@ -78,12 +78,17 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 
 ---
 
-## 🔵 PHASE 4 — Auth (PRD §4)
+## ✅ PHASE 4 — Auth (PRD §4) — **COMPLETE**
 
-- **09 — HR admin auth.** Login; protect all HR routes/pages (dashboard, JD, review, gate). **Applicant stays
-  guest forever** — no applicant accounts (deliberate: single-tenant internal system, fire-and-forget intake).
-  So auth = ONE user type only. Can move earlier if security/demo needs it; later is easier for dev.
-  → **Milestone:** real access control (guest submits, HR logs in to manage).
+- **09 — HR admin auth — ✅ DONE.** Tự làm: `hr_user` (email + bcrypt) + seed từ env (idempotent); JWT HS256
+  trong cookie **httpOnly** (bcrypt trực tiếp + pyjwt — KHÔNG passlib); `require_hr` bảo vệ MỌI router HR
+  (`/api/jobs|applications|agents` + `/api/auth/me`); `login/logout/me` (lỗi CHUNG, chống enumeration + timing).
+  Frontend: nhóm route `app/(hr)/` một guard gọi `/api/auth/me` (KHÔNG middleware — an toàn cross-domain),
+  `/login`, logout, `credentials:"include"`, cookie Secure/SameSite/domain từ ENV. Public/*+/apply+/screening
+  giữ MỞ (ứng viên GUEST vĩnh viễn — no account). Verified live (HR chặn khi chưa login · guest nộp CV + magic-
+  link vẫn mở · login seed → dashboard · logout → chặn lại · e2e nguyên) + 14 test. **Applicant stays guest
+  forever** — no applicant accounts (single-tenant, fire-and-forget). ONE user type only.
+  → **Milestone:** real access control (guest submits, HR logs in to manage). **GĐ4 HOÀN TẤT.**
 
 ---
 
@@ -137,7 +142,7 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [x] **08b Magic-link form + email câu hỏi** (token/expiry/one-time/row-lock, verified live + security review)
 - [x] **08c timeout/nhắc/trả lời trễ** (in-process sweep sau seam, nhắc-1-lần, timeout→human_review[no_response], verified live)
 - [x] **08d gate auto-mời sau screener** (route_after_screener; ca sạch+auto_invite→thư mời thật→INTERVIEW_SCHEDULED; cờ thắng gate; verified live) — **GĐ3 XONG**
-- [ ] 06 object storage (deferred to near-deploy)
-- [ ] **09 HR auth ← NEXT (GĐ4)**
-- [ ] 10 analytics · 11 observability · 12 anti-injection · UI redesign · 13 deploy
+- [x] **09 HR auth** (hr_user+seed+bcrypt/JWT httpOnly · require_hr router HR · (hr) guard+/login+logout · guest MỞ; verified live + 14 test) — **GĐ4 XONG**
+- [ ] 06 object storage (deferred to near-deploy) · **13 deploy ← NEXT (đường về đích)**
+- [ ] 10 analytics · 11 observability · 12 anti-injection · UI redesign
 - [ ] 14 LLM-suggested rubric · 15 optional
