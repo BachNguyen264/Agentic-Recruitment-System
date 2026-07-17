@@ -75,6 +75,24 @@ class Settings(BaseSettings):
     # {frontend_base_url}/screening/{token}. Dev: dashboard Next chạy :3000. Đổi khi deploy.
     frontend_base_url: str = "http://localhost:3000"
 
+    # ── Auth HR (slice 09 — PRD §4: CHỈ HR Admin đăng nhập; ứng viên là guest) ──
+    # JWT_SECRET: BẮT BUỘC khi chạy auth, tối thiểu 32 ký tự (xem security._jwt_secret).
+    # KHÔNG hardcode/mặc định — thiếu secret phải nổ ngay, không im lặng dùng khóa yếu.
+    jwt_secret: str | None = None
+    jwt_expiry_minutes: int = 480  # 8 giờ — một ca làm việc của HR.
+    # Cookie chứa JWT. Đọc từ ENV để deploy cross-domain (Vercel + Render) KHÔNG phải sửa code:
+    #   - dev (localhost:3000 → :8000, same-site vì cổng không tính): secure=False, samesite=lax.
+    #   - prod (dashboard.vercel.app → api.onrender.com, CROSS-SITE): secure=True, samesite=none.
+    # SameSite=None BẮT BUỘC đi kèm Secure (browser bỏ cookie nếu thiếu) — xem auth.py kiểm chứng.
+    auth_cookie_name: str = "ars_session"
+    cookie_secure: bool = False
+    cookie_samesite: str = "lax"  # lax | none | strict
+    cookie_domain: str | None = None  # None = host-only (đúng cho cả dev lẫn cross-domain).
+
+    # Seed tài khoản HR admin (scripts/seed_hr_admin.py). KHÔNG commit mật khẩu thật — chỉ .env.
+    hr_admin_email: str | None = None
+    hr_admin_password: str | None = None
+
     # ── Hạ tầng ──────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/recruitment"
     # Kết nối RIÊNG cho LangGraph checkpointer (psycopg, PRD §10 Screener suspend/resume). Để rỗng →
