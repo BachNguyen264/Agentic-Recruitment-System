@@ -70,7 +70,8 @@ app.add_middleware(
     login_window_seconds=settings.rate_limit_login_window_seconds,
     public_max=settings.rate_limit_public_max,
     public_window_seconds=settings.rate_limit_public_window_seconds,
-    trust_proxy=settings.trust_proxy_headers,
+    trust_proxy=settings.trust_proxy,
+    proxy_hops=settings.proxy_trusted_hops,
     enabled=settings.rate_limit_enabled,
 )
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)

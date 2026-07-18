@@ -131,9 +131,23 @@ class Settings(BaseSettings):
     rate_limit_login_window_seconds: float = 900  # 15 phút
     rate_limit_public_max: int = 20
     rate_limit_public_window_seconds: float = 3600  # 1 giờ
-    # BẬT khi chạy sau proxy (Render) — lúc đó IP thật nằm ở X-Forwarded-For, không phải scope client.
-    # Local (không proxy) để false: tin header do client tự gửi = ai cũng lách được rate-limit.
-    trust_proxy_headers: bool = False
+    # Sau proxy (Render) IP thật nằm ở X-Forwarded-For, không phải peer TCP. Để None = TỰ SUY:
+    # bật khi app_env != "local". Lý do KHÔNG để mặc định false: quên đặt biến này khi deploy thì
+    # MỌI khách chung một khoá quota (peer TCP = router của Render) ⇒ chỉ ~10 request nặc danh là
+    # khoá sạch đường đăng nhập của HR, lặp lại được vô hạn. Hỏng-mở (rate-limit yếu đi ở môi trường
+    # không có proxy) ít tệ hơn hỏng-đóng (tự chặn chính mình) — và trên Render thì LUÔN có proxy.
+    trust_proxy_headers: bool | None = None
+    # SỐ proxy tin cậy đứng trước app; khoá quota lấy phần tử thứ N TỪ PHẢI của X-Forwarded-For.
+    # 1 = chỉ Render. Render đặt Cloudflare trước *.onrender.com nên có thể cần 2 — xác nhận bằng
+    # dòng log "Rate-limit: khóa quota = ..." (in một lần) rồi chỉnh, ĐỪNG đoán.
+    proxy_trusted_hops: int = 1
+
+    @property
+    def trust_proxy(self) -> bool:
+        """trust_proxy_headers nếu được đặt tường minh; nếu không thì suy từ app_env."""
+        if self.trust_proxy_headers is None:
+            return self.app_env != "local"
+        return self.trust_proxy_headers
 
     # ── Hạ tầng ──────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/recruitment"
@@ -164,18 +178,36 @@ class Settings(BaseSettings):
     def cors_allow_origins(self) -> list[str]:
         """`CORS_ORIGINS` (CSV) → list origin cho CORSMiddleware. Rỗng = không cấu hình (dev).
 
-        TỪ CHỐI `*`: khi ``allow_credentials=True`` trình duyệt CẤM wildcard — nó sẽ lặng lẽ KHÔNG
-        gửi/nhận cookie, login trả 200 mà HR vẫn không giữ được phiên (rủi ro #1 khi deploy
-        cross-domain). Nổ ngay lúc khởi động rõ ràng hơn nhiều so với debug trên bản live.
-        Bỏ dấu `/` cuối: Origin header không bao giờ có path, "https://x.app/" sẽ không khớp.
+        Starlette so khớp origin bằng SO SÁNH CHUỖI CHÍNH XÁC. Nên mọi giá trị "gần đúng" đều lặng lẽ
+        không khớp, và triệu chứng luôn giống nhau: HR đăng nhập trả 200 nhưng KHÔNG giữ được phiên
+        (rủi ro #1 khi deploy cross-domain), rất khó truy. Vì thế chặn NGAY lúc khởi động:
+
+        - Chứa `*` (kể cả `https://*.vercel.app`): wildcard bị trình duyệt CẤM khi allow_credentials,
+          và Starlette KHÔNG hiểu `*` nằm giữa chuỗi — nó chỉ là ký tự thường, không bao giờ khớp.
+        - Thiếu scheme (`ars.vercel.app` — đúng thứ dashboard Vercel hiển thị): Origin header trình
+          duyệt gửi LUÔN có scheme, nên giá trị trần không bao giờ khớp.
+        - Có path (`https://x.app/duong-dan`): Origin không bao giờ chứa path.
+        Chuẩn hoá: bỏ `/` cuối và hạ chữ thường (Origin do browser gửi luôn là chữ thường).
         """
-        items = [o.strip().rstrip("/") for o in self.cors_origins.split(",")]
+        items = [o.strip().rstrip("/").lower() for o in self.cors_origins.split(",")]
         items = [o for o in items if o]
-        if "*" in items:
-            raise ValueError(
-                "CORS_ORIGINS không được chứa '*': wildcard không dùng được cùng cookie "
-                "(allow_credentials=True). Hãy liệt kê CỤ THỂ origin frontend."
-            )
+        for origin in items:
+            if "*" in origin:
+                raise ValueError(
+                    f"CORS_ORIGINS chứa '*' ({origin!r}): không dùng được wildcard cùng cookie "
+                    "(allow_credentials=True), và Starlette so khớp origin bằng chuỗi chính xác nên "
+                    "'*' sẽ KHÔNG BAO GIỜ khớp. Hãy liệt kê từng origin đầy đủ."
+                )
+            if not origin.startswith(("http://", "https://")):
+                raise ValueError(
+                    f"CORS_ORIGINS thiếu scheme ({origin!r}): phải ghi đủ 'https://...' — Origin mà "
+                    "trình duyệt gửi luôn kèm scheme nên giá trị trần sẽ không khớp."
+                )
+            if "/" in origin.split("://", 1)[1]:
+                raise ValueError(
+                    f"CORS_ORIGINS không được chứa đường dẫn ({origin!r}): origin chỉ gồm "
+                    "scheme + host [+ cổng]."
+                )
         return items
 
     @property

@@ -28,58 +28,146 @@ def test_cors_origins_empty_means_no_explicit_list_dev_regex_fallback() -> None:
     assert Settings(cors_origins="   ").cors_allow_origins == []
 
 
-def test_cors_origins_rejects_wildcard() -> None:
-    # `*` + allow_credentials=True bị browser CẤM → cookie auth không gửi được. Nổ SỚM lúc khởi động
-    # còn hơn deploy xong mới phát hiện HR không đăng nhập được (RỦI RO #1 của lát 13).
-    with pytest.raises(ValueError, match=r"\*"):
-        Settings(cors_origins="*").cors_allow_origins  # noqa: B018
-    with pytest.raises(ValueError, match=r"\*"):
-        Settings(cors_origins="https://ok.vercel.app,*").cors_allow_origins  # noqa: B018
+@pytest.mark.parametrize(
+    "value, match",
+    [
+        ("*", r"\*"),
+        ("https://ok.vercel.app,*", r"\*"),
+        # Cách viết "phủ mọi preview" mà rất dễ nghĩ ra — Starlette so khớp CHUỖI CHÍNH XÁC nên nó
+        # không bao giờ khớp; phải nổ chứ không được im lặng chấp nhận.
+        ("https://*.vercel.app", r"\*"),
+        # Vercel hiển thị hostname trần → dễ dán thiếu scheme; Origin của browser luôn có scheme.
+        ("ars.vercel.app", "scheme"),
+        ("https://x.vercel.app/duong-dan", "đường dẫn"),
+    ],
+)
+def test_cors_origins_rejects_values_that_would_never_match(value: str, match: str) -> None:
+    """Mọi giá trị "gần đúng" đều cho CÙNG một triệu chứng khó truy: login 200 nhưng mất phiên.
+
+    Chặn ngay lúc khởi động (RỦI RO #1 của lát 13) thay vì để phát hiện trên bản live.
+    """
+    with pytest.raises(ValueError, match=match):
+        Settings(cors_origins=value).cors_allow_origins  # noqa: B018
 
 
-def test_cors_origins_strips_trailing_slash() -> None:
-    # Origin KHÔNG có path — "https://x.vercel.app/" dán từ thanh địa chỉ sẽ không khớp Origin header.
-    assert Settings(cors_origins="https://x.vercel.app/").cors_allow_origins == [
+def test_cors_origins_normalises_trailing_slash_and_case() -> None:
+    # Origin KHÔNG có path và browser gửi chữ thường — giá trị dán từ thanh địa chỉ phải được chuẩn hoá.
+    assert Settings(cors_origins="https://X.Vercel.App/").cors_allow_origins == [
         "https://x.vercel.app"
     ]
 
 
-# ── 2) Middleware CORS thật (endpoint công khai) ──────────────────────
-async def test_cors_headers_present_for_allowed_origin_on_public_endpoint() -> None:
+# ── 2) Middleware CORS thật ───────────────────────────────────────────
+def _cors_app(cfg: Settings):
+    """Dựng app RIÊNG với CORS cấu hình y hệt main.py.
+
+    KHÔNG dùng `app.main` thật: nó đọc settings lúc import từ môi trường + .env của máy dev, nên
+    (a) nhánh PROD (`allow_origins`) không bao giờ được chạy — xoá hẳn dòng đó khỏi main.py mà test
+    vẫn xanh, tức rủi ro #1 của lát này KHÔNG có lưới an toàn nào; và (b) chỉ cần lập trình viên đặt
+    CORS_ORIGINS trong .env (đúng như runbook hướng dẫn) là test đỏ oan.
+    """
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+
+    origins = cfg.cors_allow_origins
+    app = FastAPI()
+
+    @app.get("/api/public/jobs")
+    async def jobs() -> dict:
+        return {"ok": True}
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_origin_regex=None if origins else r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
+    )
+    return app
+
+
+async def _preflight(app, origin: str):
     import httpx
-
-    from app.main import app
-
-    origin = "http://localhost:3000"
-    transport = httpx.ASGITransport(app=app)  # KHÔNG chạy lifespan.
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        r = await c.options(
-            "/api/public/jobs",
-            headers={
-                "Origin": origin,
-                "Access-Control-Request-Method": "GET",
-            },
-        )
-    assert r.headers.get("access-control-allow-origin") == origin
-    # Credentials BẮT BUỘC: cookie auth HR + cookie đi kèm mọi call của frontend.
-    assert r.headers.get("access-control-allow-credentials") == "true"
-
-
-async def test_cors_headers_absent_for_foreign_origin() -> None:
-    import httpx
-
-    from app.main import app
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        r = await c.options(
+        return await c.options(
             "/api/public/jobs",
-            headers={
-                "Origin": "https://evil.example.com",
-                "Access-Control-Request-Method": "GET",
-            },
+            headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
         )
+
+
+async def test_cors_prod_branch_allows_configured_origin_with_credentials() -> None:
+    # Nhánh THẬT khi deploy: CORS_ORIGINS = URL Vercel.
+    app = _cors_app(Settings(cors_origins="https://ars-demo.vercel.app"))
+    r = await _preflight(app, "https://ars-demo.vercel.app")
+    assert r.headers.get("access-control-allow-origin") == "https://ars-demo.vercel.app"
+    # Credentials BẮT BUỘC: cookie auth HR đi kèm mọi call của frontend.
+    assert r.headers.get("access-control-allow-credentials") == "true"
+
+
+async def test_cors_prod_branch_rejects_localhost_and_foreign_origins() -> None:
+    # Đặt CORS_ORIGINS = danh sách CỤ THỂ ⇒ regex dev phải TẮT (không để lọt origin ngoài danh sách).
+    app = _cors_app(Settings(cors_origins="https://ars-demo.vercel.app"))
+    for origin in ("http://localhost:3000", "https://evil.example.com"):
+        r = await _preflight(app, origin)
+        assert r.headers.get("access-control-allow-origin") is None, origin
+
+
+async def test_cors_dev_fallback_allows_localhost_when_unset() -> None:
+    # KHÔNG đặt env ⇒ dev giữ nguyên hành vi cũ (dashboard :3000 gọi backend :8000).
+    app = _cors_app(Settings(cors_origins=""))
+    r = await _preflight(app, "http://localhost:3000")
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert r.headers.get("access-control-allow-credentials") == "true"
+
+
+async def test_cors_dev_fallback_still_rejects_foreign_origin() -> None:
+    app = _cors_app(Settings(cors_origins=""))
+    r = await _preflight(app, "https://evil.example.com")
     assert r.headers.get("access-control-allow-origin") is None
+
+
+def test_main_app_wires_cors_from_settings() -> None:
+    """Ghim ĐÚNG cách main.py mắc CORS (các test trên chạy trên app mô phỏng nên không phủ được).
+
+    Không có test này thì xoá hẳn `allow_origins=...` khỏi main.py vẫn xanh toàn bộ — nhánh deploy
+    thật (rủi ro #1) mất lưới an toàn. So sánh với `settings` mà chính app đã dùng nên không phụ
+    thuộc môi trường máy chạy test.
+    """
+    from fastapi.middleware.cors import CORSMiddleware
+
+    from app.core.config import settings
+    from app.main import app
+
+    cors = [m for m in app.user_middleware if m.cls is CORSMiddleware]
+    assert len(cors) == 1, "phải có đúng một CORSMiddleware"
+    opts = cors[0].kwargs
+    assert opts["allow_origins"] == settings.cors_allow_origins
+    assert opts["allow_credentials"] is True
+    # Có danh sách cụ thể ⇒ TẮT regex dev (không để lọt origin ngoài danh sách khi đã deploy).
+    assert (opts["allow_origin_regex"] is None) is bool(settings.cors_allow_origins)
+    # Tên file khi HR tải CV gốc (slice 06) chỉ đọc được nếu header này được expose qua CORS.
+    assert "Content-Disposition" in opts["expose_headers"]
+
+
+def test_cors_middleware_is_outermost() -> None:
+    """CORS phải NGOÀI hardening: lỗi 413/429 do middleware sinh ra cũng cần header CORS.
+
+    Nếu không, trình duyệt chỉ báo "CORS error" và frontend KHÔNG đọc được `detail` — ứng viên bị
+    chặn vì nộp quá nhanh sẽ thấy lỗi vô nghĩa thay vì câu tiếng Việt giải thích.
+    `add_middleware` chèn lên ĐẦU nên user_middleware[0] là lớp NGOÀI CÙNG.
+    """
+    from fastapi.middleware.cors import CORSMiddleware
+
+    from app.core.hardening import BodySizeLimitMiddleware, RateLimitMiddleware
+    from app.main import app
+
+    order = [m.cls for m in app.user_middleware]
+    assert order.index(CORSMiddleware) < order.index(BodySizeLimitMiddleware)
+    assert order.index(BodySizeLimitMiddleware) < order.index(RateLimitMiddleware)
 
 
 # ── 3) Liveness cho health check của nền tảng ────────────────────────

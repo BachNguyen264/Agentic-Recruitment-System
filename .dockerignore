@@ -1,11 +1,14 @@
 # Giữ image gọn + KHÔNG để lọt secret/dữ liệu cá nhân vào layer (image có thể bị pull/inspect).
 
 # ── Secrets: TUYỆT ĐỐI không copy .env vào image (Render truyền env vars lúc chạy) ──
-.env
-.env.*
-!.env.example
-*.key
-*.pem
+# PHẢI dùng `**/` : pattern KHÔNG có `/` chỉ khớp GỐC context (Docker dùng filepath.Match, `*` không
+# vượt qua `/`). Viết trần `.env` sẽ bỏ sót `apps/backend/.env` — mà đó là vị trí env_file DỰ PHÒNG
+# hợp lệ (core/config.py) và `COPY apps/backend/ ./` sẽ nướng thẳng nó vào layer image.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.key
+**/*.pem
 
 # ── Dữ liệu cá nhân: CV upload local (NFR-4) ──
 apps/backend/data/
