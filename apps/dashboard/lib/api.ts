@@ -123,6 +123,38 @@ export const setJobStatus = (id: number, status: "OPEN" | "CLOSED") =>
 export const submitReview = (id: number, decision: ReviewDecision, note: string | null) =>
   postJson<ApplicationDetail>(`/api/applications/${id}/review`, { decision, note });
 
+// Tải CV gốc (slice 06). Endpoint STREAM trong khu HR (require_hr) — KHÔNG dùng public URL.
+// Tải bằng fetch (không phải thẻ <a>) để cookie đi kèm nhất quán như mọi call khác, kể cả khi
+// backend ở domain khác lúc deploy, và để bắt được 401 → về /login.
+export async function downloadCv(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/applications/${id}/cv`, { credentials: CREDENTIALS });
+  if (res.status === 401) {
+    redirectToLogin();
+    throw new Error("Chưa đăng nhập");
+  }
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? `HTTP ${res.status} khi tải CV`);
+  }
+  // Tên file lấy từ Content-Disposition backend đặt (CV-<id>.<đuôi>).
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match = /filename="?([^"]+)"?/i.exec(disposition);
+  const filename = match?.[1] ?? `CV-${id}`;
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(url); // không giữ blob trong bộ nhớ (CV = dữ liệu cá nhân)
+  }
+}
+
 // ── Công khai (ứng viên guest — slice 07) ──
 export const getOpenJobs = () => getJson<PublicJob[]>("/api/public/jobs");
 export const getPublicJob = (id: number) => getJson<PublicJob>(`/api/public/jobs/${id}`);

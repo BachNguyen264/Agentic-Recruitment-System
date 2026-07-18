@@ -37,7 +37,9 @@ export interface Application {
   id: number;
   job_id: number | null;
   applicant_email: string;
-  cv_file_ref: string | null;
+  // Slice 06: backend KHÔNG trả `cv_file_ref` nữa (path/key storage là chi tiết nội bộ — trước đây
+  // lộ đường dẫn tuyệt đối của server). Chỉ có cờ has_cv; tải file qua GET /api/applications/{id}/cv.
+  has_cv: boolean;
   status: ApplicationStatus;
   score: number | null;
   confidence: number | null;
@@ -94,6 +96,8 @@ export interface ApplicationDetail extends ApplicationListItem {
   escalation_reason: string | null;
   recommendation: Recommendation;
   screener_answers: ScreenerAnswer[]; // [] khi chưa/không sàng lọc (08b)
+  // Có file CV gốc để tải không (slice 06). Bytes lấy qua GET /api/applications/{id}/cv (require_hr).
+  has_cv: boolean;
 }
 
 // human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.

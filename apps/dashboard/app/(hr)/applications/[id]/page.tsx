@@ -2,17 +2,20 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ApplicationDetail, JobPosting } from "@ars/shared-types";
 import { ParsedCVResult } from "@/components/ParsedCVResult";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { ScreenerAnswers } from "@/components/ScreenerAnswers";
-import { getApplication, getJob } from "@/lib/api";
+import { downloadCv, getApplication, getJob } from "@/lib/api";
 import { statusBadgeClass, statusLabel, toBreakdown } from "@/lib/applications";
 
 export default function ApplicationDetailPage() {
   const params = useParams<{ id: string }>();
   const id = Number(params.id);
+
+  // Tải CV gốc (slice 06) — stream qua backend, cần đăng nhập (require_hr).
+  const cvDownload = useMutation({ mutationFn: () => downloadCv(id) });
 
   const appQuery = useQuery<ApplicationDetail>({
     queryKey: ["application", id],
@@ -64,6 +67,25 @@ export default function ApplicationDetailPage() {
                 <>Chưa gắn JD</>
               )}
             </p>
+
+            {/* Tải CV gốc (slice 06): file stream qua backend có kiểm đăng nhập — KHÔNG public URL. */}
+            {app.has_cv && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => cvDownload.mutate()}
+                  disabled={cvDownload.isPending}
+                  className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-50"
+                >
+                  {cvDownload.isPending ? "Đang tải…" : "⬇ Tải CV gốc"}
+                </button>
+                {cvDownload.isError && (
+                  <span role="alert" className="text-sm text-red-600">
+                    {String((cvDownload.error as Error)?.message) || "Không tải được CV."}
+                  </span>
+                )}
+              </div>
+            )}
           </header>
 
           {/* Lý do cần HR xem xét (PRD §11) — chỉ báo HÀNH ĐỘNG: CHỈ hiện khi còn chờ quyết
