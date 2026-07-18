@@ -170,15 +170,21 @@ async def reset(
         #    cá nhân, không giữ lại sau khi xóa hồ sơ (NFR-4). Lỗi xóa một file KHÔNG chặn cả lệnh
         #    (file có thể đã bị xóa tay) — chỉ cảnh báo để dọn thủ công.
         storage = get_storage()
+        n_cv_deleted = 0
         for app_id, key in cv_keys:
             try:
                 await storage.delete(key)
+                n_cv_deleted += 1
                 print(f"  Storage: đã xóa CV key={key} (app {app_id})")
             except StorageError as exc:
+                # Gồm cv_file_ref ĐỊNH DẠNG CŨ (path tuyệt đối, trước slice 06) — key không hợp lệ.
                 print(f"  [chú ý] KHÔNG xóa được CV của app {app_id} ({key}): {exc} — dọn thủ công.")
 
+        # Đếm số file THỰC SỰ xóa được (không phải số lượt thử) — báo cáo phải đúng sự thật.
+        n_failed = len(cv_keys) - n_cv_deleted
+        cv_note = f"+{n_cv_deleted}/{len(cv_keys)} file CV" + (f", {n_failed} lỗi" if n_failed else "")
         print(
-            f"\nĐã xóa {len(apps)} application (+audit_log +checkpoint +{len(cv_keys)} file CV), "
+            f"\nĐã xóa {len(apps)} application (+audit_log +checkpoint {cv_note}), "
             f"{len(jobs)} job_posting (+vector Qdrant), {len(thread_ids)} thread checkpoint lẻ."
         )
 

@@ -1,12 +1,12 @@
-# SLICE 09 — Auth HR (tự làm, một vai, seed sẵn) · plan one-shot
+# SLICE 06 — Object storage (lưu CV lên cloud sau seam) · plan one-shot
 
 > **Bản chất:** plan ONE-SHOT. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Mục tiêu:** bảo vệ toàn bộ khu vực HR bằng đăng nhập — HR admin login → truy cập dashboard/JD/review/gate;
-> chưa đăng nhập → chặn. Ứng viên VẪN guest (public /apply, /screening mở). Một vai (HR-admin), tài khoản SEED sẵn.
-> Điều kiện tiên quyết để deploy. Tham chiếu: PRD §4 (vai trò), §14. Tuân thủ `CLAUDE.md`.
+> **Mục tiêu:** chuyển lưu file CV từ đĩa LOCAL → cloud (Cloudflare R2, S3-compatible) SAU một interface storage —
+> local cho dev, R2 cho prod, đổi bằng config. File CV BỀN qua restart/redeploy (điều kiện tiên quyết deploy).
+> Tham chiếu: PRD §16 (cv_file_ref), NFR-4. Tuân thủ `CLAUDE.md`.
 >
-> **Cách làm:** tự làm — **JWT trong cookie httpOnly + băm mật khẩu bcrypt** (dùng thư viện cho crypto, KHÔNG tự chế).
-> KHÔNG Clerk/Neon Auth, KHÔNG OAuth. Một vai HR (KHÔNG Super Admin/RBAC). KHÔNG flow quên/reset/quản-lý tài khoản.
+> **Seam:** interface `FileStorage` (`save/get/url/delete`) + `LocalStorage` (dev, hành vi hiện tại) + `R2Storage`
+> (prod, S3 API). Nghiệp vụ đi qua interface, KHÔNG đọc/ghi path trực tiếp. Đổi impl = đổi config, không sửa nghiệp vụ.
 
 ---
 
@@ -14,117 +14,109 @@
 
 **In scope:**
 
-- Model `hr_user` + migration (nhớ `include_object` guard — đừng drop bảng checkpoint).
-- Seed tài khoản HR admin ban đầu từ env (idempotent). Băm mật khẩu bcrypt (passlib).
-- JWT (ký/verify) + config (JWT_SECRET, hạn, cookie settings **đọc từ env** để deploy cross-domain OK).
-- Endpoints: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
-- Auth dependency → **bảo vệ mọi endpoint HR**; endpoint CÔNG KHAI giữ MỞ.
-- Frontend: trang `/login` + bảo vệ mọi trang HR (chưa auth → redirect /login) + nút logout + xử lý 401 + trạng thái auth.
+- Interface `FileStorage` + `LocalStorage` (bọc hành vi đĩa hiện tại) + `R2Storage` (Cloudflare R2 qua S3 API, boto3).
+- Config chọn backend (`STORAGE_BACKEND=local|r2`) + credentials R2 (từ env).
+- **Refactor:** mọi chỗ lưu/đọc file CV đi qua interface — upload (/cv-check + nộp công khai 07) lưu qua `save()` → `cv_file_ref` = KEY; parser (và mọi chỗ đọc CV) đọc qua `get(key)` thay vì mở path.
+- `delete()` + cập nhật `reset_demo_data.py` xóa file qua storage khi xóa application (tránh file mồ côi).
+- **HR tải CV gốc (IN-SCOPE):** endpoint trong khu HR (bảo vệ `require_hr` từ 09) **STREAM** file qua `get()`; nút "Tải CV gốc" ở trang chi tiết ứng viên. Bucket PRIVATE, KHÔNG public URL.
 
 **Out of scope (KHÔNG làm):**
 
-- KHÔNG đăng ký/quên mật khẩu/reset/UI quản lý tài khoản. (Endpoint-bí-mật-có-key tạo/xóa/reset = TÙY CHỌN, chỉ nếu dư thời gian — KHÔNG làm trong lát này.)
-- KHÔNG Super Admin / RBAC / nhiều vai. KHÔNG OAuth/social login/SSO. KHÔNG Clerk/Neon Auth.
-- KHÔNG đụng pipeline/agents logic. KHÔNG khóa luồng ứng viên (guest).
+- KHÔNG đổi pipeline/agents logic (chỉ đổi _cách lấy bytes CV_). KHÔNG đổi luồng nộp (chỉ đổi _nơi file nằm_).
+- KHÔNG migrate file cũ (dev đang dọn data — không cần). KHÔNG public-bucket cho CV (dữ liệu cá nhân — private + presigned/stream).
+- KHÔNG đụng auth/screener/gate logic. KHÔNG deploy (đó là 13 — nhưng chuẩn bị cho nó).
 
 ---
 
 ## 2. Prerequisites
 
-- Deps: `passlib[bcrypt]` + `python-jose` (hoặc `pyjwt`) cho JWT. Thêm qua `uv add`.
-- Config env: `JWT_SECRET` (mạnh, random), `JWT_EXPIRY_MINUTES`, `HR_ADMIN_EMAIL`, `HR_ADMIN_PASSWORD` (seed),
-  cookie settings (`COOKIE_SECURE`, `COOKIE_SAMESITE`, `COOKIE_DOMAIN` — để dev vs prod khác nhau). Cập nhật `.env.example` (giá trị mẫu, KHÔNG commit mật khẩu thật).
+- Tài khoản Cloudflare R2: tạo **bucket** (private) + **API token** (Access Key ID + Secret) + endpoint
+  `https://<account_id>.r2.cloudflarestorage.com`. Đặt vào env: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+  `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT`. `.env.example` có mẫu (KHÔNG commit secret).
+- Dep: `boto3` (+ `aioboto3` nếu muốn async thuần) qua `uv add`. `STORAGE_BACKEND` mặc định `local` cho dev.
 
 ---
 
 ## 3. Việc cần làm
 
-### 3.1 Model + seed · `app/models/hr_user.py` + `scripts/seed_hr_admin.py`
+### 3.1 Interface + impls · `app/services/storage/`
 
-- `hr_user`: `id`, `email` (unique), `password_hash`, `created_at`. Migration Alembic (**include_object guard**).
-- Seed script: đọc `HR_ADMIN_EMAIL`/`HR_ADMIN_PASSWORD` từ env → tạo hr_user nếu CHƯA tồn tại (băm bcrypt), idempotent. (Dùng lúc setup/deploy.)
-- **`reset_demo_data.py` KHÔNG xóa hr_user** (tài khoản không phải demo data).
+- `FileStorage` (Protocol/ABC): `async save(key, data, content_type) -> str` · `async get(key) -> bytes` ·
+  `async url(key) -> str` (presigned/stream — để HR tải nếu cần) · `async delete(key) -> None`.
+- `LocalStorage`: bọc hành vi đĩa hiện tại (thư mục uploads). `save` ghi file, `get` đọc bytes, `delete` xóa,
+  `url` trả đường dẫn nội bộ / qua endpoint stream.
+- `R2Storage`: boto3 S3 client (endpoint R2 + credentials). `save`=put_object, `get`=get_object, `delete`=delete_object,
+  `url`=presigned URL (hạn ngắn) HOẶC stream qua backend. **Async:** boto3 đồng bộ → bọc `asyncio.to_thread`
+  (nhất quán email_service) HOẶC dùng aioboto3. Bucket PRIVATE (không public).
+- Factory theo `STORAGE_BACKEND`: trả LocalStorage/R2Storage. App phụ thuộc INTERFACE.
 
-### 3.2 Crypto + JWT · `app/core/security.py`
+### 3.2 Refactor điểm lưu/đọc file · upload + parser
 
-- `hash_password` / `verify_password` bằng **passlib bcrypt** (KHÔNG tự chế băm).
-- `create_access_token(sub)` / `decode_token` bằng JWT ký `JWT_SECRET`, hạn `JWT_EXPIRY_MINUTES`.
+- **Lưu:** endpoint nộp CV (public 07 + /cv-check) → `storage.save(...)` → lưu KEY vào `cv_file_ref` (thay vì path local).
+  Key có cấu trúc rõ (vd `cv/{application_id}/{uuid}.pdf`).
+- **Đọc:** parser (và bất kỳ chỗ nào mở file CV) → `storage.get(cv_file_ref)` lấy bytes → xử lý. KHÔNG mở path trực tiếp.
+- Rà quét TOÀN BỘ code còn đọc/ghi path CV trực tiếp → chuyển qua interface (đừng sót chỗ nào).
 
-### 3.3 Endpoints auth · `app/api/routes/auth.py`
+### 3.3 Dọn file khi xóa application · `reset_demo_data.py`
 
-- `POST /api/auth/login` (body: email + password): verify → tạo JWT → set **cookie httpOnly** (Secure/SameSite theo env).
-  Sai → 401 **thông báo chung** ("email hoặc mật khẩu không đúng" — KHÔNG tiết lộ email có tồn tại không).
-- `POST /api/auth/logout`: xóa cookie.
-- `GET /api/auth/me`: đọc cookie → trả HR user hiện tại (id/email); không auth → 401. (Frontend dùng để biết đã đăng nhập chưa.)
+- Xóa application → gọi `storage.delete(cv_file_ref)` (tránh file mồ côi, nhất quán với cascade session/checkpoint).
 
-### 3.4 Bảo vệ endpoint HR · dependency
+### 3.4 HR tải CV gốc (IN-SCOPE) · endpoint HR + nút ở chi tiết ứng viên
 
-- `require_hr` (FastAPI dependency): đọc cookie JWT → verify → nạp hr_user; thiếu/sai/hết hạn → 401.
-- **Áp `require_hr` cho MỌI router HR:** `/api/jobs/*` (tạo/sửa/list/detail/đóng/gate), `/api/applications/*` (list/detail/review), `/api/agents/*` (parse-cv/rank-cv — công cụ HR/dev).
-- **GIỮ MỞ (KHÔNG áp auth):** `/api/public/*` (JD công khai, nộp CV), `/api/public/screening/*` (GET+POST), `/api/auth/login`, `/api/auth/logout`, health check. → **Ứng viên guest không bị chặn.**
-- CORS: cho phép credentials (cookie) từ origin frontend.
+- Endpoint tải CV gốc **NẰM TRONG khu HR** (áp `require_hr` từ 09 — chưa đăng nhập → 401). **STREAM** file về qua
+  `storage.get(cv_file_ref)` (trả bytes + đúng content-type + filename). **KHÔNG** dùng public URL; bucket giữ PRIVATE.
+- Ưu tiên stream qua backend (mọi lượt tải đều qua kiểm auth, không rò URL). Nếu dùng presigned `url()` thì hạn RẤT
+  ngắn (vài phút) + vẫn sinh sau khi `require_hr` pass — nhưng khuyến nghị stream cho đơn giản/an toàn.
+- Frontend: nút "Tải CV gốc" ở trang chi tiết ứng viên (khu HR đã bảo vệ). Gọi kèm credentials (cookie auth).
+- **Tuyệt đối:** endpoint này KHÔNG public; CV = dữ liệu cá nhân (NFR-4) — link tải không cần đăng nhập là vi phạm.
 
-### 3.5 Frontend · trang login + bảo vệ trang HR
+### 3.5 Config · `app/core/config.py`
 
-- `/login`: form email + mật khẩu → POST login → thành công redirect dashboard; lỗi hiện thông báo chung.
-- **Bảo vệ mọi trang HR** (`/`, `/applications`, `/applications/[id]`, `/review`, `/jobs`, `/jobs/*`, `/cv-check`): chưa đăng nhập → redirect `/login` (middleware Next.js hoặc kiểm `GET /api/auth/me` ở layout HR).
-- **GIỮ MỞ:** `/apply`, `/apply/[jobId]`, `/screening/[token]`, `/login` — công khai, KHÔNG redirect.
-- Nút **Logout** ở nav HR (gọi logout → về /login). Xử lý **401 từ API** → redirect /login. Trạng thái auth qua `/api/auth/me`.
-- Gọi API kèm credentials (cookie) — cấu hình fetch/TanStack Query gửi cookie.
+- `STORAGE_BACKEND` + R2 credentials (pydantic-settings). `.env.example` cập nhật.
 
-### 3.6 Test · `app/tests/test_auth.py`
+### 3.6 Test · `app/tests/test_storage.py`
 
-- login đúng → cookie set + /me trả user; sai mật khẩu → 401 chung.
-- Endpoint HR không cookie → 401; có cookie hợp lệ → 200.
-- Endpoint public (nộp CV, screening) KHÔNG cookie → VẪN 200 (guest không bị chặn).
-- Băm mật khẩu: verify đúng/sai; hash không lưu plaintext.
+- LocalStorage: save→get roundtrip; delete xóa; url trả cái gì đó hợp lệ.
+- R2Storage: mock boto3 client (KHÔNG gọi R2 thật trong test) — save gọi put_object đúng key/bucket; get gọi get_object; delete gọi delete_object.
+- Factory chọn đúng impl theo config. Upload→parser đọc qua interface (không path trực tiếp).
 
 ---
 
-## 4. Verify (chạy thật)
+## 4. Verify (chạy thật — kiểm CẢ hai backend)
 
-1. Seed admin: chạy `seed_hr_admin.py` (env có HR_ADMIN_EMAIL/PASSWORD). `make dev-backend` + `make dev-dashboard`.
-2. **Chưa đăng nhập:** mở `/applications` (hoặc `/jobs`, `/review`) → **redirect `/login`**. Gọi `GET /api/applications` (Postman, không cookie) → **401**.
-3. **Guest vẫn chạy:** mở `/apply` → hiện JD OPEN + nộp được CV (KHÔNG bị chặn). Mở magic-link `/screening/{token}` → form vẫn mở. → xác nhận ứng viên không bị khóa.
-4. **Đăng nhập:** `/login` với tài khoản seed → vào dashboard; `/applications`, `/jobs`, `/review` truy cập được; thao tác HR (tạo JD, duyệt) chạy.
-5. Sai mật khẩu → thông báo chung (không lộ email tồn tại hay không).
-6. **Logout** → về /login; truy cập lại trang HR → bị chặn.
-7. Luồng end-to-end vẫn nguyên: nộp CV qua /apply (guest) → pipeline chấm → đăng nhập HR thấy hồ sơ trên /applications.
-8. `make test` xanh; `pnpm --filter dashboard build` PASS.
+1. **Local (mặc định):** `STORAGE_BACKEND=local`, `make dev-backend` + dashboard. Nộp CV qua `/apply` → pipeline chấm bình thường (file trên đĩa, parser đọc được) → không hồi quy.
+2. **R2:** đặt `STORAGE_BACKEND=r2` + credentials R2. Restart backend. Nộp CV qua `/apply` → **kiểm R2 dashboard: file xuất hiện trong bucket** → parser đọc từ R2 → pipeline chấm điểm (log không lỗi) → HR thấy hồ sơ.
+3. **HR tải CV gốc:** đăng nhập HR → trang chi tiết ứng viên → bấm "Tải CV gốc" → nhận đúng file (stream qua get). **Chưa đăng nhập** gọi endpoint tải (Postman, không cookie) → **401** (CV không lộ ra ngoài). Kiểm với backend R2 (file thật từ bucket private).
+4. **Bền:** với R2, restart backend → file vẫn còn (khác local ephemeral) — đây là mục tiêu chính.
+5. `reset_demo_data` xóa application → file tương ứng biến mất khỏi storage (local + R2).
+6. Đổi lại `STORAGE_BACKEND=local` → vẫn chạy (seam hoạt động hai chiều).
+7. `make test` xanh (mock R2); `pnpm build` PASS (nếu đụng UI tải CV).
 
 ---
 
 ## 5. Definition of Done
 
-- [ ] `hr_user` + migration (include_object guard); seed admin từ env idempotent; bcrypt băm mật khẩu.
-- [ ] login/logout/me hoạt động; JWT trong cookie httpOnly; sai đăng nhập → 401 chung.
-- [ ] MỌI endpoint + trang HR được bảo vệ (chưa auth → 401/redirect login).
-- [ ] Endpoint + trang CÔNG KHAI (/apply, /screening, login) VẪN mở — ứng viên guest KHÔNG bị chặn (verify).
-- [ ] Cookie settings (Secure/SameSite/domain) đọc từ env (sẵn sàng cross-domain khi deploy).
-- [ ] KHÔNG đăng ký/quên/reset/quản-lý-tài-khoản; KHÔNG Super Admin/RBAC/OAuth; pipeline/agents không đụng.
-- [ ] `reset_demo_data` KHÔNG xóa hr_user; `make test` xanh; `pnpm build` PASS.
+- [ ] Interface `FileStorage` + LocalStorage + R2Storage; factory theo `STORAGE_BACKEND`; nghiệp vụ đi qua interface.
+- [ ] Nộp CV → `save()` (key vào cv_file_ref); parser đọc qua `get()`; KHÔNG còn đọc/ghi path CV trực tiếp ở đâu.
+- [ ] R2 thật: file lên bucket private, parser đọc được, pipeline chấm; file BỀN qua restart (verify R2 dashboard).
+- [ ] Local vẫn chạy (mặc định dev); đổi backend bằng config, không sửa nghiệp vụ.
+- [ ] **HR tải CV gốc:** nút ở chi tiết ứng viên; endpoint STREAM qua `get()` trong khu HR (`require_hr`); chưa đăng nhập → 401; bucket PRIVATE (verify tải được khi login, chặn khi không).
+- [ ] `reset_demo_data` xóa file qua storage (không mồ côi). CV bucket PRIVATE (không public).
+- [ ] KHÔNG đụng pipeline/agents/auth logic; credentials từ env; boto3 bọc async.
+- [ ] `make test` xanh (mock R2); `pnpm build` PASS.
 
 ---
 
-## 6. 🔒 BẢO MẬT — đọc kỹ
+## 6. Ranh giới & quy ước (theo CLAUDE.md)
 
-- **Mật khẩu:** bcrypt qua passlib. KHÔNG plaintext, KHÔNG tự chế băm/salt.
-- **JWT:** ký bằng `JWT_SECRET` mạnh (từ env, KHÔNG hardcode); hạn hợp lý.
-- **Cookie:** `httpOnly` (JS không đọc được → chống XSS lấy token); `Secure` (HTTPS ở prod); `SameSite` (chống CSRF; dev Lax, prod cross-domain None+Secure). Đọc từ env.
-- **Không lộ thông tin:** lỗi đăng nhập chung chung (không nói email tồn tại hay không).
-- **Không khóa nhầm guest:** public/applicant endpoints + trang PHẢI mở (kiểm kỹ ở verify).
-- Rate-limit đăng nhập (chống brute-force): ghi chú deploy-time (proxy) — không bắt buộc code ở lát này; có thể thêm giới hạn đơn giản nếu nhanh.
+- CHỈ động vào: storage interface + 2 impls + refactor điểm lưu/đọc CV + reset_demo_data delete + config + endpoint tải CV (khu HR) + nút tải ở chi tiết + test. KHÔNG đụng pipeline/agents/auth-logic/screener.
+- **Endpoint tải CV phải trong khu HR (require_hr), stream qua get(), bucket private — KHÔNG public URL/bucket** (CV = dữ liệu cá nhân NFR-4; link không auth = vi phạm).
+- Seam MỎNG: interface + 2 impl + factory; KHÔNG framework thừa. Nghiệp vụ đọc/ghi CV CHỈ qua interface (rà hết, đừng sót path trực tiếp).
+- Bucket PRIVATE (CV = dữ liệu cá nhân, NFR-4); truy cập qua presigned/stream, không public URL. boto3 bọc async (to_thread/aioboto3). Credentials từ env.
+- Chạy impact analysis trước khi sửa parser/upload (GitNexus nếu có, không thì grep-based). Commit nhỏ (vd `feat(storage): interface + LocalStorage`, `feat(storage): R2Storage (S3) + factory/config`, `refactor(cv): upload/parser qua storage interface`, `feat(storage): reset_demo_data xóa file`, `test(storage): local + mock R2`).
+- Nghiệp vụ chưa rõ → **PRD.md** (§16, NFR-4). Vướng → DỪNG, hỏi.
+- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhấn: kiểm file trên R2 + bền qua restart), checklist DoD.
 
-## 7. Ranh giới & quy ước (theo CLAUDE.md)
+## 7. Sau lát này
 
-- CHỈ động vào: hr_user/seed + security(crypto/JWT) + auth endpoints + require_hr dependency áp lên router HR + frontend login/bảo-vệ-trang + test. KHÔNG đụng pipeline/agents.
-- Một vai HR; seed sẵn; KHÔNG account-management/quên-reset (endpoint-key tùy chọn = việc riêng sau nếu dư giờ).
-- Public endpoints/trang giữ MỞ tuyệt đối. Cookie settings từ env cho deploy. Crypto dùng thư viện.
-- Chạy impact analysis trước khi sửa router (GitNexus nếu có, không thì grep-based). Commit nhỏ (vd `feat(auth): hr_user + seed + bcrypt/JWT`, `feat(auth): login/logout/me + require_hr bảo vệ router HR`, `feat(ui): trang login + bảo vệ trang HR + logout`, `test(auth): login + bảo vệ + guest mở`).
-- Nghiệp vụ chưa rõ → **PRD.md** (§4). Vướng → DỪNG, hỏi.
-- Kết thúc: in tóm tắt thay đổi, lệnh verify (nhấn: guest vẫn nộp được + trang HR bị chặn khi chưa login), checklist DoD.
-
-## 8. Sau lát này
-
-HR được bảo vệ, ứng viên vẫn guest → sẵn sàng deploy. Kế tiếp (đường về đích): **06 object storage** → **13 deploy** →
-**UI redesign** → (tùy chọn: 10 analytics tí hon, 12 chống prompt injection). Observability đã BỎ. Xem ROADMAP.md.
+File CV bền trên cloud → sẵn sàng **13 deploy** (backend Render/Railway, frontend Vercel, cookie cross-domain đã env-driven từ 09, storage R2 từ đây, env secrets, đánh thức managed). Rồi **UI redesign**. Xem ROADMAP.md.

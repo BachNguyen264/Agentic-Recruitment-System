@@ -37,10 +37,15 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   email only) picks a JD → submits CV tied to that JD → async pipeline. Applicant is fire-and-forget: no account,
   confirmation screen only, outcome by email later. Public JD projection hides rubric/gate/screener. Reuses
   `CVUpload`. Local file storage for now.
-- **06 — Object storage** (PRD §16). Move CV files from local disk → cloud (Cloudflare R2 / Supabase Storage,
-  S3-compatible) behind a `save/get/url` interface (local dev ↔ cloud prod via config). **DEFERRED** — local is
-  fine for dev; fold in near deploy.
-  → **Milestone:** complete real intake path.
+- **06 — Object storage — ✅ DONE** (PRD §16, NFR-4). Seam `FileStorage` (save/get/url/delete, async) +
+  `LocalStorage` (dev) + `R2Storage` (Cloudflare R2 qua S3/boto3, bọc `asyncio.to_thread`); chọn bằng
+  `STORAGE_BACKEND`. `cv_file_ref` = KEY `cv/{app_id}/{uuid}{đuôi}`; MỌI chỗ đọc/ghi CV qua interface
+  (cv_reader làm việc trên BYTES, parser_node async lấy qua `storage.get()`, parse-cv bỏ file tạm).
+  **HR tải CV gốc:** `GET /api/applications/{id}/cv` STREAM trong khu HR (`require_hr`), bucket PRIVATE,
+  KHÔNG public URL. `reset_demo_data` xóa file qua storage. Verified live CẢ HAI backend (local không hồi
+  quy · R2 thật: file lên bucket, parser đọc từ R2 chấm 87đ, **BỀN qua restart**, tải 401/200, reset xóa
+  sạch bucket) + adversarial review (5 fix, gồm 1 hồi quy chặn event loop).
+  → **Milestone:** complete real intake path — file CV bền trên cloud, sẵn sàng deploy.
 
 ---
 
@@ -143,6 +148,7 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [x] **08c timeout/nhắc/trả lời trễ** (in-process sweep sau seam, nhắc-1-lần, timeout→human_review[no_response], verified live)
 - [x] **08d gate auto-mời sau screener** (route_after_screener; ca sạch+auto_invite→thư mời thật→INTERVIEW_SCHEDULED; cờ thắng gate; verified live) — **GĐ3 XONG**
 - [x] **09 HR auth** (hr_user+seed+bcrypt/JWT httpOnly · require_hr router HR · (hr) guard+/login+logout · guest MỞ; verified live + 14 test) — **GĐ4 XONG**
-- [ ] 06 object storage (deferred to near-deploy) · **13 deploy ← NEXT (đường về đích)**
+- [x] **06 object storage** (seam FileStorage · Local+R2 · cv_file_ref=KEY · HR tải CV gốc stream/require_hr · bucket PRIVATE · reset xóa file; verified live 2 backend + bền qua restart)
+- [ ] **13 deploy ← NEXT (đường về đích)**
 - [ ] 10 analytics · 11 observability · 12 anti-injection · UI redesign
 - [ ] 14 LLM-suggested rubric · 15 optional
