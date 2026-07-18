@@ -1,0 +1,44 @@
+# Giữ image gọn + KHÔNG để lọt secret/dữ liệu cá nhân vào layer (image có thể bị pull/inspect).
+
+# ── Secrets: TUYỆT ĐỐI không copy .env vào image (Render truyền env vars lúc chạy) ──
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ── Dữ liệu cá nhân: CV upload local (NFR-4) ──
+apps/backend/data/
+
+# ── Python ──
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/*.egg-info/
+
+# ── Frontend (deploy riêng ở Vercel — không thuộc image backend) ──
+apps/dashboard/
+packages/
+node_modules/
+**/node_modules/
+**/.next/
+pnpm-lock.yaml
+pnpm-workspace.yaml
+package.json
+
+# ── Git / tooling / tài liệu ──
+.git/
+.github/
+.gitnexus/
+.claude/
+.playwright-mcp/
+docs/
+*.md
+Makefile
+docker-compose.local.yml
+
+# ── Test backend (image chạy prod, không chạy pytest) ──
+apps/backend/tests/
