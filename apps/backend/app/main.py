@@ -16,6 +16,7 @@ from app.api.deps import require_hr
 from app.api.routes import agents, applications, auth, health, jobs, public
 from app.core.config import settings
 from app.core.database import engine
+from app.core.hardening import BodySizeLimitMiddleware, RateLimitMiddleware
 from app.core.logging import get_logger, setup_logging
 from app.core.qdrant_client import qdrant_client
 from app.core.redis_client import redis_client
@@ -58,6 +59,21 @@ app = FastAPI(
 )
 
 _CORS_ORIGINS = settings.cors_allow_origins  # nổ SỚM nếu cấu hình '*' (xem config.cors_allow_origins)
+
+# THỨ TỰ MIDDLEWARE (slice 13): add_middleware CHÈN LÊN ĐẦU → cái thêm SAU nằm NGOÀI. Thứ tự chạy
+# mong muốn: CORS → body-size → rate-limit → app, nên thêm theo chiều ngược lại.
+# CORS phải NGOÀI CÙNG để 413/429 cũng có header CORS: nếu không, trình duyệt báo "CORS error" và
+# frontend KHÔNG đọc được message thân thiện ("Bạn thao tác quá nhanh…") — ứng viên chỉ thấy lỗi lạ.
+app.add_middleware(
+    RateLimitMiddleware,
+    login_max=settings.rate_limit_login_max,
+    login_window_seconds=settings.rate_limit_login_window_seconds,
+    public_max=settings.rate_limit_public_max,
+    public_window_seconds=settings.rate_limit_public_window_seconds,
+    trust_proxy=settings.trust_proxy_headers,
+    enabled=settings.rate_limit_enabled,
+)
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
 
 app.add_middleware(
     CORSMiddleware,

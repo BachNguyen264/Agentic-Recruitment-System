@@ -122,6 +122,19 @@ class Settings(BaseSettings):
     # RỖNG = dev: main.py fallback regex localhost (hành vi cũ). Xem cors_allow_origins.
     cors_origins: str = ""
 
+    # ── Hardening endpoint công khai (slice 13 — xem core/hardening.py) ──
+    # Body tối đa: CV giới hạn 10MB (cv_storage.MAX_BYTES) + phần bao multipart → 12MB là vừa đủ.
+    max_request_bytes: int = 12 * 1024 * 1024
+    rate_limit_enabled: bool = True
+    # Login: chống dò mật khẩu HR. Public: chống spam nộp CV + dò token magic-link screener.
+    rate_limit_login_max: int = 10
+    rate_limit_login_window_seconds: float = 900  # 15 phút
+    rate_limit_public_max: int = 20
+    rate_limit_public_window_seconds: float = 3600  # 1 giờ
+    # BẬT khi chạy sau proxy (Render) — lúc đó IP thật nằm ở X-Forwarded-For, không phải scope client.
+    # Local (không proxy) để false: tin header do client tự gửi = ai cũng lách được rate-limit.
+    trust_proxy_headers: bool = False
+
     # ── Hạ tầng ──────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/recruitment"
     # Kết nối RIÊNG cho LangGraph checkpointer (psycopg, PRD §10 Screener suspend/resume). Để rỗng →
