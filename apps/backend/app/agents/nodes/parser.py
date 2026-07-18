@@ -9,6 +9,7 @@ phá run-demo/test_graph). Cờ `ENABLE_LLM` ở slice này CHỈ node parser đ
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from app.agents.state import RecruitmentState
@@ -130,7 +131,10 @@ async def parser_node(state: RecruitmentState) -> dict:
         logger.warning("parser: không lấy được CV %s — %s", cv_key, exc)
         result = _failed(f"Không đọc được file CV từ storage: {exc}")
     else:
-        result = parse_cv(data, cv_key)
+        # parse_cv ĐỒNG BỘ (PyMuPDF/python-docx + gọi LLM sync) → PHẢI offload sang thread. Node này
+        # là async (để await storage) nên KHÔNG còn được LangGraph tự chạy trong executor như hồi
+        # còn `def`; gọi thẳng sẽ CHẶN event loop suốt vài giây (mọi request khác đứng hình).
+        result = await asyncio.to_thread(parse_cv, data, cv_key)
 
     failed = "parse_failed" in result["uncertainty_flags"]
     if failed:

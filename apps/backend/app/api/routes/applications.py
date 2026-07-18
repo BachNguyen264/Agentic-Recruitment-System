@@ -12,6 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Respo
 from pydantic import ValidationError
 
 from app.api.deps import DBSession
+from app.core.logging import get_logger
 from app.schemas.application import ApplicationCreate, ApplicationRead, ReviewRequest
 from app.services import application_service, screening
 from app.services import review as review_service
@@ -24,6 +25,8 @@ from app.services.storage import (
 )
 from app.tasks.background import process_application
 from app.tools import cv_storage
+
+logger = get_logger("app.api.applications")
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -52,7 +55,15 @@ async def create_application(
     app_row = await application_service.create_application(session, data)
     # cv_file_ref cần application_id -> lưu file SAU khi có id, rồi cập nhật. Lưu QUA SEAM storage.
     key = build_cv_key(app_row.id, file.filename or "")
-    await get_storage().save(key, content, content_type_for(file.filename or ""))
+    try:
+        await get_storage().save(key, content, content_type_for(file.filename or ""))
+    except StorageError as exc:
+        # Xem public.py: hồ sơ có cv_file_ref rỗng sẽ khiến parser chạy nhánh STUB → "parse thành
+        # công" giả. Thà xóa hồ sơ + báo lỗi còn hơn để dữ liệu nói dối.
+        logger.error("Upload CV (HR): lưu storage thất bại (app=%s, key=%s): %s", app_row.id, key, exc)
+        await session.delete(app_row)
+        await session.commit()
+        raise HTTPException(status_code=503, detail="Lỗi lưu trữ file CV. Vui lòng thử lại.") from None
     app_row.cv_file_ref = key
     await session.commit()
     await session.refresh(app_row)
@@ -102,7 +113,10 @@ async def download_cv(application_id: int, session: DBSession) -> Response:
         raise HTTPException(status_code=404, detail="File CV không còn trong kho lưu trữ.") from None
     except StorageError as exc:
         # Gồm cả cv_file_ref ĐỊNH DẠNG CŨ (path tuyệt đối, trước slice 06) → key không hợp lệ.
-        raise HTTPException(status_code=502, detail=f"Không lấy được file CV: {exc}") from None
+        # Chi tiết (có KEY/bucket) chỉ vào LOG — không trả ra response (đã cố ý bỏ cv_file_ref khỏi
+        # API thì cũng không được rò qua thông báo lỗi).
+        logger.error("Tải CV: lỗi storage (app=%s): %s", application_id, exc)
+        raise HTTPException(status_code=502, detail="Không lấy được file CV từ kho lưu trữ.") from None
 
     # Tên tải về suy từ id + đuôi của key — KHÔNG lộ key/bucket, không kèm tên gốc (PII).
     suffix = PurePosixPath(app_row.cv_file_ref).suffix.lower()

@@ -151,18 +151,10 @@ async def reset(
             )
             print(f"  Qdrant: đã xóa point {jd_point_id(j.id)} (job_id={j.id})")
 
-        # 1b) File CV qua SEAM STORAGE (slice 06) — xóa TRƯỚC khi mất row (mất row là mất key).
-        #     Không để file mồ côi: CV là dữ liệu cá nhân, không giữ lại sau khi xóa hồ sơ (NFR-4).
-        #     Lỗi xóa một file KHÔNG chặn cả lệnh reset — chỉ cảnh báo (file có thể đã bị xóa tay).
-        storage = get_storage()
-        for a in apps:
-            if not a.cv_file_ref:
-                continue
-            try:
-                await storage.delete(a.cv_file_ref)
-                print(f"  Storage: đã xóa CV key={a.cv_file_ref} (app {a.id})")
-            except StorageError as exc:
-                print(f"  [chú ý] không xóa được CV của app {a.id} ({a.cv_file_ref}): {exc}")
+        # 1b) GHI NHỚ key CV trước khi xóa row (mất row là mất key). File xóa SAU KHI DB commit —
+        #     xóa trước mà transaction rollback thì file mất trong khi hồ sơ vẫn còn (HR bấm tải →
+        #     hỏng). Ngược lại (commit xong mới xóa) xấu nhất chỉ còn file mồ côi + đã in cảnh báo.
+        cv_keys = [(a.id, a.cv_file_ref) for a in apps if a.cv_file_ref]
 
         # 2) DB (cùng transaction): application (audit_log cascade) + checkpoint threads + job_posting.
         if app_ids:
@@ -173,9 +165,21 @@ async def reset(
         if job_ids:
             await session.execute(delete(JobPosting).where(JobPosting.id.in_(job_ids)))
         await session.commit()
+
+        # 3) File CV qua SEAM STORAGE (slice 06) — SAU commit. Không để file mồ côi: CV là dữ liệu
+        #    cá nhân, không giữ lại sau khi xóa hồ sơ (NFR-4). Lỗi xóa một file KHÔNG chặn cả lệnh
+        #    (file có thể đã bị xóa tay) — chỉ cảnh báo để dọn thủ công.
+        storage = get_storage()
+        for app_id, key in cv_keys:
+            try:
+                await storage.delete(key)
+                print(f"  Storage: đã xóa CV key={key} (app {app_id})")
+            except StorageError as exc:
+                print(f"  [chú ý] KHÔNG xóa được CV của app {app_id} ({key}): {exc} — dọn thủ công.")
+
         print(
-            f"\nĐã xóa {len(apps)} application (+audit_log +checkpoint), {len(jobs)} job_posting "
-            f"(+vector Qdrant), {len(thread_ids)} thread checkpoint lẻ."
+            f"\nĐã xóa {len(apps)} application (+audit_log +checkpoint +{len(cv_keys)} file CV), "
+            f"{len(jobs)} job_posting (+vector Qdrant), {len(thread_ids)} thread checkpoint lẻ."
         )
 
 

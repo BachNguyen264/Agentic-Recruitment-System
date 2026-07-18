@@ -196,6 +196,41 @@ async def test_parser_node_real_reads_via_storage(monkeypatch) -> None:
     assert "[parser] OK" in out["messages"][0]
 
 
+async def test_parser_node_does_not_block_event_loop(monkeypatch) -> None:
+    """parse_cv là ĐỒNG BỘ (PyMuPDF + gọi LLM sync). Node async PHẢI offload nó sang thread.
+
+    Trước slice 06 node là `def` nên LangGraph tự chạy trong thread executor; đổi sang `async def`
+    làm mất cơ chế đó → nếu gọi thẳng, một CV sẽ CHẶN toàn bộ event loop (mọi request khác đứng
+    hình vài giây). Test này canh nhịp một task nền: bị chặn thì nó gần như không chạy được vòng nào.
+    """
+    import asyncio
+    import time
+
+    monkeypatch.setattr(settings, "enable_llm", True)
+    monkeypatch.setattr(parser_mod, "get_storage", lambda: _FakeStorage(b"x"))
+
+    def _slow_blocking_parse(_data, _name, **_kw):
+        time.sleep(0.30)  # mô phỏng trích PDF + gọi LLM (đồng bộ, chặn)
+        return {"parsed_data": None, "confidence": 0.0, "uncertainty_flags": [], "escalation_reason": None}
+
+    monkeypatch.setattr(parser_mod, "parse_cv", _slow_blocking_parse)
+
+    ticks = 0
+
+    async def _heartbeat() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    beat = asyncio.create_task(_heartbeat())
+    await parser_node({"input": {"cv_path": "cv/1/a.pdf"}, "scratchpad": {}})
+    beat.cancel()
+
+    # Không chặn → heartbeat chạy được nhiều vòng trong 0.3s. Chặn → gần như 0.
+    assert ticks >= 5, f"event loop bị CHẶN trong lúc parse (chỉ {ticks} nhịp) — phải offload sang thread"
+
+
 async def test_parser_node_storage_error_parse_failed_no_crash(monkeypatch) -> None:
     """Mất file / R2 lỗi / key cũ → parse_failed + escalation, KHÔNG sập pipeline (PRD §7.1)."""
     monkeypatch.setattr(settings, "enable_llm", True)

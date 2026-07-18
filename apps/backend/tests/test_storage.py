@@ -235,6 +235,71 @@ def test_r2_missing_config_raises(monkeypatch) -> None:
     assert "R2_ACCESS_KEY_ID" in str(exc.value)  # báo RÕ thiếu biến nào
 
 
+# ── 4b) Lưu HỎNG không được để lại hồ sơ "parse thành công" giả ───────
+async def test_upload_deletes_row_when_storage_save_fails(monkeypatch) -> None:
+    """R2 sập lúc nộp → phải XÓA hồ sơ vừa tạo + 503, KHÔNG để cv_file_ref rỗng.
+
+    Vì sao quan trọng: parser coi `cv_file_ref` rỗng là "không có CV" → chạy nhánh STUB và trả
+    confidence 1.0 ⇒ hồ sơ KHÔNG có CV lại trôi qua pipeline như đã parse THÀNH CÔNG.
+    """
+    import httpx
+
+    from app.api.routes import public as public_mod
+    from app.core.database import get_session
+    from app.main import app
+    from app.models.application import Application
+
+    deleted: list = []
+
+    class _Session:
+        async def delete(self, obj):  # noqa: ANN001
+            deleted.append(obj)
+
+        async def commit(self):
+            return None
+
+        async def refresh(self, _obj):  # noqa: ANN001
+            return None
+
+    session = _Session()
+
+    async def _fake_session():
+        yield session
+
+    class _BoomStorage:
+        async def save(self, *_a, **_kw):
+            raise StorageError("R2 down")
+
+    async def _fake_create(_session, _data):
+        row = Application(job_id=2, applicant_email="x@e.com", status="SUBMITTED")
+        row.id = 999
+        return row
+
+    job = type("J", (), {"id": 2})()
+    monkeypatch.setattr(public_mod.job_service, "get_open_job", lambda *a, **k: _async(job))
+    monkeypatch.setattr(public_mod.application_service, "create_application", _fake_create)
+    monkeypatch.setattr(public_mod, "get_storage", lambda: _BoomStorage())
+    app.dependency_overrides[get_session] = _fake_session
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/public/applications",
+                data={"job_id": "2", "applicant_email": "x@e.com"},
+                files={"file": ("cv.pdf", _PDF, "application/pdf")},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 503  # ứng viên được báo lỗi rõ, không "im lặng thành công"
+    assert deleted and deleted[0].id == 999  # hồ sơ mồ côi đã bị xóa
+
+
+async def _async(value):
+    return value
+
+
 # ── 5) Factory ────────────────────────────────────────────────────────
 def test_factory_picks_backend(monkeypatch) -> None:
     get_storage.cache_clear()

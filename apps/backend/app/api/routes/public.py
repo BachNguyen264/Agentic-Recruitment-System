@@ -13,11 +13,14 @@ from pydantic import ValidationError
 from app.api.deps import DBSession
 from app.schemas.application import ApplicationCreate, PublicSubmitResponse
 from app.schemas.job_posting import PublicJobRead
+from app.core.logging import get_logger
 from app.schemas.screening import PublicScreeningRead, ScreeningSubmit, ScreeningSubmitResponse
 from app.services import application_service, job_service, screening
-from app.services.storage import build_cv_key, content_type_for, get_storage
+from app.services.storage import StorageError, build_cv_key, content_type_for, get_storage
 from app.tasks.background import process_application
 from app.tools import cv_storage
+
+logger = get_logger("app.api.public")
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -71,7 +74,18 @@ async def submit_application(
     #    async (TÁI DÙNG luồng hiện có). cv_file_ref = KEY storage, KHÔNG phải path (slice 06).
     app_row = await application_service.create_application(session, data)
     key = build_cv_key(app_row.id, file.filename or "")
-    await get_storage().save(key, content, content_type_for(file.filename or ""))
+    try:
+        await get_storage().save(key, content, content_type_for(file.filename or ""))
+    except StorageError as exc:
+        # Lưu file HỎNG (R2 sập/credentials sai) → KHÔNG để lại hồ sơ trỏ file rỗng: parser coi
+        # cv_file_ref rỗng là "không có CV" và chạy nhánh STUB → hồ sơ trôi tiếp như đã parse THÀNH
+        # CÔNG (confidence 1.0). Xóa hồ sơ vừa tạo + báo ứng viên thử lại.
+        logger.error("Nộp CV: lưu storage thất bại (app=%s, key=%s): %s", app_row.id, key, exc)
+        await session.delete(app_row)
+        await session.commit()
+        raise HTTPException(
+            status_code=503, detail="Hệ thống đang lỗi lưu trữ hồ sơ. Vui lòng thử lại sau ít phút."
+        ) from None
     app_row.cv_file_ref = key
     await session.commit()
     await session.refresh(app_row)

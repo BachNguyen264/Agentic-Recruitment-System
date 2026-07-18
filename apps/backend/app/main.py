@@ -64,6 +64,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Content-Disposition KHÔNG thuộc nhóm header CORS mặc định cho phép đọc → không expose thì JS
+    # ở dashboard (khác origin: :3000 vs :8000, và khác domain khi deploy) không đọc được tên file
+    # khi tải CV gốc (slice 06).
+    expose_headers=["Content-Disposition"],
 )
 
 # Slice 09 — Auth HR (PRD §4): require_hr bảo vệ MỌI router HR ở cấp router (áp cho mọi endpoint
