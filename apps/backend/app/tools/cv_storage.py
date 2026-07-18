@@ -1,14 +1,12 @@
-"""cv_storage — lưu file CV upload (dev: local). PRD §16 (cv_file_ref).
+"""cv_storage — KIỂM TRA file CV upload (server-side). PRD §8.2, §16, NFR-4.
 
-# TODO (production): chuyển sang object storage (S3/Cloudinary). Lát này lưu local trong
-# ``settings.cv_upload_dir`` (đã gitignore — CV là dữ liệu cá nhân, NFR-4).
+Slice 06: việc LƯU đã chuyển sang seam `app/services/storage` (LocalStorage/R2Storage) — module này
+giờ CHỈ còn phần validate (đuôi + size + magic bytes), dùng chung cho MỌI đường nhận CV.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-
-from app.core.config import settings
 
 ALLOWED_SUFFIXES = {".pdf", ".docx"}
 MAX_BYTES = 10 * 1024 * 1024  # 10MB
@@ -36,13 +34,3 @@ def validate_cv(filename: str, content: bytes) -> None:
         raise InvalidCV("Nội dung không phải PDF hợp lệ.")
     if suffix == ".docx" and not content.startswith(_ZIP_MAGIC):
         raise InvalidCV("Nội dung không phải DOCX hợp lệ.")
-
-
-def save_cv(application_id: int, original_filename: str, content: bytes) -> str:
-    """Ghi file CV ra đĩa, tên theo application_id + đuôi gốc. Trả về đường dẫn (cv_file_ref)."""
-    suffix = Path(original_filename or "").suffix.lower()
-    dest_dir = Path(settings.cv_upload_dir)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{application_id}{suffix}"
-    dest.write_bytes(content)
-    return str(dest)

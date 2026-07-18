@@ -6,15 +6,22 @@ Nộp CV = upload file (PDF/DOCX) + email + job_id → lưu file local, tạo Ap
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import PurePosixPath
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Response, UploadFile, status
 from pydantic import ValidationError
 
 from app.api.deps import DBSession
 from app.schemas.application import ApplicationCreate, ApplicationRead, ReviewRequest
 from app.services import application_service, screening
 from app.services import review as review_service
+from app.services.storage import (
+    StorageError,
+    StorageNotFound,
+    build_cv_key,
+    content_type_for,
+    get_storage,
+)
 from app.tasks.background import process_application
 from app.tools import cv_storage
 
@@ -29,19 +36,24 @@ async def create_application(
     job_id: int | None = Form(None),
     file: UploadFile = File(...),
 ) -> ApplicationRead:
-    suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in cv_storage.ALLOWED_SUFFIXES:
-        raise HTTPException(status_code=400, detail="Chỉ nhận CV định dạng .pdf hoặc .docx")
-
     try:
         data = ApplicationCreate(job_id=job_id, applicant_email=applicant_email)
     except ValidationError:
         raise HTTPException(status_code=422, detail="Email không hợp lệ") from None
 
+    # Slice 06: dùng CHUNG validate_cv với đường nộp công khai (trước đây chỉ kiểm đuôi → bytes
+    # không giới hạn/không đúng loại vẫn ghi được; nay đẩy lên object storage nên phải chặn ở đây).
     content = await file.read()
+    try:
+        cv_storage.validate_cv(file.filename or "", content)
+    except cv_storage.InvalidCV as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
     app_row = await application_service.create_application(session, data)
-    # cv_file_ref cần application_id -> lưu file SAU khi có id, rồi cập nhật.
-    app_row.cv_file_ref = cv_storage.save_cv(app_row.id, file.filename or "", content)
+    # cv_file_ref cần application_id -> lưu file SAU khi có id, rồi cập nhật. Lưu QUA SEAM storage.
+    key = build_cv_key(app_row.id, file.filename or "")
+    await get_storage().save(key, content, content_type_for(file.filename or ""))
+    app_row.cv_file_ref = key
     await session.commit()
     await session.refresh(app_row)
 
@@ -64,6 +76,42 @@ async def get_application(application_id: int, session: DBSession) -> Applicatio
     # Chi tiết: kèm câu trả lời sàng lọc (nếu có) cho HR (PRD §7.3, §11).
     answers = await screening.latest_answers(session, application_id)
     return ApplicationRead.model_validate(app_row).model_copy(update={"screener_answers": answers})
+
+
+@router.get(
+    "/{application_id}/cv",
+    summary="HR tải CV gốc — STREAM qua storage (KHÔNG public URL; PRD NFR-4)",
+    response_class=Response,
+)
+async def download_cv(application_id: int, session: DBSession) -> Response:
+    """Trả bytes CV gốc cho HR.
+
+    BẢO MẬT (NFR-4 — CV là dữ liệu cá nhân): endpoint này nằm trong router HR nên đã có
+    `require_hr` (slice 09) — CHƯA ĐĂNG NHẬP → 401. File được STREAM qua `storage.get()`, KHÔNG
+    bao giờ phát public URL và bucket R2 giữ PRIVATE, nên mọi lượt tải đều đi qua kiểm đăng nhập.
+    """
+    app_row = await application_service.get_application(session, application_id)
+    if app_row is None:
+        raise HTTPException(status_code=404, detail="Application không tồn tại")
+    if not app_row.cv_file_ref:
+        raise HTTPException(status_code=404, detail="Hồ sơ này không có file CV.")
+
+    try:
+        data = await get_storage().get(app_row.cv_file_ref)
+    except StorageNotFound:
+        raise HTTPException(status_code=404, detail="File CV không còn trong kho lưu trữ.") from None
+    except StorageError as exc:
+        # Gồm cả cv_file_ref ĐỊNH DẠNG CŨ (path tuyệt đối, trước slice 06) → key không hợp lệ.
+        raise HTTPException(status_code=502, detail=f"Không lấy được file CV: {exc}") from None
+
+    # Tên tải về suy từ id + đuôi của key — KHÔNG lộ key/bucket, không kèm tên gốc (PII).
+    suffix = PurePosixPath(app_row.cv_file_ref).suffix.lower()
+    filename = f"CV-{application_id}{suffix}"
+    return Response(
+        content=data,
+        media_type=content_type_for(app_row.cv_file_ref),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post(

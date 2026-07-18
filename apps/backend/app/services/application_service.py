@@ -10,10 +10,10 @@ from app.schemas.application import ApplicationCreate
 
 
 async def create_application(session: AsyncSession, data: ApplicationCreate) -> Application:
+    # cv_file_ref để None: route lưu file QUA SEAM storage rồi gán KEY (cần application_id trước).
     app_row = Application(
         job_id=data.job_id,
         applicant_email=str(data.applicant_email),
-        cv_file_ref=data.cv_file_ref,
         status=ApplicationStatus.SUBMITTED.value,
     )
     session.add(app_row)

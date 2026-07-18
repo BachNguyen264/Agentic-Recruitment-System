@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.application import ApplicationStatus
 from app.schemas.parsed_cv import ParsedCV
+from app.services.storage import StorageError, get_storage
 from app.tools.cv_reader import CVReadError, extract_text
 
 logger = get_logger("app.agents.parser")
@@ -74,24 +75,25 @@ def _build_parser_llm():
     return llm.with_structured_output(ParsedCV)
 
 
-def parse_cv(cv_path: str, *, llm: Any | None = None) -> dict:
-    """Lõi parser (KHÔNG chạm DB): file -> LLM -> ParsedCV + confidence + flags.
+def parse_cv(data: bytes, name: str, *, llm: Any | None = None) -> dict:
+    """Lõi parser (KHÔNG chạm DB, KHÔNG I/O storage): BYTES CV -> LLM -> ParsedCV + confidence + flags.
 
-    Dùng chung bởi node (pipeline) và endpoint /agents/parse-cv (iterate chất lượng prompt).
-    `llm` cho phép inject mock trong test. Trả dict:
+    Nhận sẵn bytes (slice 06: CV có thể ở đĩa hoặc R2 — người gọi lấy qua seam storage). `name` là
+    tên file/key, chỉ để chọn bộ đọc theo đuôi. Dùng chung bởi node (pipeline) và endpoint
+    /agents/parse-cv. `llm` cho phép inject mock trong test. Trả dict:
     `{parsed_data, confidence, uncertainty_flags, escalation_reason}`.
     """
     try:
-        text = extract_text(cv_path)
+        text = extract_text(data, name)
     except CVReadError as exc:
-        logger.info("parser: parse_failed khi đọc %s — %s", cv_path, exc)
+        logger.info("parser: parse_failed khi đọc %s — %s", name, exc)
         return _failed(str(exc))
 
     try:
         client = llm or _build_parser_llm()
         parsed: ParsedCV = client.invoke(_PROMPT.format(cv_text=text))
     except Exception as exc:  # noqa: BLE001 — lỗi LLM/API KHÔNG được làm sập pipeline (PRD §7.1)
-        logger.warning("parser: lỗi gọi LLM cho %s — %s", cv_path, exc)
+        logger.warning("parser: lỗi gọi LLM cho %s — %s", name, exc)
         return _failed(f"Lỗi gọi LLM khi parse CV: {exc}")
 
     return {
@@ -102,11 +104,15 @@ def parse_cv(cv_path: str, *, llm: Any | None = None) -> dict:
     }
 
 
-def parser_node(state: RecruitmentState) -> dict:
-    """Node pipeline. Lấy đường dẫn CV từ state.input.cv_path; persist do background đảm nhận."""
-    cv_path = (state.get("input") or {}).get("cv_path")
+async def parser_node(state: RecruitmentState) -> dict:
+    """Node pipeline. Lấy KEY CV từ state.input.cv_path → bytes qua seam storage; persist do background.
 
-    if not settings.enable_llm or not cv_path:
+    ASYNC (slice 06): đọc CV giờ là I/O mạng khi STORAGE_BACKEND=r2 → phải await storage.get.
+    (ranker_node vốn đã async; graph chạy lẫn sync/async qua `ainvoke` — xem CLAUDE.md.)
+    """
+    cv_key = (state.get("input") or {}).get("cv_path")
+
+    if not settings.enable_llm or not cv_key:
         # Stub (scaffold) — giữ nguyên hành vi cũ để không phá run-demo/test_graph.
         return {
             "status": ApplicationStatus.PARSING.value,
@@ -116,7 +122,16 @@ def parser_node(state: RecruitmentState) -> dict:
             "messages": ["[parser] stub pass-through (ENABLE_LLM=false hoặc không có file CV)"],
         }
 
-    result = parse_cv(cv_path)
+    # Lỗi storage (mất file / R2 lỗi / key cũ trước slice 06) KHÔNG làm sập pipeline → parse_failed
+    # + escalation, giống lỗi đọc file (PRD §7.1).
+    try:
+        data = await get_storage().get(cv_key)
+    except StorageError as exc:
+        logger.warning("parser: không lấy được CV %s — %s", cv_key, exc)
+        result = _failed(f"Không đọc được file CV từ storage: {exc}")
+    else:
+        result = parse_cv(data, cv_key)
+
     failed = "parse_failed" in result["uncertainty_flags"]
     if failed:
         msg = f"[parser] parse_failed — {result['escalation_reason']}"

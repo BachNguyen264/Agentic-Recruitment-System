@@ -11,11 +11,15 @@ from app.services.review import recommendation as _recommendation
 
 
 class ApplicationCreate(BaseModel):
-    """Ứng viên nộp CV: chỉ cần email + JD (PRD §8.2). cv_file_ref = placeholder ở scaffold."""
+    """Ứng viên nộp CV: chỉ cần email + JD (PRD §8.2).
+
+    KHÔNG có `cv_file_ref`: ref/key do SERVER sinh (`storage.build_cv_key`) sau khi có application_id.
+    (Slice 06 gỡ bỏ — trường này client đặt được sẽ thành lỗ đọc file tùy ý nếu có endpoint JSON nào
+    nhận thẳng schema này; thực tế nó luôn None vì cả hai route đều ghi đè sau khi lưu.)
+    """
 
     job_id: int | None = None
     applicant_email: EmailStr
-    cv_file_ref: str | None = None
 
 
 class ReviewRequest(BaseModel):
@@ -38,7 +42,10 @@ class ApplicationRead(BaseModel):
     id: int
     job_id: int | None
     applicant_email: str
-    cv_file_ref: str | None
+    # KHÔNG trả `cv_file_ref` ra client: trước slice 06 nó lộ ĐƯỜNG DẪN TUYỆT ĐỐI của server, sau
+    # slice 06 sẽ lộ KEY bucket. Frontend chỉ cần biết CÓ CV hay không để hiện nút tải; bytes lấy
+    # qua endpoint `GET /api/applications/{id}/cv` (có require_hr).
+    cv_file_ref: str | None = Field(default=None, exclude=True)
     parsed_data: dict
     score: float | None
     score_breakdown: dict
@@ -60,3 +67,8 @@ class ApplicationRead(BaseModel):
     @property
     def recommendation(self) -> str:
         return _recommendation(self.score, self.uncertainty_flags)
+
+    @computed_field  # có file CV để tải không (slice 06) — thay cho việc lộ key/path ra client.
+    @property
+    def has_cv(self) -> bool:
+        return bool(self.cv_file_ref)

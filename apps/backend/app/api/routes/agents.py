@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
-from pathlib import Path
-
 from fastapi import APIRouter, Body, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
@@ -18,6 +14,7 @@ from app.schemas.agent import ParseCVResponse
 from app.schemas.rank import RankCvRequest, RankCvResponse
 from app.services import job_service
 from app.tasks import background
+from app.tools import cv_storage
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -54,17 +51,18 @@ async def resume_screener_endpoint(
 @router.post("/parse-cv", response_model=ParseCVResponse, summary="Parse CV đồng bộ (iterate chất lượng)")
 async def parse_cv_endpoint(file: UploadFile = File(...)) -> ParseCVResponse:
     """Chạy NGAY logic Parser trên file upload (KHÔNG qua DB/queue). Công cụ chính để soi chất
-    lượng trích xuất + tinh chỉnh prompt. LUÔN parse thật (không phụ thuộc ENABLE_LLM)."""
+    lượng trích xuất + tinh chỉnh prompt. LUÔN parse thật (không phụ thuộc ENABLE_LLM).
+
+    Slice 06: parse THẲNG TỪ BYTES — KHÔNG còn ghi file tạm ra đĩa (CV là dữ liệu cá nhân, NFR-4:
+    không rải bản sao ngoài kho lưu trữ). File này KHÔNG được lưu (công cụ soi tức thời)."""
     content = await file.read()
-    suffix = Path(file.filename or "").suffix.lower()
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    # Trước đây đường này KHÔNG kiểm gì (chỉ lấy đuôi cho file tạm) — dùng chung validate_cv.
     try:
-        tmp.write(content)
-        tmp.close()
-        # parse_cv là sync (đọc file + gọi LLM sync) -> offload khỏi event loop.
-        result = await run_in_threadpool(parse_cv, tmp.name)
-    finally:
-        os.unlink(tmp.name)
+        cv_storage.validate_cv(file.filename or "", content)
+    except cv_storage.InvalidCV as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    # parse_cv là sync (đọc bytes + gọi LLM sync) -> offload khỏi event loop.
+    result = await run_in_threadpool(parse_cv, content, file.filename or "")
     return ParseCVResponse(**result)
 
 

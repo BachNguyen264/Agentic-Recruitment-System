@@ -34,6 +34,7 @@ from app.models.audit_log import AuditLog
 from app.models.job_posting import JobPosting
 from app.models.screening_session import ScreeningSession
 from app.services.qdrant_service import jd_point_id
+from app.services.storage import StorageError, get_storage
 
 # Bảng checkpoint của LangGraph AsyncPostgresSaver (khóa theo thread_id). checkpoint_migrations =
 # version schema, KHÔNG đụng. Thứ tự con→cha (không có FK giữa chúng nhưng giữ cho rõ ràng).
@@ -113,7 +114,7 @@ async def reset(
             ).scalar_one()
             print(
                 f"  id={a.id} job_id={a.job_id} status={a.status} email={a.applicant_email} "
-                f"audit_children={n_audit} screening_sessions={n_screen}"
+                f"audit_children={n_audit} screening_sessions={n_screen} cv={a.cv_file_ref or '—'}"
             )
 
         print(f"\n== Job_posting sẽ xóa ({len(jobs)}) — kèm xóa vector Qdrant ==")
@@ -149,6 +150,19 @@ async def reset(
                 points_selector=models.PointIdsList(points=[jd_point_id(j.id)]),
             )
             print(f"  Qdrant: đã xóa point {jd_point_id(j.id)} (job_id={j.id})")
+
+        # 1b) File CV qua SEAM STORAGE (slice 06) — xóa TRƯỚC khi mất row (mất row là mất key).
+        #     Không để file mồ côi: CV là dữ liệu cá nhân, không giữ lại sau khi xóa hồ sơ (NFR-4).
+        #     Lỗi xóa một file KHÔNG chặn cả lệnh reset — chỉ cảnh báo (file có thể đã bị xóa tay).
+        storage = get_storage()
+        for a in apps:
+            if not a.cv_file_ref:
+                continue
+            try:
+                await storage.delete(a.cv_file_ref)
+                print(f"  Storage: đã xóa CV key={a.cv_file_ref} (app {a.id})")
+            except StorageError as exc:
+                print(f"  [chú ý] không xóa được CV của app {a.id} ({a.cv_file_ref}): {exc}")
 
         # 2) DB (cùng transaction): application (audit_log cascade) + checkpoint threads + job_posting.
         if app_ids:

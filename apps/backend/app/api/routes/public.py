@@ -15,6 +15,7 @@ from app.schemas.application import ApplicationCreate, PublicSubmitResponse
 from app.schemas.job_posting import PublicJobRead
 from app.schemas.screening import PublicScreeningRead, ScreeningSubmit, ScreeningSubmitResponse
 from app.services import application_service, job_service, screening
+from app.services.storage import build_cv_key, content_type_for, get_storage
 from app.tasks.background import process_application
 from app.tools import cv_storage
 
@@ -66,9 +67,12 @@ async def submit_application(
     except cv_storage.InvalidCV as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
-    # 4) Tạo application gắn job_id + lưu file cục bộ + đẩy pipeline async (TÁI DÙNG luồng hiện có).
+    # 4) Tạo application gắn job_id + lưu file QUA SEAM STORAGE (local/R2 tùy config) + đẩy pipeline
+    #    async (TÁI DÙNG luồng hiện có). cv_file_ref = KEY storage, KHÔNG phải path (slice 06).
     app_row = await application_service.create_application(session, data)
-    app_row.cv_file_ref = cv_storage.save_cv(app_row.id, file.filename or "", content)
+    key = build_cv_key(app_row.id, file.filename or "")
+    await get_storage().save(key, content, content_type_for(file.filename or ""))
+    app_row.cv_file_ref = key
     await session.commit()
     await session.refresh(app_row)
     background_tasks.add_task(process_application, app_row.id)
