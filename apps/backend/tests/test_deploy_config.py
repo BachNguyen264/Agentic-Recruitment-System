@@ -82,7 +82,48 @@ async def test_cors_headers_absent_for_foreign_origin() -> None:
     assert r.headers.get("access-control-allow-origin") is None
 
 
-# ── 3) Entrypoint bind (Render cấp $PORT, KHÔNG reload ở prod) ────────
+# ── 3) Liveness cho health check của nền tảng ────────────────────────
+async def test_liveness_does_no_io_even_when_all_services_are_down(monkeypatch) -> None:
+    """`/api/health/live` phải trả 200 NGAY CẢ KHI Postgres/Redis/Qdrant hỏng — vì nó không gọi gì.
+
+    VÌ SAO cần endpoint riêng: Render gửi health check "vài giây một lần, LIÊN TỤC". `/api/health`
+    (kiểm sâu) ping cả 3 dịch vụ ⇒ ~17k lượt/ngày: một mình nó vượt hạn mức Upstash free
+    (10k lệnh/ngày) và giữ Neon không bao giờ tự ngủ (đốt compute-hours). Health check của nền tảng
+    hỏi "tiến trình còn sống không", KHÔNG phải "cả hệ thống có khỏe không".
+    """
+    import httpx
+
+    from app.api.routes import health as health_module
+    from app.main import app
+
+    async def _boom() -> str:  # nếu liveness lỡ gọi kiểm sâu, test sẽ nổ chứ không im lặng.
+        raise AssertionError("liveness KHÔNG được chạm dịch vụ ngoài")
+
+    monkeypatch.setattr(health_module, "_check_postgres", _boom)
+    monkeypatch.setattr(health_module, "_check_redis", _boom)
+    monkeypatch.setattr(health_module, "_check_qdrant", _boom)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/api/health/live")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
+def test_liveness_is_public() -> None:
+    """Render gọi health check KHÔNG kèm cookie — dính require_hr là service bị coi như chết."""
+    from app.api.deps import require_hr
+    from app.main import app
+
+    for route in app.routes:
+        if getattr(route, "path", "") == "/api/health/live":
+            deps = getattr(getattr(route, "dependant", None), "dependencies", [])
+            assert not any(getattr(d, "call", None) is require_hr for d in deps)
+            return
+    raise AssertionError("thiếu route /api/health/live")
+
+
+# ── 4) Entrypoint bind (Render cấp $PORT, KHÔNG reload ở prod) ────────
 def test_uvicorn_options_default_local_dev() -> None:
     from app.__main__ import uvicorn_options
 

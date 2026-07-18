@@ -36,7 +36,21 @@ async def _check_qdrant() -> str:
         return f"error: {type(exc).__name__}"
 
 
-@router.get("/health", summary="Liveness + ping 3 dịch vụ")
+@router.get("/health/live", summary="Liveness THUẦN (health check của nền tảng)")
+async def liveness() -> dict:
+    """Chỉ trả lời "tiến trình còn sống" — KHÔNG chạm Postgres/Redis/Qdrant. Đây là path để trỏ
+    Health Check của Render (slice 13).
+
+    VÌ SAO tách khỏi `/health`: Render gửi health check VÀI GIÂY MỘT LẦN, liên tục suốt thời gian
+    service chạy. Nếu trỏ vào `/health` (ping cả 3 dịch vụ) thì riêng health check đã ~17k lượt/ngày:
+    vượt hạn mức Upstash free (10k lệnh/ngày) và giữ Neon luôn thức (đốt compute-hours) — hệ thống tự
+    làm hỏng mình khi KHÔNG có ai dùng. Ngoài ra health check phải hỏi "tiến trình còn sống không";
+    một dịch vụ phụ chập chờn KHÔNG phải lý do để Render restart cả backend.
+    """
+    return {"status": "ok"}
+
+
+@router.get("/health", summary="Kiểm SÂU — ping 3 dịch vụ (dành cho người/chẩn đoán)")
 async def health() -> dict:
     services = {
         "postgres": await _check_postgres(),

@@ -5,7 +5,9 @@
 #
 # Build context = GỐC REPO (cần cả apps/backend lẫn scripts/). Trên Render:
 #   Dockerfile Path = ./Dockerfile · Docker Build Context Directory = .  (mặc định)
-#   Health Check Path = /api/health
+#   Health Check Path = /api/health/live   ← liveness THUẦN, KHÔNG phải /api/health (kiểm sâu):
+#     Render ping vài giây một lần, liên tục → trỏ vào /api/health sẽ đốt hạn mức Upstash free
+#     (10k lệnh/ngày) và giữ Neon luôn thức. Xem api/routes/health.py.
 # Secrets KHÔNG nằm trong image — Render truyền qua env vars (xem .env.example mục PROD).
 
 FROM python:3.12-slim-bookworm
