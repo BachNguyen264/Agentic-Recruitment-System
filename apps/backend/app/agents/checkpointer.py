@@ -35,6 +35,28 @@ _saver: AsyncPostgresSaver | None = None
 _graph: Any = None  # graph compile với AsyncPostgresSaver (dùng ở prod/background/resume)
 
 
+def _build_pool() -> AsyncConnectionPool:
+    """Dựng pool psycopg BỀN với autosuspend của Neon (KHÔNG mở — caller mở trong event loop).
+
+    Neon (serverless) tự NGỦ sau ~5 phút nhàn rỗi và GIẾT các kết nối đang mở. Pool mặc định không
+    biết điều đó → lần dùng kế tiếp mượn phải kết nối chết → `psycopg.errors.AdminShutdown` (cả
+    pipeline hỏng). Hai lớp chống (tương đương pre-ping/recycle của SQLAlchemy engine — vốn đã sống
+    qua autosuspend):
+      - `check=AsyncConnectionPool.check_connection`: PING nhẹ (`execute("")`) mỗi lần MƯỢN; kết nối
+        chết bị loại + thay bằng kết nối mới (đánh thức Neon ~1s) thay vì ném lỗi lên nghiệp vụ.
+      - `max_idle` < ngưỡng autosuspend Neon: pool tự đóng kết nối nhàn rỗi TRƯỚC khi Neon giết,
+        nên hiếm khi còn kết nối chết để mà loại.
+    """
+    return AsyncConnectionPool(
+        conninfo=settings.checkpointer_conninfo,
+        max_size=settings.checkpointer_pool_max_size,
+        max_idle=settings.checkpointer_pool_max_idle_seconds,
+        check=AsyncConnectionPool.check_connection,
+        kwargs=_CONN_KWARGS,
+        open=False,  # async: mở tường minh trong loop hiện tại (KHÔNG mở ở __init__)
+    )
+
+
 async def setup_checkpointer() -> None:
     """Lifespan startup: mở pool Neon (direct) + `.setup()` (idempotent) + compile graph với saver.
 
@@ -44,12 +66,7 @@ async def setup_checkpointer() -> None:
     global _pool, _saver, _graph
     if _graph is not None:
         return
-    _pool = AsyncConnectionPool(
-        conninfo=settings.checkpointer_conninfo,
-        max_size=settings.checkpointer_pool_max_size,
-        kwargs=_CONN_KWARGS,
-        open=False,  # async: mở tường minh trong loop hiện tại (KHÔNG mở ở __init__)
-    )
+    _pool = _build_pool()
     await _pool.open(wait=True, timeout=15)
     _saver = AsyncPostgresSaver(_pool)
     await _saver.setup()  # tạo bảng checkpoint trong Neon — idempotent, an toàn chạy lại mỗi lần boot

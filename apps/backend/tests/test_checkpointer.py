@@ -76,6 +76,27 @@ async def test_resume_continues_from_screener_without_rerun() -> None:
     assert snap.values.get("screener_answers") == {"q1": "mock answer"}
 
 
+# ── Pool BỀN với Neon autosuspend (13 re-verify): guard cấu hình, KHÔNG kết nối Neon ──
+def test_pool_configured_for_neon_autosuspend_resilience() -> None:
+    """Neon (serverless) ngủ sau ~5 phút và GIẾT kết nối pool → request kế mượn phải kết nối chết →
+    `psycopg.errors.AdminShutdown`, cả pipeline hỏng (đúng lỗi gặp trên prod). Pool PHẢI có:
+      - `check` khi mượn (ping `execute("")`) → loại + thay kết nối chết thay vì ném lỗi;
+      - `max_idle` < ngưỡng autosuspend Neon (~300s) → tự đóng kết nối nhàn rỗi trước khi Neon giết.
+    `open=False` nên KHÔNG kết nối Neon — chỉ kiểm cấu hình (guard hồi quy nếu ai gỡ mất).
+    """
+    from app.agents.checkpointer import _build_pool
+    from app.core.config import settings
+
+    pool = _build_pool()
+    try:
+        assert pool.check is not None, "pool thiếu `check` → kết nối chết sau autosuspend sẽ ném lỗi"
+        assert pool.max_idle == settings.checkpointer_pool_max_idle_seconds
+        assert pool.max_idle < 300, "max_idle phải < ngưỡng autosuspend Neon (~300s)"
+    finally:
+        # Chưa từng open (open=False) — không có kết nối để đóng; chỉ dọn cho gọn.
+        pass
+
+
 async def test_uncertain_does_not_go_through_screener() -> None:
     graph = compile_graph()
     config = {"configurable": {"thread_id": "cp-uncertain"}}

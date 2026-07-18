@@ -137,10 +137,15 @@ class Settings(BaseSettings):
     # khoá sạch đường đăng nhập của HR, lặp lại được vô hạn. Hỏng-mở (rate-limit yếu đi ở môi trường
     # không có proxy) ít tệ hơn hỏng-đóng (tự chặn chính mình) — và trên Render thì LUÔN có proxy.
     trust_proxy_headers: bool | None = None
-    # SỐ proxy tin cậy đứng trước app; khoá quota lấy phần tử thứ N TỪ PHẢI của X-Forwarded-For.
-    # 1 = chỉ Render. Render đặt Cloudflare trước *.onrender.com nên có thể cần 2 — xác nhận bằng
-    # dòng log "Rate-limit: khóa quota = ..." (in một lần) rồi chỉnh, ĐỪNG đoán.
-    proxy_trusted_hops: int = 1
+    # Header chứa IP CLIENT THẬT do proxy tin cậy đặt. Cloudflare đặt `CF-Connecting-IP` = IP client
+    # thật và GHI ĐÈ giá trị client tự gửi (không giả mạo được khi request đi thật qua Cloudflare) —
+    # tin cậy + đơn giản hơn đếm hop X-Forwarded-For (client chèn XFF giả được, và số hop đổi theo hạ
+    # tầng). Rỗng = TẮT (dùng cho proxy KHÔNG phải Cloudflare) → khoá quota rơi về đếm hop XFF.
+    proxy_client_ip_header: str = "cf-connecting-ip"
+    # DỰ PHÒNG khi header trên vắng mặt: SỐ proxy tin cậy đứng trước app; khoá quota lấy phần tử thứ N
+    # TỪ PHẢI của X-Forwarded-For. Render+Cloudflare = 2 chặng (client, cf, render) — nhưng đã ưu tiên
+    # CF-Connecting-IP nên hop chỉ là lưới an toàn. Xác nhận bằng log "Rate-limit: khóa quota = ...".
+    proxy_trusted_hops: int = 2
 
     @property
     def trust_proxy(self) -> bool:
@@ -156,6 +161,11 @@ class Settings(BaseSettings):
     # statements của psycopg. Đặt tay khi cần (vd URL không-pooled khác). Xem checkpointer_conninfo.
     checkpointer_database_url: str | None = None
     checkpointer_pool_max_size: int = 5
+    # Đóng kết nối NHÀN RỖI sau ngần này giây. PHẢI nhỏ hơn ngưỡng autosuspend của Neon (~300s) để
+    # pool tự đóng kết nối TRƯỚC khi Neon giết chúng — nếu không, request kế sau lúc nhàn rỗi mượn phải
+    # kết nối chết → `psycopg.errors.AdminShutdown`. Kèm `check` khi mượn (xem checkpointer.py) để
+    # kết nối chết còn sót được phát hiện + tái tạo (đánh thức Neon ~1s) thay vì ném lỗi.
+    checkpointer_pool_max_idle_seconds: float = 120.0
     redis_url: str = "redis://localhost:6379"
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str | None = None
