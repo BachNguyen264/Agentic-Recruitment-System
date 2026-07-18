@@ -55,9 +55,29 @@ class Settings(BaseSettings):
     score_pass_threshold: float = 60.0
     score_near_band: float = 10.0
 
-    # ── Lưu file CV upload (dev: local) ──────────────────────────────
-    # TODO (production): chuyển sang object storage (S3/Cloudinary) — xem PRD bàn deploy.
+    # ── Lưu file CV (slice 06 — PRD §16 cv_file_ref, NFR-4) ──────────
+    # Nghiệp vụ KHÔNG đọc/ghi path trực tiếp — đi qua seam `services/storage` (FileStorage).
+    #   local = đĩa dev (thư mục cv_upload_dir) · r2 = Cloudflare R2 (S3 API, bucket PRIVATE).
+    storage_backend: str = "local"
     cv_upload_dir: str = str(_REPO_ROOT / "apps" / "backend" / "data" / "uploads")
+
+    # Cloudflare R2 (S3-compatible). Credentials CHỈ từ env — bucket PRIVATE (CV = dữ liệu cá nhân,
+    # NFR-4: KHÔNG public URL; HR tải qua endpoint stream có require_hr).
+    r2_account_id: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket: str | None = None
+    # Để rỗng → suy ra https://{r2_account_id}.r2.cloudflarestorage.com (xem r2_endpoint_url).
+    r2_endpoint: str | None = None
+
+    @property
+    def r2_endpoint_url(self) -> str | None:
+        """Endpoint S3 của R2: dùng R2_ENDPOINT nếu có, else suy từ account id."""
+        if self.r2_endpoint:
+            return self.r2_endpoint
+        if self.r2_account_id:
+            return f"https://{self.r2_account_id}.r2.cloudflarestorage.com"
+        return None
 
     # ── Ngưỡng pipeline (PRD §5 trụ cột 3 · §9 gate · §10 screener) ──
     # Đọc từ env; tinh chỉnh thực nghiệm ở Chương 4 (PRD §18).
