@@ -95,6 +95,24 @@ def test_create_session_secure_token_and_snapshot() -> None:
     assert session.commits == 0
 
 
+def test_mark_screener_sent_stamps_application_for_hr_display() -> None:
+    # Trước fix: screener_sent_at/screener_deadline là cột scaffold KHÔNG ai ghi → luôn null (HR thấy
+    # "—" dù email đã gửi). mark_screener_sent điền chúng CÙNG commit với create_session.
+    from datetime import datetime, timezone
+
+    from app.models.application import Application
+    from app.models.screening_session import ScreeningSession
+
+    app_row = Application(applicant_email="a@e.com", job_id=1)
+    deadline = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    sess = ScreeningSession(application_id=1, token="t", questions=[], expires_at=deadline)
+
+    assert app_row.screener_sent_at is None and app_row.screener_deadline is None  # bug cũ
+    screening.mark_screener_sent(app_row, sess)
+    assert app_row.screener_sent_at is not None  # đã ghi
+    assert app_row.screener_deadline == deadline  # khớp hạn của session (nguồn chân lý timeout)
+
+
 # ── get_form: validate token → chỉ câu hỏi + tiêu đề JD ──────────────────────
 
 

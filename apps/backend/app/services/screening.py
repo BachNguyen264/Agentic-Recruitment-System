@@ -79,6 +79,18 @@ def create_session(
     return row
 
 
+def mark_screener_sent(application: Application, session_row: ScreeningSession) -> None:
+    """Ghi mốc screener lên `application` cho HR THẤY (denormalize — PRD §10, §16).
+
+    Nguồn chân lý của nhắc/timeout vẫn là `screening_session` (expires_at/reminded_at/timed_out_at —
+    xem screening_timeout). Hai cột `screener_sent_at`/`screener_deadline` CHỈ để hiển thị: trước 08b
+    chúng là cột scaffold KHÔNG ai ghi → luôn null (HR thấy "—" dù email đã gửi). Gọi trong CÙNG commit
+    với AWAITING_SCREENER + create_session để nguyên tử. `sent_at` = lúc khởi phát screener (email gửi
+    ngay sau commit; nếu gửi lỗi thì 08c nhắc lại — cột này phản ánh "đã khởi phát", đủ cho hiển thị)."""
+    application.screener_sent_at = _now()
+    application.screener_deadline = session_row.expires_at
+
+
 async def _load_valid(
     session: AsyncSession, token: str, *, for_update: bool
 ) -> tuple[ScreeningSession, Application]:

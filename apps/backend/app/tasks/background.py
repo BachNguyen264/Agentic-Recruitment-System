@@ -140,6 +140,8 @@ async def process_application(application_id: int, *, force_review: bool = False
 
                 questions = list(getattr(job, "screener_questions", None) or []) if job else []
                 screening_row = screening.create_session(session, application_id, questions)
+                # Denormalize mốc screener lên application cho HR hiển thị (CÙNG commit — nguyên tử).
+                screening.mark_screener_sent(application, screening_row)
                 screener_token = screening_row.token
                 screener_email_to = application.applicant_email
                 screener_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
