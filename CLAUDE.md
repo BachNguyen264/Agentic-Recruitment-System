@@ -268,6 +268,11 @@ UI redesign; learning loop.
 
 Lookup order: **PRD.md** (business, what the system should do) → **CLAUDE.md** (how to code + status) → **ROADMAP.md** (what's next) → ask the user.
 
+**Sự cố live / vận hành (post-deploy):** xem `docs/deploy-live-issues.md` — tổng hợp problem sau khi
+deploy + nguyên nhân gốc + fix + verify (Neon autosuspend giết pool checkpointer, rate-limit sau
+Cloudflare, v.v.). Gặp lỗi tương tự hoặc trước khi đụng checkpointer/rate-limit/config deploy → đọc đó
+trước. Problem MỚI sau fix → ghi vào docs đó, ĐỪNG nhồi vào CLAUDE.md (file này nạp mỗi session, giữ gọn).
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
