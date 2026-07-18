@@ -92,6 +92,32 @@ def test_uvicorn_options_default_local_dev() -> None:
     assert opts["reload"] is True
 
 
+def test_env_example_only_lists_real_settings_fields() -> None:
+    """Mọi KEY trong .env.example phải khớp một field của Settings.
+
+    Env viết sai tên KHÔNG báo lỗi — pydantic-settings lặng lẽ bỏ qua (extra="ignore"). Trên prod
+    điều đó nghĩa là: đặt `CORS_ORIGIN` (thiếu S) trên Render → tưởng đã cấu hình, thực tế backend
+    vẫn chạy mặc định dev và HR không đăng nhập được. Test này chặn lỗi chính tả ngay từ file mẫu.
+
+    QUÉT CẢ PHẦN COMMENT: checklist env prod (mục cuối file) nằm trong comment nhưng chính là thứ
+    được COPY sang dashboard Render — typo ở đó nguy hiểm hệt như ở dòng thật.
+    """
+    import re
+    from pathlib import Path
+
+    env_example = Path(__file__).resolve().parents[3] / ".env.example"
+    keys = {m.lower() for m in re.findall(r"\b([A-Z][A-Z0-9_]{2,})=", env_example.read_text(encoding="utf-8"))}
+    exempt = {
+        # Thông tin tài khoản Upstash (chưa dùng trong code) — giữ lại để tiện tra cứu.
+        "upstash_redis_rest_url",
+        "upstash_redis_rest_token",
+        # Biến của FRONTEND (đặt ở Vercel, không phải backend Settings).
+        "next_public_api_base",
+    }
+    unknown = keys - set(Settings.model_fields) - exempt
+    assert not unknown, f".env.example có key KHÔNG tồn tại trong Settings: {sorted(unknown)}"
+
+
 def test_uvicorn_options_production_binds_all_interfaces_no_reload() -> None:
     from app.__main__ import uvicorn_options
 
