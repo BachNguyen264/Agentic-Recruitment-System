@@ -179,12 +179,15 @@ class RateLimitMiddleware:
         public_window_seconds: float,
         trust_proxy: bool,
         proxy_hops: int = 1,
+        client_ip_header: str = "",
         enabled: bool = True,
     ) -> None:
         self.app = app
         self.enabled = enabled
         self.trust_proxy = trust_proxy
         self.proxy_hops = max(1, proxy_hops)
+        # Header do proxy tin cậy đặt = IP client thật (vd Cloudflare "cf-connecting-ip"). Rỗng = tắt.
+        self.client_ip_header = client_ip_header.strip().lower()
         self._login = RateLimiter(login_max, login_window_seconds)
         self._public = RateLimiter(public_max, public_window_seconds)
         self._logged_probe = False
@@ -199,21 +202,26 @@ class RateLimitMiddleware:
         return None
 
     def _client_ip(self, scope: Scope) -> str:
-        """IP dùng làm khóa quota. Sau proxy thì lấy từ X-Forwarded-For, nếu không thì lấy peer TCP.
+        """IP dùng làm khóa quota. Ưu tiên header IP-client do proxy đặt; rồi X-Forwarded-For; rồi peer.
 
-        `proxy_hops` = SỐ proxy tin cậy đứng trước app; ta lấy phần tử thứ `hops` TỪ PHẢI SANG. Các
-        phần bên trái là do client tự khai (giả mạo được) nên không bao giờ được tin.
-        VÌ SAO cấu hình được thay vì cứ lấy phần phải nhất: số chặng phụ thuộc hạ tầng (Render đặt
-        Cloudflare trước `*.onrender.com` ⇒ có thể 2 chặng). Đoán sai một chặng thì khóa quota thành
-        MỘT địa chỉ hạ tầng dùng chung cho mọi khách → cả thế giới chung một xô → chỉ cần vài request
-        là khóa sạch login của HR lẫn đường nộp CV. Dùng log `probe` bên dưới để chỉnh cho đúng.
+        1) `client_ip_header` (vd Cloudflare `CF-Connecting-IP`): proxy tin cậy GHI header này = IP
+           client thật và ghi đè giá trị client tự gửi ⇒ tin cậy + không phụ thuộc số chặng. Ưu tiên.
+        2) DỰ PHÒNG `X-Forwarded-For`: lấy phần tử thứ `proxy_hops` TỪ PHẢI (các chặng proxy tin cậy
+           append IP vào cuối; phần bên trái do client tự khai, giả mạo được → không tin). Lấy nhầm
+           phần phải nhất khi có nhiều chặng ⇒ trúng IP HẠ TẦNG dùng chung ⇒ cả thế giới một xô.
+        3) Cuối cùng: peer TCP (môi trường không proxy).
+        Dùng log `probe` bên dưới để xác nhận khóa quota ra ĐÚNG IP client thật.
         """
         peer = scope.get("client")
         peer_ip = peer[0] if peer else "unknown"
         if not self.trust_proxy:
             return peer_ip
-        xff = Headers(scope=scope).get("x-forwarded-for")
-        parts = [p.strip() for p in (xff or "").split(",") if p.strip()]
+        headers = Headers(scope=scope)
+        if self.client_ip_header:
+            direct = headers.get(self.client_ip_header)
+            if direct and direct.strip():
+                return direct.strip()
+        parts = [p.strip() for p in (headers.get("x-forwarded-for") or "").split(",") if p.strip()]
         if not parts:
             return peer_ip
         return parts[-min(self.proxy_hops, len(parts))]
@@ -229,15 +237,18 @@ class RateLimitMiddleware:
             return
         self._logged_probe = True
         peer = scope.get("client")
+        headers = Headers(scope=scope)
         logger.info(
-            "Rate-limit: khóa quota = %r (trust_proxy=%s, hops=%s, peer=%s, X-Forwarded-For=%r). "
-            "Nếu địa chỉ này GIỐNG NHAU cho mọi khách thì cả hệ thống dùng chung một xô — chỉnh "
-            "TRUST_PROXY_HEADERS / PROXY_TRUSTED_HOPS.",
+            "Rate-limit: khóa quota = %r (trust_proxy=%s, header=%s→%r, hops=%s, peer=%s, "
+            "X-Forwarded-For=%r). Nếu địa chỉ này GIỐNG NHAU cho mọi khách thì cả hệ thống dùng chung "
+            "một xô — chỉnh PROXY_CLIENT_IP_HEADER / PROXY_TRUSTED_HOPS.",
             resolved,
             self.trust_proxy,
+            self.client_ip_header or None,
+            headers.get(self.client_ip_header) if self.client_ip_header else None,
             self.proxy_hops,
             peer[0] if peer else None,
-            Headers(scope=scope).get("x-forwarded-for"),
+            headers.get("x-forwarded-for"),
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:

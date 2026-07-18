@@ -314,6 +314,71 @@ async def test_proxy_hops_beyond_chain_length_never_crashes() -> None:
         assert (await c.post("/api/auth/login")).status_code == 200  # không có XFF
 
 
+# ── CF-Connecting-IP: khóa quota theo IP client THẬT do Cloudflare đặt ────
+# Chuỗi thật (log prod): X-Forwarded-For = "<client>, <cloudflare>, <render-nội-bộ>"; phần phải nhất
+# là IP hạ tầng Render DÙNG CHUNG → đếm hop rất dễ trúng nhầm. Cloudflare đặt CF-Connecting-IP = IP
+# client thật và GHI ĐÈ giá trị client tự gửi → dùng nó là chuẩn xác + không giả mạo được.
+_SHARED_XFF_TAIL = "172.71.215.190, 10.29.100.5"  # cloudflare, render-nội-bộ (chung cho mọi khách)
+
+
+async def test_cf_connecting_ip_isolates_clients_behind_shared_infra() -> None:
+    """Hai khách khác nhau, CÙNG đi qua một hạ tầng (XFF phải-nhất giống hệt) → phải TÁCH xô nhờ
+    CF-Connecting-IP. Không có fix này thì cả hai chung khóa `...:10.29.100.5` → khách thứ 2 bị 429."""
+    app = _app(rate_limited=True, login_max=1, login_window_seconds=900,
+               public_max=10, public_window_seconds=3600, trust_proxy=True,
+               proxy_hops=1, client_ip_header="cf-connecting-ip")
+    async with _client(app) as c:
+        a = await c.post("/api/auth/login", headers={
+            "CF-Connecting-IP": "42.116.109.239",
+            "X-Forwarded-For": f"42.116.109.239, {_SHARED_XFF_TAIL}"})
+        b = await c.post("/api/auth/login", headers={
+            "CF-Connecting-IP": "99.99.99.99",
+            "X-Forwarded-For": f"99.99.99.99, {_SHARED_XFF_TAIL}"})
+    assert a.status_code == 200 and b.status_code == 200  # KHÁC khách → KHÁC xô, không vạ lây
+
+
+async def test_cf_connecting_ip_beats_spoofed_xff() -> None:
+    """Client tự chèn X-Forwarded-For giả KHÔNG thoát được rate-limit: Cloudflare ghi đè
+    CF-Connecting-IP = IP thật, nên xoay phần XFF tự-khai vẫn cùng một xô."""
+    app = _app(rate_limited=True, login_max=1, login_window_seconds=900,
+               public_max=10, public_window_seconds=3600, trust_proxy=True,
+               proxy_hops=1, client_ip_header="cf-connecting-ip")
+    async with _client(app) as c:
+        first = await c.post("/api/auth/login", headers={
+            "CF-Connecting-IP": "42.116.109.239",
+            "X-Forwarded-For": f"1.2.3.4, 42.116.109.239, {_SHARED_XFF_TAIL}"})
+        # Cùng kẻ tấn công (CF-Connecting-IP giữ nguyên), đổi phần XFF tự chèn → vẫn phải bị chặn.
+        second = await c.post("/api/auth/login", headers={
+            "CF-Connecting-IP": "42.116.109.239",
+            "X-Forwarded-For": f"9.9.9.9, 42.116.109.239, {_SHARED_XFF_TAIL}"})
+    assert first.status_code == 200 and second.status_code == 429
+
+
+async def test_falls_back_to_xff_hops_when_cf_header_absent() -> None:
+    """Proxy KHÔNG phải Cloudflare (không có CF-Connecting-IP) → dự phòng đếm hop X-Forwarded-For."""
+    app = _app(rate_limited=True, login_max=1, login_window_seconds=900,
+               public_max=10, public_window_seconds=3600, trust_proxy=True,
+               proxy_hops=2, client_ip_header="cf-connecting-ip")
+    async with _client(app) as c:  # KHÔNG gửi CF-Connecting-IP
+        a = await c.post("/api/auth/login", headers={"X-Forwarded-For": "1.1.1.1, 9.9.9.9"})
+        b = await c.post("/api/auth/login", headers={"X-Forwarded-For": "2.2.2.2, 9.9.9.9"})
+    assert a.status_code == 200 and b.status_code == 200  # hops=2 → parts[-2] tách đúng hai khách
+
+
+async def test_empty_client_ip_header_ignores_cf_and_uses_xff() -> None:
+    """Tắt (rỗng) → BỎ QUA CF-Connecting-IP, chỉ dùng X-Forwarded-For (deploy không có Cloudflare)."""
+    app = _app(rate_limited=True, login_max=1, login_window_seconds=900,
+               public_max=10, public_window_seconds=3600, trust_proxy=True,
+               proxy_hops=1, client_ip_header="")
+    async with _client(app) as c:
+        a = await c.post("/api/auth/login", headers={
+            "CF-Connecting-IP": "42.116.109.239", "X-Forwarded-For": "1.1.1.1, 9.9.9.9"})
+        b = await c.post("/api/auth/login", headers={
+            "CF-Connecting-IP": "99.99.99.99", "X-Forwarded-For": "2.2.2.2, 9.9.9.9"})
+    # client_ip_header rỗng → khóa theo XFF phải-nhất (9.9.9.9) cho cả hai → khách 2 bị 429.
+    assert a.status_code == 200 and b.status_code == 429
+
+
 @pytest.mark.parametrize("path", ["/api/auth/login", "/api/public/applications"])
 async def test_disabled_limiter_lets_everything_through(path: str) -> None:
     app = _app(rate_limited=True, login_max=1, login_window_seconds=900,
