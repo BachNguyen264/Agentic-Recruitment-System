@@ -57,10 +57,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_CORS_ORIGINS = settings.cors_allow_origins  # nổ SỚM nếu cấu hình '*' (xem config.cors_allow_origins)
+
 app.add_middleware(
     CORSMiddleware,
-    # Dev: cho phép localhost/127.0.0.1 mọi cổng (dashboard :3000).
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    # Deploy (slice 13): CORS_ORIGINS = URL frontend Vercel (danh sách CỤ THỂ — bắt buộc khi có
+    # cookie: allow_credentials + '*' bị browser cấm). KHÔNG đặt env → dev: regex localhost mọi cổng
+    # (dashboard :3000). Middleware phủ MỌI route, kể cả công khai (/apply, /screening gọi từ frontend).
+    allow_origins=_CORS_ORIGINS,
+    allow_origin_regex=None if _CORS_ORIGINS else r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

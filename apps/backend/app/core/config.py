@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # ── App ──────────────────────────────────────────────────────────
     app_env: str = "local"
     log_level: str = "INFO"
+    # Bind của uvicorn (slice 13 deploy). Dev: loopback + hot-reload. Render: HOST=0.0.0.0 (nhận
+    # request từ ngoài container) + PORT do NỀN TẢNG cấp qua env — KHÔNG hardcode. Xem app/__main__.py.
+    host: str = "127.0.0.1"
+    port: int = 8000
     # Scaffold: KHÔNG gọi LLM trong pipeline (PRD §17). Slice-01 bật cho RIÊNG parser
     # (chỉ node parser đọc cờ này; các node khác vẫn stub bất kể giá trị).
     enable_llm: bool = False
@@ -113,6 +117,11 @@ class Settings(BaseSettings):
     hr_admin_email: str | None = None
     hr_admin_password: str | None = None
 
+    # ── CORS (slice 13 deploy — cross-domain Vercel + Render) ────────
+    # Danh sách origin frontend được phép, phân tách bằng dấu phẩy (vd "https://ars.vercel.app").
+    # RỖNG = dev: main.py fallback regex localhost (hành vi cũ). Xem cors_allow_origins.
+    cors_origins: str = ""
+
     # ── Hạ tầng ──────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/recruitment"
     # Kết nối RIÊNG cho LangGraph checkpointer (psycopg, PRD §10 Screener suspend/resume). Để rỗng →
@@ -137,6 +146,24 @@ class Settings(BaseSettings):
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
     langfuse_base_url: str | None = None
+
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        """`CORS_ORIGINS` (CSV) → list origin cho CORSMiddleware. Rỗng = không cấu hình (dev).
+
+        TỪ CHỐI `*`: khi ``allow_credentials=True`` trình duyệt CẤM wildcard — nó sẽ lặng lẽ KHÔNG
+        gửi/nhận cookie, login trả 200 mà HR vẫn không giữ được phiên (rủi ro #1 khi deploy
+        cross-domain). Nổ ngay lúc khởi động rõ ràng hơn nhiều so với debug trên bản live.
+        Bỏ dấu `/` cuối: Origin header không bao giờ có path, "https://x.app/" sẽ không khớp.
+        """
+        items = [o.strip().rstrip("/") for o in self.cors_origins.split(",")]
+        items = [o for o in items if o]
+        if "*" in items:
+            raise ValueError(
+                "CORS_ORIGINS không được chứa '*': wildcard không dùng được cùng cookie "
+                "(allow_credentials=True). Hãy liệt kê CỤ THỂ origin frontend."
+            )
+        return items
 
     @property
     def db_connect_args(self) -> dict[str, object]:
