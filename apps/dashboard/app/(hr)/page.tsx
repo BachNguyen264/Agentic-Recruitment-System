@@ -29,7 +29,8 @@ export default function Home() {
       <ServiceStatus />
 
       <footer className="border-t border-slate-200 pt-4 text-xs text-slate-400">
-        parser + ranker đã chạy thật; screener / scheduler / human_review còn stub (xem PRD.md).
+        Toàn bộ pipeline đã chạy thật: parser · ranker · screener (magic-link) · scheduler (email) ·
+        human_review + hai gate tự động (xem PRD.md).
       </footer>
     </main>
   );

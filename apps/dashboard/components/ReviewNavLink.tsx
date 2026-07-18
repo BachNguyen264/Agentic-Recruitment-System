@@ -17,9 +17,12 @@ export function ReviewNavLink() {
 
   return (
     <Link href="/review" className="text-slate-700 underline hover:text-slate-900">
-      → Hàng đợi review
+      <span>→ Hàng đợi review</span>
       {count > 0 && (
-        <span className="ml-1 rounded-full bg-amber-500 px-1.5 py-0.5 text-xs font-medium text-white no-underline">
+        <span
+          aria-label={`${count} hồ sơ chờ duyệt`}
+          className="ml-1.5 rounded-full bg-amber-500 px-1.5 py-0.5 text-xs font-medium text-white no-underline"
+        >
           {count}
         </span>
       )}

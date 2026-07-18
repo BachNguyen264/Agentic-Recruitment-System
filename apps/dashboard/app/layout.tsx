@@ -5,7 +5,13 @@ import { Providers } from "./providers";
 
 export const metadata: Metadata = {
   title: "ARS — Dashboard HR",
-  description: "Hệ thống tuyển dụng tự trị (scaffold). Nguồn chân lý: PRD.md.",
+  description: "Hệ thống tuyển dụng tự trị. Nguồn chân lý: PRD.md.",
+  // Favicon tường minh (dùng lại icon PWA) → trình duyệt không còn request /favicon.ico → hết 404.
+  icons: {
+    icon: "/icon-192.png",
+    shortcut: "/icon-192.png",
+    apple: "/icon-192.png",
+  },
 };
 
 // PWA: theme màu thanh trạng thái + viewport chuẩn cho màn hình điện thoại.
