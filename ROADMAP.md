@@ -109,6 +109,12 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - **13 — Deploy.** Backend → Render/Railway; frontend → Vercel; cloud storage (if not done in 06); env secrets;
   handle managed auto-suspend (wake before demo). Mind personal data (NFR-4) — use anonymized CVs for public demos.
   → **Milestone:** running on the internet, demo-able remotely.
+  - ✅ **CODE-PREP DONE:** CORS từ env (allowlist + credentials, chặn `*`), bind `HOST`/`PORT` (reload chỉ ở
+    local), Dockerfile (`alembic upgrade head && exec python -m app`, non-root), `/api/health/live` (liveness
+    không I/O — health check nền tảng ping vài giây/lần), hardening công khai (body-size đọc-có-đếm +
+    rate-limit theo IP có `PROXY_TRUSTED_HOPS`), `.env.example` + checklist env prod.
+  - ⬜ **CÒN LẠI:** runbook (Neon prod branch → Render service + env → Vercel → nối cross-domain) rồi
+    **verify live** (rủi ro #1: cookie cross-domain; kiểm log "Rate-limit: khóa quota" để chốt số chặng proxy).
 
 ---
 
@@ -149,6 +155,8 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [x] **08d gate auto-mời sau screener** (route_after_screener; ca sạch+auto_invite→thư mời thật→INTERVIEW_SCHEDULED; cờ thắng gate; verified live) — **GĐ3 XONG**
 - [x] **09 HR auth** (hr_user+seed+bcrypt/JWT httpOnly · require_hr router HR · (hr) guard+/login+logout · guest MỞ; verified live + 14 test) — **GĐ4 XONG**
 - [x] **06 object storage** (seam FileStorage · Local+R2 · cv_file_ref=KEY · HR tải CV gốc stream/require_hr · bucket PRIVATE · reset xóa file; verified live 2 backend + bền qua restart)
-- [ ] **13 deploy ← NEXT (đường về đích)**
+- [~] **13 deploy ← ĐANG LÀM.** Code-prep XONG (CORS/bind từ env · Dockerfile · /api/health/live ·
+      hardening công khai · checklist env prod; 213 test, adversarial review 8 fix). **Còn: runbook
+      (Render/Vercel do người dùng thao tác) + verify live.**
 - [ ] 10 analytics · 11 observability · 12 anti-injection · UI redesign
 - [ ] 14 LLM-suggested rubric · 15 optional
