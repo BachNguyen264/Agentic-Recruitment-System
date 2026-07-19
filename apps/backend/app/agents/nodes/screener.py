@@ -32,12 +32,15 @@ def screener_node(state: RecruitmentState) -> dict:
     # PHÂN BIỆT (gotcha): "bỏ-qua" ≠ "no_response". no_response = CÓ câu hỏi nhưng ứng viên im lặng quá
     # hạn (→ human_review). Bỏ-qua = KHÔNG có gì để hỏi (→ sạch → gate mời bình thường). KHÔNG gắn cờ.
     # AN TOÀN (adversarial JD-2b): guard này chạy CẢ lúc resume (ngữ nghĩa interrupt: code trước
-    # interrupt chạy 2 lần). Skip CHỈ khi snapshot CÓ key `screener_questions` VÀ nó rỗng (JD mới không
-    # câu hỏi — jd_dict luôn emit list). THIẾU key = snapshot CŨ (suspend TRƯỚC JD-2b, jd_dict chưa emit
-    # key): app đó suspend vì CÓ câu hỏi → KHÔNG skip, đi tiếp interrupt để resume (nếu skip sẽ NUỐT tín
-    # hiệu no_response/answers → mời nhầm ứng viên ghosting). Cross-deploy an toàn không cần drain.
+    # interrupt chạy 2 lần). BỎ QUA (skip, KHÔNG suspend/email) khi:
+    #   (a) KHÔNG có JD (jd rỗng/None) — không gì để sàng lọc, cũng KHÔNG auto-mời được (gate_config rỗng
+    #       → route_after_screener về human_review). Đóng luôn case suspend-form-rỗng cho app không JD; HOẶC
+    #   (b) JD mới CÓ key `screener_questions` VÀ nó rỗng (jd_dict luôn emit list).
+    # THIẾU key trong jd KHÔNG rỗng = snapshot CŨ (suspend TRƯỚC JD-2b, jd_dict chưa emit key): app đó
+    # suspend vì CÓ câu hỏi → KHÔNG skip, đi tiếp interrupt để resume (nếu skip sẽ NUỐT no_response/answers
+    # → mời nhầm ứng viên ghosting). `not jd` phân biệt (a) jd={} với snapshot-cũ jd={title,gate_config,…}.
     jd = (state.get("input") or {}).get("jd") or {}
-    if "screener_questions" in jd and not jd["screener_questions"]:
+    if not jd or ("screener_questions" in jd and not jd["screener_questions"]):
         return {
             "status": ApplicationStatus.SCREENING.value,
             "awaiting_screener": False,

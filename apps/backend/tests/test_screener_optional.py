@@ -56,6 +56,15 @@ def test_screener_node_no_questions_passthrough() -> None:
     assert out["status"] == ApplicationStatus.SCREENING.value
 
 
+def test_screener_node_no_jd_skips_no_empty_form() -> None:
+    # App KHÔNG có JD (jd rỗng) → không gì để sàng lọc → BỎ QUA (KHÔNG suspend-form-rỗng). Pass-through
+    # sạch; route sau đó về human_review (auto_invite OFF vì không gate_config). Chốt contract null-JD.
+    out = screener_node({"input": {}})
+    assert out["awaiting_screener"] is False
+    assert out["uncertainty_flags"] == []
+    assert out["screener_answers"] is None
+
+
 # ── 1b) ADVERSARIAL FIXES: parse_failed KHÔNG bị auto-mời + cross-deploy snapshot cũ an toàn ──────
 
 
