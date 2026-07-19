@@ -170,6 +170,41 @@ async def set_job_status(
     return job
 
 
+async def archive_job(session: AsyncSession, job_id: int) -> JobPosting | None:
+    """Lưu trữ (soft-delete) JD → ARCHIVED từ BẤT KỲ status (PRD §12.1 FR-HR-JD-3). None nếu không tồn tại.
+
+    ẨN khỏi list HR mặc định (list_jobs) + /apply (list_open_jobs chỉ OPEN → ARCHIVED tự loại). GIỮ NGUYÊN
+    Application + AuditLog (trụ cột kiểm toán) + vector Qdrant (dormant — khôi phục khỏi re-embed). TUYỆT
+    ĐỐI KHÔNG hard-delete JD (bảo toàn hồ sơ ứng viên + nhật ký).
+    """
+    job = await session.get(JobPosting, job_id)
+    if job is None:
+        return None
+    job.status = "ARCHIVED"
+    await session.commit()
+    await session.refresh(job)
+    return job
+
+
+async def restore_job(session: AsyncSession, job_id: int) -> JobPosting | None:
+    """Khôi phục JD đã lưu trữ → CLOSED (PRD §12.1 FR-HR-JD-3). None nếu không tồn tại.
+
+    CHỈ tác động khi JD đang ARCHIVED (đối xứng NGƯỢC với archive_job — archive nhận mọi status, restore
+    chỉ "gỡ lưu trữ"). JD KHÔNG lưu-trữ → NO-OP trả nguyên trạng: chặn stale-UI/replay/gọi API nhầm ÂM
+    THẦM đóng một JD đang OPEN (đang nhận CV) — adversarial review JD-4. KHÔNG tự OPEN: mở lại là hành
+    động CHỦ ĐÍCH (HR bấm Mở, backend kiểm rubric-bắt-buộc JD-2a).
+    """
+    job = await session.get(JobPosting, job_id)
+    if job is None:
+        return None
+    if job.status != "ARCHIVED":
+        return job  # no-op: không đụng JD đang sống (chỉ gỡ-lưu-trữ mới về CLOSED)
+    job.status = "CLOSED"
+    await session.commit()
+    await session.refresh(job)
+    return job
+
+
 async def set_gate_config(
     session: AsyncSession, job_id: int, *,
     auto_reject: bool | None = None, auto_invite: bool | None = None,
@@ -214,10 +249,16 @@ async def get_job(session: AsyncSession, job_id: int) -> JobPosting | None:
     return await session.get(JobPosting, job_id)
 
 
-async def list_jobs(session: AsyncSession, *, limit: int = 100) -> list[JobPosting]:
-    result = await session.execute(
-        select(JobPosting).order_by(JobPosting.created_at.desc()).limit(limit)
+async def list_jobs(
+    session: AsyncSession, *, archived: bool = False, limit: int = 100
+) -> list[JobPosting]:
+    """Danh sách JD cho HR. Mặc định (archived=False) ẨN JD đã lưu trữ (JD-4, PRD §12.1 FR-HR-JD-3);
+    archived=True → CHỈ JD ARCHIVED (màn 'Đã lưu trữ' để khôi phục)."""
+    stmt = select(JobPosting).order_by(JobPosting.created_at.desc()).limit(limit)
+    stmt = stmt.where(JobPosting.status == "ARCHIVED") if archived else stmt.where(
+        JobPosting.status != "ARCHIVED"
     )
+    result = await session.execute(stmt)
     return list(result.scalars().all())
 
 

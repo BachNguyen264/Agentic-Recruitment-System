@@ -32,8 +32,9 @@ async def create_job(payload: JobPostingCreate, session: DBSession) -> JobPostin
 
 
 @router.get("", response_model=list[JobPostingRead])
-async def list_jobs(session: DBSession) -> list[JobPostingRead]:
-    rows = await job_service.list_jobs(session)
+async def list_jobs(session: DBSession, archived: bool = False) -> list[JobPostingRead]:
+    """`?archived=false` (mặc định) → JD hoạt động (ẨN đã-lưu-trữ); `?archived=true` → chỉ JD ARCHIVED (JD-4)."""
+    rows = await job_service.list_jobs(session, archived=archived)
     return [JobPostingRead.model_validate(r) for r in rows]
 
 
@@ -75,6 +76,31 @@ async def update_status(
     except job_service.RubricRequiredError as exc:
         # MỞ JD khi chưa có rubric hợp lệ → 400 rõ (PRD §12.1 FR-HR-JD-2).
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if job is None:
+        raise HTTPException(status_code=404, detail="JobPosting không tồn tại")
+    return JobPostingRead.model_validate(job)
+
+
+@router.post(
+    "/{job_id}/archive",
+    response_model=JobPostingRead,
+    summary="Lưu trữ JD (soft-delete → ARCHIVED; giữ hồ sơ+kiểm toán, PRD §12.1 FR-HR-JD-3)",
+)
+async def archive_job(job_id: int, session: DBSession) -> JobPostingRead:
+    """Ẩn JD khỏi list + /apply, KHÔNG xóa dữ liệu. KHÔNG hard-delete."""
+    job = await job_service.archive_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="JobPosting không tồn tại")
+    return JobPostingRead.model_validate(job)
+
+
+@router.post(
+    "/{job_id}/restore",
+    response_model=JobPostingRead,
+    summary="Khôi phục JD đã lưu trữ (→ CLOSED, không tự OPEN; PRD §12.1 FR-HR-JD-3)",
+)
+async def restore_job(job_id: int, session: DBSession) -> JobPostingRead:
+    job = await job_service.restore_job(session, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="JobPosting không tồn tại")
     return JobPostingRead.model_validate(job)
