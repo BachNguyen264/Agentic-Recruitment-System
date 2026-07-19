@@ -7,6 +7,7 @@ import type { ApplicationDetail, JobPosting } from "@ars/shared-types";
 import { ParsedCVResult } from "@/components/ParsedCVResult";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { ScreenerAnswers } from "@/components/ScreenerAnswers";
+import { SafeHtml } from "@/components/SafeHtml";
 import { downloadCv, getApplication, getJob } from "@/lib/api";
 import { statusBadgeClass, statusLabel, toBreakdown } from "@/lib/applications";
 
@@ -105,15 +106,15 @@ export default function ApplicationDetailPage() {
           <ScreenerAnswers answers={app.screener_answers} />
 
 
-          {/* Ngữ cảnh JD: yêu cầu chính, để HR biết ứng viên được chấm dựa trên gì. */}
-          {jobQuery.data && jobQuery.data.requirements.length > 0 && (
+          {/* Ngữ cảnh JD: yêu cầu chính, để HR biết ứng viên được chấm dựa trên gì. JD-1: yêu cầu là
+              văn bản định dạng → render qua SafeHtml (sanitize + khôi phục bullet). */}
+          {jobQuery.data && jobQuery.data.requirements.trim() && (
             <section className="space-y-2">
               <h2 className="text-lg font-semibold">Yêu cầu JD</h2>
-              <ul className="list-disc space-y-0.5 rounded-md border border-slate-200 bg-white px-4 py-3 pl-8 text-sm text-slate-700">
-                {jobQuery.data.requirements.map((r, i) => (
-                  <li key={i}>{r}</li>
-                ))}
-              </ul>
+              <SafeHtml
+                html={jobQuery.data.requirements}
+                className="rte-content rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
+              />
             </section>
           )}
 

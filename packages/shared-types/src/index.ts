@@ -125,6 +125,19 @@ export interface RubricCriterion {
   weight: number;
 }
 
+// ── JD-1: trường hướng-ứng-viên (PRD §16, §8.1) ──
+export type JobLevel =
+  | "intern" | "fresher" | "junior" | "mid" | "senior" | "lead" | "manager";
+export type EmploymentType = "full_time" | "part_time" | "contract" | "internship";
+
+// Lương JD — khớp SalaryInfo (backend). negotiable = "Thỏa thuận" → bỏ qua min/max.
+export interface SalaryInfo {
+  min: number | null;
+  max: number | null;
+  currency: "VND" | "USD";
+  negotiable: boolean;
+}
+
 // Hai gate cấu hình theo JD (PRD §9). auto_invite dành cho vòng Screener (kích hoạt sau).
 export interface GateConfig {
   auto_reject: boolean;
@@ -134,8 +147,12 @@ export interface GateConfig {
 export interface JobPosting {
   id: number;
   title: string;
-  description: string;
-  requirements: string[];
+  description: string; // JD-1: văn bản định dạng (HTML)
+  requirements: string; // JD-1: văn bản định dạng (HTML) — không còn list
+  level: string | null; // JobLevel; permissive cho JD legacy
+  salary: SalaryInfo;
+  benefits: string; // JD-1: văn bản định dạng (HTML)
+  employment_type: string | null; // EmploymentType; permissive cho JD legacy
   rubric: RubricCriterion[];
   screener_questions: string[];
   gate_config: GateConfig;
@@ -149,7 +166,11 @@ export interface JobPosting {
 export interface JobPostingInput {
   title: string;
   description: string;
-  requirements: string[];
+  requirements: string;
+  level: string | null;
+  salary: SalaryInfo;
+  benefits: string;
+  employment_type: string | null;
   rubric: RubricCriterion[];
   screener_questions: string[];
   gate_config: GateConfig;
@@ -167,8 +188,12 @@ export interface JobMutationResult {
 export interface PublicJob {
   id: number;
   title: string;
-  description: string;
-  requirements: string[];
+  description: string; // JD-1: văn bản định dạng (HTML) — render qua SafeHtml (DOMPurify)
+  requirements: string; // JD-1: văn bản định dạng (HTML)
+  level: string | null;
+  salary: SalaryInfo;
+  benefits: string; // JD-1: văn bản định dạng (HTML)
+  employment_type: string | null;
   created_at: string;
 }
 

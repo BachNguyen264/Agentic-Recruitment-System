@@ -1,8 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import type { JobPostingInput, RubricCriterion } from "@ars/shared-types";
-import { isWeightBalanced, WEIGHT_TARGET, weightSum } from "@/lib/jobs";
+import type { JobPostingInput, RubricCriterion, SalaryInfo } from "@ars/shared-types";
+import { RichTextEditor } from "@/components/RichTextEditor";
+import {
+  EMPLOYMENT_TYPE_OPTIONS,
+  isWeightBalanced,
+  LEVEL_OPTIONS,
+  WEIGHT_TARGET,
+  weightSum,
+} from "@/lib/jobs";
 
 const INPUT =
   "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500";
@@ -13,7 +20,16 @@ function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
-// Danh sách text động (dùng chung requirements + screener_questions).
+// Ô nhập số tiền → number | null (rỗng = null; âm quy về 0).
+function parseAmount(raw: string): number | null {
+  const t = raw.trim();
+  if (t === "") return null;
+  const n = Number(t.replace(/[^\d]/g, ""));
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.trunc(n));
+}
+
+// Danh sách text động (dùng cho screener_questions — yêu cầu đã chuyển sang editor định dạng ở JD-1).
 function StringList({
   items,
   onChange,
@@ -78,6 +94,9 @@ export function JobForm({
   const set = <K extends keyof JobPostingInput>(key: K, value: JobPostingInput[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
+  const setSalary = (patch: Partial<SalaryInfo>) =>
+    setForm((f) => ({ ...f, salary: { ...f.salary, ...patch } }));
+
   const setRubric = (i: number, patch: Partial<RubricCriterion>) =>
     set(
       "rubric",
@@ -86,14 +105,31 @@ export function JobForm({
 
   const sum = weightSum(form.rubric);
   const balanced = isWeightBalanced(form.rubric);
+  const salary = form.salary;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (submitting) return; // chống double-submit
+
+    // Lương: thỏa thuận → bỏ min/max; ngược lại min ≤ max (báo lỗi inline, backend cũng validate).
+    if (!salary.negotiable && salary.min != null && salary.max != null && salary.min > salary.max) {
+      setLocalError("Lương tối thiểu không được lớn hơn tối đa.");
+      return;
+    }
+
     const cleaned: JobPostingInput = {
       title: form.title.trim(),
-      description: form.description.trim(),
-      requirements: form.requirements.map((s) => s.trim()).filter(Boolean),
+      description: form.description, // HTML (editor phát "" khi rỗng)
+      requirements: form.requirements, // HTML
+      level: form.level || null,
+      salary: {
+        min: salary.negotiable ? null : salary.min,
+        max: salary.negotiable ? null : salary.max,
+        currency: salary.currency,
+        negotiable: salary.negotiable,
+      },
+      benefits: form.benefits, // HTML
+      employment_type: form.employment_type || null,
       rubric: form.rubric
         .map((c) => ({ criterion: c.criterion.trim(), weight: clamp01(c.weight) }))
         .filter((c) => c.criterion.length > 0),
@@ -121,7 +157,7 @@ export function JobForm({
         </p>
       )}
 
-      {/* Tiêu đề + mô tả */}
+      {/* Tiêu đề */}
       <div className="space-y-1.5">
         <label htmlFor="jd-title" className={LABEL}>
           Tiêu đề <span className="text-red-500">*</span>
@@ -136,28 +172,125 @@ export function JobForm({
         />
       </div>
 
-      <div className="space-y-1.5">
-        <label htmlFor="jd-desc" className={LABEL}>
-          Mô tả <span className="text-red-500">*</span>
-        </label>
-        <textarea
-          id="jd-desc"
-          value={form.description}
-          onChange={(e) => set("description", e.target.value)}
-          rows={4}
-          placeholder="Mô tả công việc, bối cảnh, trách nhiệm chính…"
-          className={INPUT}
-        />
+      {/* Cấp bậc + loại việc */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <label htmlFor="jd-level" className={LABEL}>
+            Cấp bậc
+          </label>
+          <select
+            id="jd-level"
+            value={form.level ?? ""}
+            onChange={(e) => set("level", e.target.value || null)}
+            className={INPUT}
+          >
+            <option value="">— Chọn cấp bậc —</option>
+            {LEVEL_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1.5">
+          <label htmlFor="jd-emptype" className={LABEL}>
+            Loại công việc
+          </label>
+          <select
+            id="jd-emptype"
+            value={form.employment_type ?? ""}
+            onChange={(e) => set("employment_type", e.target.value || null)}
+            className={INPUT}
+          >
+            <option value="">— Chọn loại việc —</option>
+            {EMPLOYMENT_TYPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      {/* Yêu cầu (danh sách động) */}
+      {/* Lương */}
+      <fieldset className="space-y-3 rounded-md border border-slate-200 p-4">
+        <legend className="px-1 text-sm font-medium text-slate-700">Lương</legend>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={salary.negotiable}
+            onChange={(e) => setSalary({ negotiable: e.target.checked })}
+            className="h-4 w-4 rounded border-slate-300"
+          />
+          <span className="text-sm text-slate-700">Thỏa thuận (không hiển thị mức lương cụ thể)</span>
+        </label>
+        {!salary.negotiable && (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              value={salary.min ?? ""}
+              onChange={(e) => setSalary({ min: parseAmount(e.target.value) })}
+              placeholder="Từ"
+              aria-label="Lương tối thiểu"
+              className="w-40 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+            />
+            <span className="text-slate-400">–</span>
+            <input
+              type="number"
+              min={0}
+              value={salary.max ?? ""}
+              onChange={(e) => setSalary({ max: parseAmount(e.target.value) })}
+              placeholder="Đến"
+              aria-label="Lương tối đa"
+              className="w-40 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+            />
+            <select
+              value={salary.currency}
+              onChange={(e) => setSalary({ currency: e.target.value === "USD" ? "USD" : "VND" })}
+              aria-label="Đơn vị tiền tệ"
+              className="w-24 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+            >
+              <option value="VND">VND</option>
+              <option value="USD">USD</option>
+            </select>
+          </div>
+        )}
+      </fieldset>
+
+      {/* Mô tả (editor định dạng) */}
+      <div className="space-y-1.5">
+        <label className={LABEL}>
+          Mô tả <span className="text-red-500">*</span>
+        </label>
+        <RichTextEditor
+          value={form.description}
+          onChange={(html) => set("description", html)}
+          ariaLabel="Mô tả công việc"
+        />
+        <p className="text-xs text-slate-400">
+          Dán được cả khối; định dạng bằng thanh công cụ (đậm/nghiêng/gạch chân/danh sách).
+        </p>
+      </div>
+
+      {/* Yêu cầu (editor định dạng — dán cả khối) */}
       <div className="space-y-1.5">
         <label className={LABEL}>Yêu cầu</label>
-        <StringList
-          items={form.requirements}
-          onChange={(next) => set("requirements", next)}
-          placeholder="vd: Node.js + Express"
-          addLabel="Thêm yêu cầu"
+        <RichTextEditor
+          value={form.requirements}
+          onChange={(html) => set("requirements", html)}
+          ariaLabel="Yêu cầu ứng viên"
+        />
+        <p className="text-xs text-slate-400">Dán cả danh sách yêu cầu; định dạng tùy ý.</p>
+      </div>
+
+      {/* Quyền lợi (editor định dạng) */}
+      <div className="space-y-1.5">
+        <label className={LABEL}>Quyền lợi</label>
+        <RichTextEditor
+          value={form.benefits}
+          onChange={(html) => set("benefits", html)}
+          ariaLabel="Quyền lợi"
         />
       </div>
 
