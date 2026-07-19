@@ -163,8 +163,16 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   ranker chấm ĐÚNG theo rubric đó (pipeline không hồi quy). **Benchmark low vs medium (3 JD × 2 effort):** cả hai
   bám JD + trọng số phản ánh vị trí; medium sắc hơn ở phân bố trọng số nhưng ~30-50% chậm hơn (~12s vs ~7-10s) →
   **chọn `low`** (đủ tốt, đồng nhất ranker; env chỉnh được). _Điểm nhấn: AI TĂNG CƯỜNG năng lực người, khác auto-hóa._
-- **JD-4 — Soft-delete (ARCHIVED).** Thêm status ARCHIVED (ẩn khỏi list, giữ dữ liệu+kiểm toán, khôi phục). KHÔNG hard-delete.
-  → **Milestone:** khâu tạo JD dùng được THẬT cho HR không-chuyên-kỹ-thuật.
+- **JD-4 — Soft-delete (ARCHIVED) — ✅ DONE (live-verified).** `status` String (JD-2a) → thêm ARCHIVED, KHÔNG
+  migration. `archive_job` (bất kỳ status → ARCHIVED) + `restore_job` (→ CLOSED, KHÔNG tự OPEN — mở lại theo
+  rubric-bắt-buộc JD-2a); routes `POST /jobs/{id}/archive|restore`; `list_jobs(archived=?)` ẩn/hiện; UI tab "Đang
+  hoạt động / Đã lưu trữ" + nút Lưu-trữ (confirm) / Khôi-phục. **KHÔNG hard-delete** — Application+AuditLog+vector
+  GIỮ NGUYÊN. Seam `qdrant_service.delete_jd_vector` (idempotent, CHỈ true-delete) → `reset_demo_data` dùng seam
+  (đóng nợ vector-mồ-côi JD-1); archive GIỮ vector dormant (khôi phục khỏi re-embed). Guard submit: `get_open_job`
+  loại ARCHIVED → nộp CV vào JD lưu-trữ 404, thiếu job_id 422 (không rác). 270 test (10 mới). Adversarial review.
+  **Live-verified 14/14:** archive→ẩn list+/apply, Application sống, archived-list thấy, guard 404/422, restore→CLOSED,
+  vector xóa khỏi Qdrant khi true-delete, pipeline chấm điểm 84.0 (không hồi quy).
+  → **Milestone:** khâu tạo JD dùng được THẬT cho HR không-chuyên-kỹ-thuật — **HẾT CỤM TỐI-ƯU-TẠO-JD.**
 
 ---
 
@@ -221,7 +229,8 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [x] **13 deploy — ✅ LIVE** (Render + Vercel, cross-domain OK, **4 sự cố prod fixed**, injection probe: model kháng) — **GĐ5 deploy XONG**
 - [ ] **PHASE 6 (CURRENT) — Tối ưu tạo JD:** [x] JD-1 field+editor+plain-text embedding · [x] JD-2a tách-form-2-màn+
   DRAFT+rubric-bắt-buộc-để-mở+gate-ra-list · [x] JD-2b screener-tùy-chọn (adversarial review 2 vòng + live-verified
-  4 đường) · [x] JD-3 AI-gợi-ý-rubric (LLM-verified + benchmark low<medium → chọn low) · JD-4 soft-delete(ARCHIVED)
+  4 đường) · [x] JD-3 AI-gợi-ý-rubric (LLM-verified + benchmark low<medium → chọn low) · [x] JD-4 soft-delete
+  (ARCHIVED + delete_jd_vector seam + guard submit; live-verified 14/14) — **HẾT CỤM TỐI-ƯU-TẠO-JD**
 - [ ] Dọn: **đổi mật khẩu admin prod**
 - [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)
