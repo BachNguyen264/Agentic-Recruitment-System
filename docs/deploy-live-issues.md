@@ -78,6 +78,41 @@ hết `10.29.x`. Khác nhau giữa các client ⇒ hết gộp xô.
 
 ---
 
+## 2b. 🟠 HIGH — Đăng nhập KHÔNG được trên điện thoại (cookie bên-thứ-ba)
+
+**Triệu chứng (live):** trên **điện thoại**, đăng nhập trả 200 nhưng bị đá NGAY về `/login`; trên
+**laptop** đăng nhập bình thường.
+
+**Nguyên nhân gốc:** cookie auth do backend đặt: `Set-Cookie: ars_session=…; HttpOnly; SameSite=None;
+Secure` (host-only, không Domain). Frontend `vercel.app` ≠ backend `onrender.com` = HAI SITE ⇒ đây là
+**cookie BÊN-THỨ-BA**. iOS Safari/WebKit (mọi trình duyệt trên iPhone) + Chrome Android đời mới **chặn
+cookie bên-thứ-ba mặc định** (chống theo dõi) ⇒ cookie không lưu ⇒ `/api/auth/me` không kèm cookie ⇒
+guard đá về login. Laptop desktop còn cho phép `SameSite=None` nên không lộ. Code cookie ĐÚNG chuẩn —
+đây là giới hạn quyền-riêng-tư của trình duyệt mobile, không ép được từ backend.
+
+**Fix (commit `a6df386`, KHÔNG đụng backend):** proxy `/api/*` qua CHÍNH origin của frontend để trình
+duyệt gọi API **same-origin** ⇒ cookie thành **FIRST-PARTY** của `vercel.app` ⇒ chạy mọi thiết bị.
+- `apps/dashboard/next.config.mjs`: `rewrites()` `/api/:path*` → `${BACKEND_ORIGIN}/api/:path*` (chỉ
+  khi `BACKEND_ORIGIN` được đặt = prod). Rewrite tới URL NGOÀI được Vercel proxy ở tầng **edge** (không
+  phải serverless function 4.5MB); `proxyClientMaxBodySize` của Next mặc định 10MB = khớp hạn CV.
+- `apps/dashboard/lib/api.ts`: prod mặc định `API_BASE=""` (same-origin); dev giữ `localhost:8000`
+  (localhost same-site, không cần proxy).
+
+**Env Vercel (prod):** THÊM `BACKEND_ORIGIN=https://<service>.onrender.com` (server-side, KHÔNG
+`NEXT_PUBLIC`) + **BỎ** `NEXT_PUBLIC_API_BASE` (để trống → same-origin). Redeploy frontend. Backend giữ
+nguyên (cookie host-only, `SameSite=None` vẫn chạy first-party; có thể hạ `COOKIE_SAMESITE=lax` để cứng
+hơn — tùy chọn).
+
+**Verify:** local `next start` + proxy sang Render live: `/api/health/live`→200, login→200 +
+Set-Cookie passthrough, round-trip `me`(cookie)→200 / (no-cookie)→401, upload CV multipart proxy OK.
+**Trên live phải verify nốt:** đăng nhập giữ phiên TRÊN ĐIỆN THOẠI + nộp CV ≤10MB qua proxy.
+
+**Bài học:** kiến trúc frontend/backend KHÁC domain + cookie auth = cookie bên-thứ-ba → **vỡ trên
+mobile** dù laptop chạy. Hai cách sửa gốc: (a) proxy same-origin qua frontend (miễn phí — đã chọn);
+(b) custom domain chung (`app.` + `api.` cùng `example.com` → cookie `Domain=.example.com` first-party).
+
+---
+
 ## 3. 🔵 LOW — Ba lỗi nhỏ UI/UX (commit `8defc45`)
 
 - **favicon.ico 404** → thêm `metadata.icons` (dùng lại icon-192 PWA) trong `app/layout.tsx`; trình
