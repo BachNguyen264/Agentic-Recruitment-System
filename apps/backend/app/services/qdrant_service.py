@@ -74,6 +74,16 @@ async def upsert_jd(job_id: int, vector: list[float], *, title: str) -> str:
     return point_id
 
 
+async def delete_jd_vector(job_id: int) -> None:
+    """Xóa vector JD khỏi Qdrant (TRUE-DELETE — vd reset_demo_data xóa JD test → không vector mồ côi,
+    đóng nợ JD-1). Idempotent: point không tồn tại (JD chưa embed) → no-op. CHỈ dùng khi XÓA THẬT JD;
+    soft-delete (ARCHIVED) GIỮ vector dormant (JD-4: khôi phục khỏi re-embed)."""
+    await qdrant_client.delete(
+        collection_name=settings.qdrant_collection,
+        points_selector=models.PointIdsList(points=[jd_point_id(job_id)]),
+    )
+
+
 async def get_jd_vector(job_id: int) -> list[float] | None:
     """Lấy vector JD đã lưu (retrieve theo point_id) để cosine với CV — tín hiệu phụ (plan 02b).
 

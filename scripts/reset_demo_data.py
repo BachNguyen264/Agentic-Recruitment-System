@@ -23,17 +23,14 @@ import argparse
 import asyncio
 import sys
 
-from qdrant_client import models
 from sqlalchemy import bindparam, delete, func, select, text
 
-from app.core.config import settings
 from app.core.database import AsyncSessionLocal
-from app.core.qdrant_client import qdrant_client
 from app.models.application import Application
 from app.models.audit_log import AuditLog
 from app.models.job_posting import JobPosting
 from app.models.screening_session import ScreeningSession
-from app.services.qdrant_service import jd_point_id
+from app.services.qdrant_service import delete_jd_vector, jd_point_id
 from app.services.storage import StorageError, get_storage
 
 # Bảng checkpoint của LangGraph AsyncPostgresSaver (khóa theo thread_id). checkpoint_migrations =
@@ -143,12 +140,9 @@ async def reset(
             return
 
         # 1) Qdrant TRƯỚC (external): nếu lỗi -> dừng khi CHƯA commit DB (tránh JD mất, vector mồ côi).
-        #    delete idempotent: point không tồn tại (vd JD chưa embed) -> no-op OK.
+        #    delete_jd_vector idempotent: point không tồn tại (vd JD chưa embed) -> no-op OK (seam JD-4).
         for j in jobs:
-            await qdrant_client.delete(
-                collection_name=settings.qdrant_collection,
-                points_selector=models.PointIdsList(points=[jd_point_id(j.id)]),
-            )
+            await delete_jd_vector(j.id)
             print(f"  Qdrant: đã xóa point {jd_point_id(j.id)} (job_id={j.id})")
 
         # 1b) GHI NHỚ key CV trước khi xóa row (mất row là mất key). File xóa SAU KHI DB commit —
