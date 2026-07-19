@@ -1,15 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import type { JobPostingInput, RubricCriterion, SalaryInfo } from "@ars/shared-types";
+import type { JobPostingInput, SalaryInfo } from "@ars/shared-types";
 import { RichTextEditor } from "@/components/RichTextEditor";
-import {
-  EMPLOYMENT_TYPE_OPTIONS,
-  isWeightBalanced,
-  LEVEL_OPTIONS,
-  WEIGHT_TARGET,
-  weightSum,
-} from "@/lib/jobs";
+import { EMPLOYMENT_TYPE_OPTIONS, LEVEL_OPTIONS } from "@/lib/jobs";
+
+// JD-2a: JobForm CHỈ còn màn "Tin tuyển dụng" (field posting — ứng viên thấy). Rubric + câu hỏi sàng lọc
+// dời sang màn "Cấu hình sàng lọc" (ScreeningConfigForm, trên JD đã lưu); gate dời ra danh sách JD.
+// rubric/screener_questions/gate_config đi XUYÊN QUA từ `initial` (không sửa ở màn này) — được làm sạch
+// khi submit để không gửi item rỗng (JobPostingCreate validate criterion non-empty).
 
 const INPUT =
   "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500";
@@ -27,50 +26,6 @@ function parseAmount(raw: string): number | null {
   const n = Number(t.replace(/[^\d]/g, ""));
   if (!Number.isFinite(n)) return null;
   return Math.max(0, Math.trunc(n));
-}
-
-// Danh sách text động (dùng cho screener_questions — yêu cầu đã chuyển sang editor định dạng ở JD-1).
-function StringList({
-  items,
-  onChange,
-  placeholder,
-  addLabel,
-}: {
-  items: string[];
-  onChange: (next: string[]) => void;
-  placeholder: string;
-  addLabel: string;
-}) {
-  return (
-    <div className="space-y-2">
-      {items.map((val, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <input
-            type="text"
-            value={val}
-            placeholder={placeholder}
-            onChange={(e) => onChange(items.map((x, j) => (j === i ? e.target.value : x)))}
-            className={INPUT}
-          />
-          <button
-            type="button"
-            onClick={() => onChange(items.filter((_, j) => j !== i))}
-            aria-label="Xóa dòng"
-            className="shrink-0 rounded-md border border-slate-200 px-2.5 py-2 text-sm text-slate-500 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
-          >
-            ✕
-          </button>
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => onChange([...items, ""])}
-        className="text-sm font-medium text-slate-600 hover:text-slate-900"
-      >
-        + {addLabel}
-      </button>
-    </div>
-  );
 }
 
 export function JobForm({
@@ -97,21 +52,12 @@ export function JobForm({
   const setSalary = (patch: Partial<SalaryInfo>) =>
     setForm((f) => ({ ...f, salary: { ...f.salary, ...patch } }));
 
-  const setRubric = (i: number, patch: Partial<RubricCriterion>) =>
-    set(
-      "rubric",
-      form.rubric.map((c, j) => (j === i ? { ...c, ...patch } : c)),
-    );
-
-  const sum = weightSum(form.rubric);
-  const balanced = isWeightBalanced(form.rubric);
   const salary = form.salary;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (submitting) return; // chống double-submit
 
-    // Lương: thỏa thuận → bỏ min/max; ngược lại min ≤ max (báo lỗi inline, backend cũng validate).
     if (!salary.negotiable && salary.min != null && salary.max != null && salary.min > salary.max) {
       setLocalError("Lương tối thiểu không được lớn hơn tối đa.");
       return;
@@ -130,6 +76,7 @@ export function JobForm({
       },
       benefits: form.benefits, // HTML
       employment_type: form.employment_type || null,
+      // Passthrough (cấu hình ở màn khác) — làm sạch để không gửi item rỗng.
       rubric: form.rubric
         .map((c) => ({ criterion: c.criterion.trim(), weight: clamp01(c.weight) }))
         .filter((c) => c.criterion.length > 0),
@@ -293,109 +240,6 @@ export function JobForm({
           ariaLabel="Quyền lợi"
         />
       </div>
-
-      {/* Rubric (danh sách động — tiêu chí + trọng số) */}
-      <div className="space-y-2">
-        <div className="flex items-baseline justify-between">
-          <label className={LABEL}>Rubric chấm điểm (HR tự nhập)</label>
-          <span className={`text-xs ${balanced ? "text-slate-400" : "text-amber-600"}`}>
-            Tổng trọng số: <span className="font-semibold">{sum.toFixed(2)}</span>
-            {!balanced && ` (nên ≈ ${WEIGHT_TARGET.toFixed(1)})`}
-          </span>
-        </div>
-        <div className="space-y-2">
-          {form.rubric.map((c, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <input
-                type="text"
-                value={c.criterion}
-                placeholder="Tiêu chí, vd: Kinh nghiệm Node.js"
-                onChange={(e) => setRubric(i, { criterion: e.target.value })}
-                className={INPUT}
-              />
-              <input
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={c.weight}
-                aria-label={`Trọng số tiêu chí ${i + 1}`}
-                onChange={(e) => setRubric(i, { weight: clamp01(parseFloat(e.target.value)) })}
-                className="w-24 shrink-0 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
-              />
-              <button
-                type="button"
-                onClick={() => set("rubric", form.rubric.filter((_, j) => j !== i))}
-                aria-label="Xóa tiêu chí"
-                className="shrink-0 rounded-md border border-slate-200 px-2.5 py-2 text-sm text-slate-500 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={() => set("rubric", [...form.rubric, { criterion: "", weight: 0 }])}
-            className="text-sm font-medium text-slate-600 hover:text-slate-900"
-          >
-            + Thêm tiêu chí
-          </button>
-        </div>
-        <p className="text-xs text-slate-400">
-          Trọng số 0–1. Tổng nên ≈ 1.0 (không bắt buộc — ranker chuẩn hóa lại theo trọng số).
-        </p>
-      </div>
-
-      {/* Câu hỏi sàng lọc (danh sách động) */}
-      <div className="space-y-1.5">
-        <label className={LABEL}>Câu hỏi sàng lọc</label>
-        <StringList
-          items={form.screener_questions}
-          onChange={(next) => set("screener_questions", next)}
-          placeholder="vd: Mức lương kỳ vọng?"
-          addLabel="Thêm câu hỏi"
-        />
-        <p className="text-xs text-slate-400">Dùng cho vòng Screener (kích hoạt sau — PRD §10).</p>
-      </div>
-
-      {/* Gate (nợ từ 03c) */}
-      <fieldset className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-4">
-        <legend className="px-1 text-sm font-medium text-slate-700">Gate tự động (PRD §9)</legend>
-        <label className="flex items-start gap-3">
-          <input
-            type="checkbox"
-            checked={form.gate_config.auto_reject}
-            onChange={(e) =>
-              set("gate_config", { ...form.gate_config, auto_reject: e.target.checked })
-            }
-            className="mt-0.5 h-4 w-4 rounded border-slate-300"
-          />
-          <span className="text-sm">
-            <span className="font-medium text-slate-800">Auto-từ-chối</span>
-            <span className="block text-slate-500">
-              Tự động từ chối ca điểm thấp RÕ RÀNG (tự tin, không cờ) + gửi thư từ chối. Ca bất định
-              vẫn về HR. Mặc định TẮT.
-            </span>
-          </span>
-        </label>
-        <label className="flex items-start gap-3">
-          <input
-            type="checkbox"
-            checked={form.gate_config.auto_invite}
-            onChange={(e) =>
-              set("gate_config", { ...form.gate_config, auto_invite: e.target.checked })
-            }
-            className="mt-0.5 h-4 w-4 rounded border-slate-300"
-          />
-          <span className="text-sm">
-            <span className="font-medium text-slate-800">Auto-mời</span>
-            <span className="block text-slate-500">
-              Tự động mời ca ĐẠT + đã trả lời sàng lọc (tự tin, không cờ) + gửi thư mời. Ca bất định /
-              không phản hồi vẫn về HR. Mặc định TẮT.
-            </span>
-          </span>
-        </label>
-      </fieldset>
 
       <div className="flex items-center gap-3 border-t border-slate-200 pt-4">
         <button

@@ -44,9 +44,18 @@ export default function EditJobPage({ params }: { params: { id: string } }) {
         <Link href="/jobs" className="text-sm text-slate-500 hover:underline">
           ← Danh sách JD
         </Link>
-        <h1 className="text-2xl font-bold">Sửa JD</h1>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-2xl font-bold">Sửa tin tuyển dụng</h1>
+          <Link
+            href={`/jobs/${id}/screening`}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+          >
+            Cấu hình sàng lọc →
+          </Link>
+        </div>
         <p className="text-sm text-slate-500">
-          Chỉ re-embed khi tiêu đề/mô tả/yêu cầu đổi; sửa rubric/gate/câu hỏi không tốn embedding.
+          Chỉ nội dung tin tuyển dụng (ứng viên thấy). Rubric + câu hỏi sàng lọc ở màn “Cấu hình sàng
+          lọc”. Chỉ re-embed khi tiêu đề/mô tả/yêu cầu đổi.
         </p>
       </header>
 

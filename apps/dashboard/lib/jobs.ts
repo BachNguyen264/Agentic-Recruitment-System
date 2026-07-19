@@ -57,20 +57,29 @@ export function isWeightBalanced(rubric: RubricCriterion[]): boolean {
   return Math.abs(weightSum(rubric) - WEIGHT_TARGET) <= WEIGHT_TOLERANCE;
 }
 
-// Badge trạng thái JD — OPEN đang nhận CV; CLOSED đã đóng; khác (DRAFT legacy) trung tính.
+// Rubric đủ để MỞ JD (JD-2a — khớp backend is_valid_rubric): ≥1 tiêu chí + tổng trọng số > 0.
+// KHÔNG ép tổng ≈ 1 (validate mềm/gợi ý UI riêng — ranker tự chuẩn hóa).
+export function isValidRubric(rubric: RubricCriterion[]): boolean {
+  return rubric.length > 0 && weightSum(rubric) > 0;
+}
+
+// Badge trạng thái JD — DRAFT nháp (JD-2a); OPEN đang nhận CV; CLOSED đã đóng.
 export function jobStatusBadgeClass(status: string): string {
   if (status === "OPEN") return "bg-green-100 text-green-800";
   if (status === "CLOSED") return "bg-slate-200 text-slate-600";
-  return "bg-amber-100 text-amber-800";
+  if (status === "DRAFT") return "bg-amber-100 text-amber-800";
+  return "bg-slate-100 text-slate-500";
 }
 
 export function jobStatusLabel(status: string): string {
   if (status === "OPEN") return "Đang mở";
   if (status === "CLOSED") return "Đã đóng";
+  if (status === "DRAFT") return "Nháp";
   return status;
 }
 
 // Giá trị form rỗng (chế độ TẠO). JD-1: mô tả/yêu cầu/quyền lợi là văn bản định dạng (chuỗi HTML).
+// JD-2a: rubric/câu-hỏi cấu hình ở màn 2 (JD đã lưu) → tạo mới KHÔNG kèm rubric/câu-hỏi (rỗng → DRAFT).
 export function emptyJobInput(): JobPostingInput {
   return {
     title: "",
@@ -80,8 +89,8 @@ export function emptyJobInput(): JobPostingInput {
     salary: emptySalary(),
     benefits: "",
     employment_type: null,
-    rubric: [{ criterion: "", weight: 0 }],
-    screener_questions: [""],
+    rubric: [],
+    screener_questions: [],
     gate_config: { auto_reject: false, auto_invite: false },
   };
 }

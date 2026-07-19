@@ -122,9 +122,29 @@ export const createJob = (input: JobPostingInput) =>
 export const updateJob = (id: number, input: JobPostingInput) =>
   putJson<JobMutationResult>(`/api/jobs/${id}`, input);
 
-// Đóng/mở JD (đổi status — KHÔNG xóa).
-export const setJobStatus = (id: number, status: "OPEN" | "CLOSED") =>
-  patchJson<JobPosting>(`/api/jobs/${id}/status`, { status });
+// Đóng/mở JD (đổi status — KHÔNG xóa). MỞ (OPEN) có thể bị backend chặn 400 nếu JD chưa rubric (JD-2a)
+// → surface {detail} ("cần rubric…") thay vì "HTTP 400" chung, để UI hiện thông báo rõ.
+export async function setJobStatus(id: number, status: "OPEN" | "CLOSED"): Promise<JobPosting> {
+  const res = await fetch(`${API_BASE}/api/jobs/${id}/status`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+    credentials: CREDENTIALS,
+  });
+  if (res.status === 401) {
+    redirectToLogin();
+    throw new Error("Chưa đăng nhập");
+  }
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? `HTTP ${res.status} khi đổi trạng thái JD`);
+  }
+  return (await res.json()) as JobPosting;
+}
+
+// Bật/tắt gate auto (auto_reject/auto_invite) theo JD — partial (JD-2a: gate ở danh sách JD). PATCH /gate (03c/08d).
+export const setGate = (id: number, patch: { auto_reject?: boolean; auto_invite?: boolean }) =>
+  patchJson<JobPosting>(`/api/jobs/${id}/gate`, patch);
 
 // MUTATION human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.
 export const submitReview = (id: number, decision: ReviewDecision, note: string | null) =>
