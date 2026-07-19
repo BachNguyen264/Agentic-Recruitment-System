@@ -134,9 +134,15 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   (render SafeHtml/DOMPurify). **Plain-text cho embedding/LLM**: `build_jd_text` + `jd_dict` bóc HTML (tag
   KHÔNG lọt vào vector/prompt). Editor code-split khỏi /apply (bundle công khai không phình). Verified:
   round-trip API + /apply browser + 232 test pass. _(Tách form 2 màn dời sang JD-2 — JD-1 chỉ bổ sung nội dung.)_
-- **JD-2 — Màn 'Cấu hình sàng lọc' (post-JD) + rubric-bắt-buộc-để-mở + screener-tùy-chọn.** Rubric + câu hỏi
-  sàng lọc chung một màn trên JD đã lưu. Status `DRAFT`; **mở JD yêu cầu có rubric**. **Screener rỗng → pipeline
-  BỎ QUA bước screener** (đổi định tuyến §8.3/§10; vá luôn case suspend-form-rỗng). Gate → 2 toggle trên JD list.
+- **JD-2a — Tách form 2 màn + DRAFT + rubric-bắt-buộc-để-mở + gate ra list — ✅ DONE.** Màn "Tin tuyển dụng"
+  (posting) → lưu JD **DRAFT** → điều hướng màn "Cấu hình sàng lọc" (rubric + câu hỏi, trên JD đã lưu). MỞ
+  (→OPEN) **chặn nếu rubric chưa hợp lệ** (≥1 tiêu chí + tổng trọng số > 0 → backend `RubricRequiredError`/400;
+  UI disable + tooltip). Gate (auto_reject/auto_invite) ra **danh sách JD** (2 toggle/JD → PATCH /gate). Status
+  là cột String → thêm DRAFT KHÔNG cần migration. **KHÔNG đụng graph/pipeline** (verify: detect_changes 0 symbol
+  pipeline). Verified browser (DRAFT→config→Mở-chặn→rubric→OPEN→/apply) + gate→DB + 236 test. _(Kèm fix JD-1:
+  /apply list bóc HTML preview.)_
+- **JD-2b — Screener-tùy-chọn (đổi định tuyến).** JD KHÔNG có câu hỏi → pipeline BỎ QUA bước screener (§8.3/§10;
+  cô lập + adversarial review; vá case suspend-form-rỗng). **Đụng graph/policy → lát riêng.**
 - **JD-3 — AI gợi ý rubric** (trụ cột 4, was slice 14). Endpoint LLM structured-output đọc JD đã lưu → đề xuất
   tiêu chí + trọng số; nút on-demand ở màn cấu hình; **cap 3 retry/JD** (`rubric_suggestion_count`), reset khi nội
   dung JD đổi. Auth-gated. _Điểm nhấn: AI TĂNG CƯỜNG năng lực người (bắc cầu khoảng trống chuyên môn HR), khác auto-hóa._
@@ -197,8 +203,9 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [x] **09 HR auth** (hr_user+seed+bcrypt/JWT httpOnly · require_hr router HR · (hr) guard+/login+logout · guest MỞ; verified live + 14 test) — **GĐ4 XONG**
 - [x] **06 object storage** (seam FileStorage · Local+R2 · cv_file_ref=KEY · HR tải CV gốc stream/require_hr · bucket PRIVATE · reset xóa file; verified live 2 backend + bền qua restart)
 - [x] **13 deploy — ✅ LIVE** (Render + Vercel, cross-domain OK, **4 sự cố prod fixed**, injection probe: model kháng) — **GĐ5 deploy XONG**
-- [ ] **PHASE 6 (CURRENT) — Tối ưu tạo JD:** [x] JD-1 field+editor định dạng+plain-text embedding (DONE) ·
-  JD-2 cấu-hình-sàng-lọc+rubric-bắt-buộc-để-mở+screener-tùy-chọn+gate-trên-list · JD-3 AI-gợi-ý-rubric · JD-4 soft-delete(ARCHIVED)
+- [ ] **PHASE 6 (CURRENT) — Tối ưu tạo JD:** [x] JD-1 field+editor+plain-text embedding · [x] JD-2a tách-form-2-màn+
+  DRAFT+rubric-bắt-buộc-để-mở+gate-ra-list (DONE) · JD-2b screener-tùy-chọn (đổi định tuyến — đụng graph) ·
+  JD-3 AI-gợi-ý-rubric · JD-4 soft-delete(ARCHIVED)
 - [ ] Dọn: screener_sent_at · **đổi mật khẩu admin prod**
 - [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)
