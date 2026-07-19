@@ -36,7 +36,9 @@ async def test_confident_pass_suspends_at_screener() -> None:
     graph = compile_graph()  # MemorySaver (fresh, cô lập theo test)
     config = {"configurable": {"thread_id": "cp-suspend"}}
 
-    await _drive(graph, initial_state(force_review=False, application_id=1), config)
+    # JD-2b: JD CÓ câu hỏi → suspend ở screener (rỗng câu hỏi thì bỏ qua — test riêng ở test_screener_optional).
+    await _drive(graph, initial_state(force_review=False, application_id=1,
+                                      jd={"screener_questions": ["Mức lương kỳ vọng?"]}), config)
 
     snap = await graph.aget_state(config)
     # Đang DỪNG ở screener: còn node chờ chạy.
@@ -56,7 +58,8 @@ async def test_resume_continues_from_screener_without_rerun() -> None:
     graph = compile_graph()
     config = {"configurable": {"thread_id": "cp-resume"}}
 
-    await _drive(graph, initial_state(force_review=False, application_id=2), config)
+    await _drive(graph, initial_state(force_review=False, application_id=2,
+                                      jd={"screener_questions": ["Mức lương kỳ vọng?"]}), config)
     assert (await graph.aget_state(config)).next == ("screener",)  # đã suspend
 
     # Resume bằng payload MOCK (08b sẽ là câu trả lời thật).

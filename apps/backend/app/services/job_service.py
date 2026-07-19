@@ -84,6 +84,9 @@ def jd_dict(job: JobPosting) -> dict:
         "rubric": list(job.rubric or []),
         # PRD §9: gate auto-từ-chối cấu hình theo JD — policy đọc SAU ranker (ranker bỏ qua key này).
         "gate_config": dict(job.gate_config or {}),
+        # JD-2b (PRD §7.3 FR-SCR-0): screener CHỈ chạy khi JD có câu hỏi. Đưa vào SNAPSHOT (config-as-of-
+        # entry, như gate_config) để screener_node quyết interrupt/bỏ-qua từ state, KHÔNG đọc DB trong node.
+        "screener_questions": list(job.screener_questions or []),
     }
 
 

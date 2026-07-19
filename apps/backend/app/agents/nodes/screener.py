@@ -23,6 +23,28 @@ from app.models.application import ApplicationStatus
 
 
 def screener_node(state: RecruitmentState) -> dict:
+    # JD-2b (PRD §7.3 FR-SCR-0): Screener TÙY CHỌN theo JD. JD KHÔNG có câu hỏi sàng lọc → BỎ QUA bước
+    # này: KHÔNG `interrupt()` (không suspend, không email), pass-through NGAY với state "sạch" (không cờ,
+    # KHÔNG `no_response`) → route_after_screener áp gate mời như ca đã-trả-lời-sạch. Guard đọc câu hỏi
+    # từ SNAPSHOT JD (state.input.jd, config-as-of-entry — đối xứng gate). Đây là guard CỤC BỘ quanh
+    # interrupt; đường CÓ câu hỏi (08a-d) BẤT BIẾN bên dưới.
+    #
+    # PHÂN BIỆT (gotcha): "bỏ-qua" ≠ "no_response". no_response = CÓ câu hỏi nhưng ứng viên im lặng quá
+    # hạn (→ human_review). Bỏ-qua = KHÔNG có gì để hỏi (→ sạch → gate mời bình thường). KHÔNG gắn cờ.
+    jd = (state.get("input") or {}).get("jd") or {}
+    if not jd.get("screener_questions"):
+        return {
+            "status": ApplicationStatus.SCREENING.value,
+            "awaiting_screener": False,
+            "screener_answers": None,
+            "confidence": 1.0,
+            "uncertainty_flags": [],
+            "messages": [
+                "[screener] JD không câu hỏi (FR-SCR-0) → BỎ QUA (không suspend/email) → gate mời"
+            ],
+        }
+
+    # ── Đường CÓ câu hỏi (BẤT BIẾN 08a-d) ──
     # Lần chạy ĐẦU: interrupt() raise → pipeline DỪNG (suspend), KHÔNG trả dict, state lưu ở checkpointer.
     # Lần RESUME: interrupt() trả về payload resume → node chạy tiếp, trả dict bên dưới.
     payload = interrupt(

@@ -83,6 +83,12 @@ async def process_application(application_id: int, *, force_review: bool = False
                 elif node == "gate":  # auto-từ-chối (PRD §9) — thư từ chối gửi ở khối bên dưới.
                     action = "auto_reject"
                     detail = {"status": step.get("status"), "score": final.get("score")}
+                elif node == "screener":  # JD-2b: screener CHỈ vào trace lần chạy đầu khi BỎ QUA (có câu
+                    action = "screener_skipped"  # hỏi → interrupt, không hoàn tất → không vào trace).
+                    detail = {"status": step.get("status")}
+                elif node == "scheduler":  # 08d gate auto-mời đạt NGAY lần đầu (JD không câu hỏi + auto_invite ON)
+                    action = "auto_invite"
+                    detail = {"status": step.get("status")}
                 else:
                     action = "stub_pass_through"
                     detail = {"status": step.get("status")}
@@ -132,6 +138,16 @@ async def process_application(application_id: int, *, force_review: bool = False
                 reject_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
                 reject_title = job.title if job is not None else "vị trí ứng tuyển"
 
+            # JD-2b: ca BỎ-QUA-screener (JD không câu hỏi) + JD auto_invite BẬT → route_after_screener rẽ
+            # scheduler NGAY ở lần chạy đầu (branch="auto_invite", KHÔNG suspend). Gom dữ liệu email mời vào
+            # locals để gửi SAU commit (cô lập, song song auto_reject). Đường auto_invite khi CÓ câu hỏi vẫn
+            # đi qua resume_screener như 08d — BẤT BIẾN (khối này chỉ chạm ca no-questions lần chạy đầu).
+            auto_invite = out["branch"] == "auto_invite"
+            if auto_invite:
+                invite_email_to = application.applicant_email
+                invite_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
+                invite_title = job.title if job is not None else "vị trí ứng tuyển"
+
             # Screener (08b): dừng ở screener → TẠO screening_session (token + hạn + ảnh chụp câu hỏi)
             # trong CÙNG commit với AWAITING_SCREENER (nguyên tử). Gom dữ liệu email vào locals để gửi
             # magic-link SAU commit (cô lập khỏi handler lỗi, như auto_reject).
@@ -167,6 +183,39 @@ async def process_application(application_id: int, *, force_review: bool = False
                 except Exception:  # noqa: BLE001 — REJECTED đã commit; lỗi email/audit KHÔNG làm sập
                     logger.exception(
                         "BG: notify_decision(reject) lỗi SAU khi REJECTED đã commit app=%s",
+                        application_id,
+                    )
+
+            # JD-2b — GATE AUTO-MỜI ở LẦN CHẠY ĐẦU (ca bỏ-qua-screener sạch + auto_invite BẬT). SCHEDULING
+            # đã commit → gửi thư MỜI THẬT qua scheduler (điểm phát email DUY NHẤT). Email-first rồi mới đặt
+            # INTERVIEW_SCHEDULED (KHÔNG "trạng thái nói dối"); gửi lỗi → PENDING_REVIEW cho HR. CÔ LẬP khỏi
+            # handler lỗi kỹ thuật bên dưới: một khi thư mời CÓ THỂ đã tới ứng viên, lỗi sau đó (audit/commit)
+            # KHÔNG được reset về error (→ "mời xong lại từ chối"). Logic song song 08d resume_screener —
+            # resume_screener GIỮ NGUYÊN (đường CÓ câu hỏi bất biến); đây là bản cho lần-đầu no-questions.
+            if auto_invite:
+                try:
+                    result = await scheduler.notify_decision(
+                        session, "invite", application_id=application_id,
+                        applicant_email=invite_email_to, candidate_name=invite_name,
+                        job_title=invite_title,
+                    )
+                    if result.get("email_sent"):
+                        application.status = ApplicationStatus.INTERVIEW_SCHEDULED.value
+                        await audit_service.record(
+                            session, application_id=application_id, node="gate", action="auto_invite",
+                            detail={"final_status": application.status}, commit=True,
+                        )
+                    else:  # thư mời chưa gửi (notify_decision nuốt lỗi gửi) → về HR xử lý.
+                        application.status = ApplicationStatus.PENDING_REVIEW.value
+                        application.escalation_reason = "Auto-mời: gửi thư mời thất bại — cần HR xử lý."
+                        await audit_service.record(
+                            session, application_id=application_id, node="gate",
+                            action="auto_invite_failed", escalation_reason="invite_email_failed",
+                            commit=True,
+                        )
+                except Exception:  # noqa: BLE001 — CÔ LẬP: lỗi sau khi có thể đã gửi thư KHÔNG reset error
+                    logger.exception(
+                        "BG: auto_invite dispatch (no-questions) lỗi app=%s — giữ trạng thái đã commit",
                         application_id,
                     )
 

@@ -15,11 +15,11 @@ def test_graph_compiles() -> None:
 
 
 def test_confident_pass_suspends_at_screener() -> None:
-    # 08a (PRD §10): ca ĐẠT/tự tin KHÔNG chạy thẳng — DỪNG ở screener (interrupt, suspend/resume).
+    # 08a (PRD §10): ca ĐẠT/tự tin + JD CÓ câu hỏi → DỪNG ở screener (interrupt, suspend/resume).
+    # JD-2b: chỉ suspend khi JD có screener_questions (rỗng → bỏ qua, đi thẳng — test riêng).
     # run_sync là MỘT ainvoke (không resume) → trả state ở ĐIỂM DỪNG: parser+ranker đã chạy nhưng
-    # screener CHƯA hoàn tất, CHƯA tới human_review/scheduler. (Bài suspend→resume đầy đủ ở
-    # test_checkpointer.py.) Trước 08a: đi thẳng human_review (BUG A fix).
-    final = run_sync(force_review=False)
+    # screener CHƯA hoàn tất, CHƯA tới human_review/scheduler.
+    final = run_sync(force_review=False, jd={"screener_questions": ["Mức lương kỳ vọng?"]})
     joined = " ".join(final["messages"])
     assert "[parser]" in joined and "[ranker]" in joined
     assert "[human_review]" not in joined  # chưa tới human_review (còn chờ resume screener)

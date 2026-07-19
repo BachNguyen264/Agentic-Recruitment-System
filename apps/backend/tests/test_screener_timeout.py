@@ -46,7 +46,9 @@ async def test_resume_no_response_routes_human_review_with_flag() -> None:
     graph = compile_graph()  # MemorySaver, cô lập
     config = {"configurable": {"thread_id": "cp-timeout"}}
 
-    await _drive(graph, initial_state(force_review=False, application_id=9), config)
+    # JD-2b: JD CÓ câu hỏi → đi nhánh suspend (timeout chỉ áp đường có câu hỏi).
+    await _drive(graph, initial_state(force_review=False, application_id=9,
+                                      jd={"screener_questions": ["Mức lương kỳ vọng?"]}), config)
     assert (await graph.aget_state(config)).next == ("screener",)  # đã suspend
 
     await _drive(graph, Command(resume={"no_response": True}), config)  # tín hiệu timeout
@@ -67,7 +69,8 @@ async def test_resume_real_answers_still_works_no_flag() -> None:
     graph = compile_graph()
     config = {"configurable": {"thread_id": "cp-answers"}}
 
-    await _drive(graph, initial_state(force_review=False, application_id=10), config)
+    await _drive(graph, initial_state(force_review=False, application_id=10,
+                                      jd={"screener_questions": ["Mức lương kỳ vọng?"]}), config)
     await _drive(graph, Command(resume={"answers": [{"question": "Q", "answer": "A"}]}), config)
 
     snap = await graph.aget_state(config)

@@ -90,13 +90,14 @@ async def _stream_collect(graph: Any, graph_input: Any, config: dict[str, Any]) 
     return snapshot, trace
 
 
-def run_sync(*, force_review: bool = False) -> dict[str, Any]:
+def run_sync(*, force_review: bool = False, jd: dict[str, Any] | None = None) -> dict[str, Any]:
     """Chạy đồng bộ (cho tests). Dùng ainvoke qua asyncio.run vì có node async (ranker).
 
     An toàn: chỉ được gọi từ ngữ cảnh KHÔNG có event loop (test đồng bộ) — không dùng trong route.
+    `jd` cho phép test truyền JD (vd có `screener_questions` để đi nhánh suspend — JD-2b).
     """
     return asyncio.run(
-        recruitment_graph.ainvoke(initial_state(force_review=force_review), _thread_config())
+        recruitment_graph.ainvoke(initial_state(force_review=force_review, jd=jd), _thread_config())
     )
 
 

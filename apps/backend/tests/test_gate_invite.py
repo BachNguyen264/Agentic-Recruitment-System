@@ -76,8 +76,11 @@ from app.agents.graph import compile_graph  # noqa: E402
 from app.agents.runner import _branch, initial_state  # noqa: E402
 from app.models.application import ApplicationStatus  # noqa: E402
 
-_JD_INVITE_ON = {"title": "Backend", "gate_config": {"auto_reject": False, "auto_invite": True}}
-_JD_INVITE_OFF = {"title": "Backend", "gate_config": {"auto_reject": False, "auto_invite": False}}
+# JD-2b: có screener_questions → đi nhánh suspend/resume (đúng ca 08d test này nhắm tới).
+_JD_INVITE_ON = {"title": "Backend", "gate_config": {"auto_reject": False, "auto_invite": True},
+                 "screener_questions": ["Mức lương kỳ vọng?"]}
+_JD_INVITE_OFF = {"title": "Backend", "gate_config": {"auto_reject": False, "auto_invite": False},
+                  "screener_questions": ["Mức lương kỳ vọng?"]}
 
 
 async def _drive(graph: Any, graph_input: Any, config: dict) -> None:
