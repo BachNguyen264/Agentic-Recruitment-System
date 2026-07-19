@@ -13,8 +13,15 @@ import type {
   ScreenerSubmitResult,
 } from "@ars/shared-types";
 
-// Base URL backend — đọc từ env (NEXT_PUBLIC_API_BASE), mặc định localhost:8000.
-export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+// Base URL backend.
+//   - prod: để TRỐNG (bỏ NEXT_PUBLIC_API_BASE) → API_BASE="" → gọi SAME-ORIGIN `/api/*`; Vercel rewrite
+//     (xem next.config) proxy sang backend Render. Nhờ vậy cookie auth thành FIRST-PARTY của domain
+//     frontend → đăng nhập chạy trên ĐIỆN THOẠI (iOS/Android chặn cookie bên-thứ-ba nếu gọi thẳng backend).
+//   - dev: mặc định http://localhost:8000 (localhost là same-site, cookie chạy bình thường, không cần proxy).
+//   - Đặt NEXT_PUBLIC_API_BASE tường minh = URL backend để ép gọi THẲNG (thoát proxy) nếu cần.
+export const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE ??
+  (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
 
 // Auth slice 09: MỌI request gửi kèm cookie (credentials) để backend đọc JWT httpOnly. Cross-domain
 // (Vercel+Render) hoạt động nhờ CORS allow_credentials + cookie SameSite=None (cấu hình qua ENV).
