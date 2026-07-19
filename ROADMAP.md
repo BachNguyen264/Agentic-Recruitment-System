@@ -170,7 +170,6 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 
 ## 🧹 Dọn nhỏ còn treo
 
-- `screener_sent_at=null` (email VẪN gửi — chỉ field không set; 1 dòng, gộp lúc tiện).
 - **Đổi mật khẩu admin prod** (`admin@ars.prod` đã lộ trong chat) — script băm mật khẩu mới cho hr_user.
 
 ---
@@ -223,6 +222,6 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [ ] **PHASE 6 (CURRENT) — Tối ưu tạo JD:** [x] JD-1 field+editor+plain-text embedding · [x] JD-2a tách-form-2-màn+
   DRAFT+rubric-bắt-buộc-để-mở+gate-ra-list · [x] JD-2b screener-tùy-chọn (adversarial review 2 vòng + live-verified
   4 đường) · [x] JD-3 AI-gợi-ý-rubric (LLM-verified + benchmark low<medium → chọn low) · JD-4 soft-delete(ARCHIVED)
-- [ ] Dọn: screener_sent_at · **đổi mật khẩu admin prod**
+- [ ] Dọn: **đổi mật khẩu admin prod**
 - [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)
