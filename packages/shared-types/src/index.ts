@@ -158,8 +158,27 @@ export interface JobPosting {
   gate_config: GateConfig;
   status: string; // OPEN | CLOSED | DRAFT (legacy) — badge xử lý mọi giá trị.
   embedding_ref: string | null; // null = chưa embed (embedding lỗi / JD legacy).
+  // JD-3: số lần AI đã gợi ý rubric + số lượt còn lại (backend là nguồn chân lý của cap). CHỈ HR thấy.
+  rubric_suggestion_count: number;
+  rubric_suggestions_remaining: number;
   created_at: string;
   updated_at: string;
+}
+
+// ── JD-3: AI gợi ý rubric (PRD §12.1 FR-HR-RUBRIC-1) ──
+// Một tiêu chí AI đề xuất — khớp SuggestedCriterion (backend). reasoning để HR tham khảo (tùy chọn).
+export interface SuggestedCriterion {
+  criterion: string;
+  weight: number;
+  reasoning: string;
+}
+
+// Trả về POST /api/jobs/{id}/suggest-rubric — khớp RubricSuggestResponse (backend).
+export interface RubricSuggestResult {
+  criteria: SuggestedCriterion[];
+  used: number;
+  remaining: number;
+  model_used: string;
 }
 
 // Payload tạo/sửa JD (form dùng chung) — khớp JobPostingCreate (backend).

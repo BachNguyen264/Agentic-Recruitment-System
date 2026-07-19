@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { RubricCriterion } from "@ars/shared-types";
+import type { RubricCriterion, SuggestedCriterion } from "@ars/shared-types";
 import { isValidRubric, isWeightBalanced, WEIGHT_TARGET, weightSum } from "@/lib/jobs";
 
 // JD-2a màn 2 "Cấu hình sàng lọc" (trên JD ĐÃ LƯU): rubric (tiêu chí + trọng số) + câu hỏi sàng lọc.
@@ -69,6 +69,8 @@ export function ScreeningConfigForm({
   saving,
   opening,
   errorMsg,
+  suggestionsRemaining,
+  onSuggestRubric,
 }: {
   initialRubric: RubricCriterion[];
   initialQuestions: string[];
@@ -78,6 +80,9 @@ export function ScreeningConfigForm({
   saving: boolean;
   opening: boolean;
   errorMsg?: string | null;
+  // JD-3: số lượt AI gợi ý còn lại + callback gọi endpoint (trả list tiêu chí đề xuất, throw khi lỗi/hết lượt).
+  suggestionsRemaining: number;
+  onSuggestRubric: () => Promise<SuggestedCriterion[]>;
 }) {
   // Giữ ≥1 dòng để danh sách động không rỗng hẳn (UX nhập liệu).
   const [rubric, setRubric] = useState<RubricCriterion[]>(
@@ -86,6 +91,27 @@ export function ScreeningConfigForm({
   const [questions, setQuestions] = useState<string[]>(
     initialQuestions.length ? initialQuestions : [""],
   );
+  // JD-3: trạng thái nút "AI gợi ý rubric". Lỗi hiện riêng — KHÔNG mất rubric HR đang có (plan §3.3).
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestErr, setSuggestErr] = useState<string | null>(null);
+
+  const canSuggest = suggestionsRemaining > 0 && !suggesting;
+
+  async function handleSuggest() {
+    setSuggesting(true);
+    setSuggestErr(null);
+    try {
+      const suggested = await onSuggestRubric();
+      // ĐIỀN SẴN: thay rubric hiện tại bằng đề xuất để HR CHỈNH trước khi lưu (KHÔNG tự lưu/áp).
+      if (suggested.length) {
+        setRubric(suggested.map((c) => ({ criterion: c.criterion, weight: c.weight })));
+      }
+    } catch (e) {
+      setSuggestErr(String((e as Error)?.message) || "Không gợi ý được rubric.");
+    } finally {
+      setSuggesting(false);
+    }
+  }
 
   const setCrit = (i: number, patch: Partial<RubricCriterion>) =>
     setRubric((r) => r.map((c, j) => (j === i ? { ...c, ...patch } : c)));
@@ -127,6 +153,34 @@ export function ScreeningConfigForm({
             {!balanced && ` (nên ≈ ${WEIGHT_TARGET.toFixed(1)})`}
           </span>
         </div>
+
+        {/* JD-3: AI gợi ý rubric — điền sẵn tiêu chí+trọng số từ JD để HR CHỈNH (không tự áp). */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-indigo-100 bg-indigo-50/60 px-3 py-2">
+          <button
+            type="button"
+            onClick={handleSuggest}
+            disabled={!canSuggest}
+            title={
+              suggestionsRemaining > 0
+                ? "AI đọc JD (tiêu đề/mô tả/yêu cầu) → đề xuất tiêu chí + trọng số để bạn chỉnh"
+                : "Đã hết lượt gợi ý — sửa nội dung JD rồi lưu để đặt lại"
+            }
+            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50"
+          >
+            {suggesting ? "Đang gợi ý…" : "✨ AI gợi ý rubric"}
+          </button>
+          <span className="text-xs text-slate-500">
+            {suggestionsRemaining > 0
+              ? `Còn ${suggestionsRemaining} lượt. AI đề xuất — bạn chỉnh trước khi lưu.`
+              : "Hết lượt gợi ý cho JD này (sửa nội dung JD để đặt lại)."}
+          </span>
+        </div>
+        {suggestErr && (
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            {suggestErr}
+          </p>
+        )}
+
         <div className="space-y-2">
           {rubric.map((c, i) => (
             <div key={i} className="flex items-center gap-2">

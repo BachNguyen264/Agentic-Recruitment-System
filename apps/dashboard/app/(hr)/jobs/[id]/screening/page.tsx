@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { JobPosting, RubricCriterion } from "@ars/shared-types";
 import { ScreeningConfigForm } from "@/components/ScreeningConfigForm";
-import { getJob, setJobStatus, updateJob } from "@/lib/api";
+import { getJob, setJobStatus, suggestRubric, updateJob } from "@/lib/api";
 import { jobStatusBadgeClass, jobStatusLabel, toJobInput } from "@/lib/jobs";
 
 type ConfigPayload = { rubric: RubricCriterion[]; questions: string[] };
@@ -118,6 +118,13 @@ export default function ScreeningConfigPage({ params }: { params: { id: string }
             saving={saveMutation.isPending}
             opening={openMutation.isPending}
             errorMsg={errorMsg}
+            suggestionsRemaining={job.rubric_suggestions_remaining}
+            onSuggestRubric={async () => {
+              // JD-3: gọi endpoint → điền sẵn form. Refresh job để badge "còn N lượt" cập nhật (count↑).
+              const res = await suggestRubric(id);
+              qc.invalidateQueries({ queryKey: ["job", id] });
+              return res.criteria;
+            }}
             onSave={(rubric, questions) => saveMutation.mutate({ rubric, questions })}
             onSaveAndOpen={(rubric, questions) => openMutation.mutate({ rubric, questions })}
           />

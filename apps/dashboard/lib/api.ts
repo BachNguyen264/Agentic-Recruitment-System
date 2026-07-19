@@ -9,6 +9,7 @@ import type {
   PublicJob,
   PublicSubmitResult,
   ReviewDecision,
+  RubricSuggestResult,
   ScreenerForm,
   ScreenerSubmitResult,
 } from "@ars/shared-types";
@@ -145,6 +146,24 @@ export async function setJobStatus(id: number, status: "OPEN" | "CLOSED"): Promi
 // Bật/tắt gate auto (auto_reject/auto_invite) theo JD — partial (JD-2a: gate ở danh sách JD). PATCH /gate (03c/08d).
 export const setGate = (id: number, patch: { auto_reject?: boolean; auto_invite?: boolean }) =>
   patchJson<JobPosting>(`/api/jobs/${id}/gate`, patch);
+
+// AI gợi ý rubric (JD-3, PRD §12.1). Đọc JD đã lưu → LLM đề xuất tiêu chí+trọng số để HR chỉnh/lưu.
+// Hết lượt (cap 3/JD) → backend 429 với {detail} → surface message rõ ("hết lượt gợi ý…").
+export async function suggestRubric(id: number): Promise<RubricSuggestResult> {
+  const res = await fetch(`${API_BASE}/api/jobs/${id}/suggest-rubric`, {
+    method: "POST",
+    credentials: CREDENTIALS,
+  });
+  if (res.status === 401) {
+    redirectToLogin();
+    throw new Error("Chưa đăng nhập");
+  }
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail ?? `HTTP ${res.status} khi gợi ý rubric`);
+  }
+  return (await res.json()) as RubricSuggestResult;
+}
 
 // MUTATION human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.
 export const submitReview = (id: number, decision: ReviewDecision, note: string | null) =>
