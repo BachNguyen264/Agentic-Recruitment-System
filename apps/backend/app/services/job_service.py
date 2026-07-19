@@ -19,11 +19,26 @@ from app.services.embedding_service import build_jd_text, embed_text
 logger = get_logger("app.services.job_service")
 
 
+class RubricRequiredError(Exception):
+    """JD chưa có rubric hợp lệ → KHÔNG mở được (PRD §8.1, §12.1 FR-HR-JD-2). Route → 400."""
+
+
+def is_valid_rubric(rubric: list | None) -> bool:
+    """Rubric đủ để MỞ JD (PRD §8.1: "MỞ JD yêu cầu JD đã có rubric → ranker luôn có tiêu chí"):
+    ≥1 tiêu chí + tổng trọng số > 0 (ranker cần trọng số dương để chuẩn hóa điểm — `_weighted_overall`
+    trả None khi tổng ≤ 0). KHÔNG ép tổng ≈ 1 (validate mềm của 05 chỉ là gợi ý UI; ranker tự chuẩn hóa)."""
+    items = [c for c in (rubric or []) if isinstance(c, dict)]
+    if not items:
+        return False
+    return sum(float(c.get("weight", 0) or 0) for c in items) > 0
+
+
 async def create_job(
     session: AsyncSession, data: JobPostingCreate
 ) -> tuple[JobPosting, str | None]:
     """Lưu JD → embed → upsert Qdrant. Trả (row, warning|None). Embed lỗi → JD vẫn tạo."""
     job = JobPosting(
+        status="DRAFT",  # JD-2a: JD mới = nháp; MỞ (→OPEN) cần rubric (set_job_status kiểm)
         title=data.title,
         description=data.description,   # HTML định dạng — lưu thẳng; bóc HTML chỉ khi embed/LLM
         requirements=data.requirements,  # HTML định dạng (JD-1: không còn list "\n".join)
@@ -126,10 +141,19 @@ async def update_job(
 async def set_job_status(
     session: AsyncSession, job_id: int, status: str
 ) -> JobPosting | None:
-    """Đóng/mở JD = đổi cột status (KHÔNG xóa). None nếu JD không tồn tại."""
+    """Đổi status JD (DRAFT→OPEN / OPEN↔CLOSED — KHÔNG xóa). None nếu JD không tồn tại.
+
+    MỞ (→OPEN) CHẶN nếu chưa có rubric hợp lệ (PRD §8.1, §12.1 FR-HR-JD-2) → RubricRequiredError
+    (route trả 400). Đóng/tạm dừng (→CLOSED) luôn cho phép.
+    """
     job = await session.get(JobPosting, job_id)
     if job is None:
         return None
+    if status == "OPEN" and not is_valid_rubric(job.rubric):
+        raise RubricRequiredError(
+            "JD cần có rubric (≥1 tiêu chí, tổng trọng số > 0) mới mở được — "
+            "hãy cấu hình rubric ở màn 'Cấu hình sàng lọc' trước."
+        )
     job.status = status
     await session.commit()
     await session.refresh(job)

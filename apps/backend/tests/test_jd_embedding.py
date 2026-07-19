@@ -140,6 +140,7 @@ async def test_create_job_embeds_and_upserts(monkeypatch) -> None:
     job, warning = await job_service.create_job(FakeSession(), _payload())
 
     assert warning is None
+    assert job.status == "DRAFT"  # JD-2a: JD mới = nháp (MỞ cần rubric riêng)
     assert job.embedding_ref == "point-ok"
     assert job.requirements == "Node.js\nExpress\nMongoDB"  # cột Text join "\n"
     assert job.rubric == [

@@ -63,12 +63,16 @@ async def update_job(
 @router.patch(
     "/{job_id}/status",
     response_model=JobPostingRead,
-    summary="Đóng/mở JD (OPEN/CLOSED) — KHÔNG xóa (PRD §12.1)",
+    summary="Đổi status JD (OPEN/CLOSED) — MỞ cần rubric (PRD §8.1, §12.1)",
 )
 async def update_status(
     job_id: int, payload: JobStatusUpdate, session: DBSession
 ) -> JobPostingRead:
-    job = await job_service.set_job_status(session, job_id, payload.status)
+    try:
+        job = await job_service.set_job_status(session, job_id, payload.status)
+    except job_service.RubricRequiredError as exc:
+        # MỞ JD khi chưa có rubric hợp lệ → 400 rõ (PRD §12.1 FR-HR-JD-2).
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if job is None:
         raise HTTPException(status_code=404, detail="JobPosting không tồn tại")
     return JobPostingRead.model_validate(job)

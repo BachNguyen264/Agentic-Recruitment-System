@@ -158,7 +158,7 @@ async def test_update_survives_reembed_error(monkeypatch) -> None:
 
 
 async def test_set_job_status_closes_and_reopens() -> None:
-    job = _job(status="OPEN")
+    job = _job(status="OPEN")  # _job có rubric hợp lệ (tổng 1.0) → mở lại được
     session = FakeSession(job)
 
     out = await job_service.set_job_status(session, 1, "CLOSED")
@@ -170,3 +170,35 @@ async def test_set_job_status_closes_and_reopens() -> None:
 
 async def test_set_job_status_missing_returns_none() -> None:
     assert await job_service.set_job_status(FakeSession(None), 999, "CLOSED") is None
+
+
+# ── JD-2a: DRAFT + rubric-bắt-buộc-để-mở (PRD §8.1, §12.1 FR-HR-JD-2) ─────────
+
+
+def test_is_valid_rubric() -> None:
+    assert job_service.is_valid_rubric([{"criterion": "A", "weight": 0.6}]) is True
+    assert job_service.is_valid_rubric([]) is False          # rỗng
+    assert job_service.is_valid_rubric(None) is False        # legacy None
+    assert job_service.is_valid_rubric([{"criterion": "A", "weight": 0}]) is False  # tổng = 0
+
+
+async def test_open_blocked_without_rubric() -> None:
+    # JD nháp CHƯA có rubric → MỞ bị chặn (RubricRequiredError → route 400).
+    job = _job(status="DRAFT", rubric=[])
+    with pytest.raises(job_service.RubricRequiredError):
+        await job_service.set_job_status(FakeSession(job), 1, "OPEN")
+    assert job.status == "DRAFT"  # KHÔNG đổi khi bị chặn
+
+
+async def test_open_blocked_with_zero_weight_rubric() -> None:
+    # Có tiêu chí nhưng tổng trọng số 0 → ranker không chuẩn hóa được → chặn mở.
+    job = _job(status="DRAFT", rubric=[{"criterion": "A", "weight": 0}])
+    with pytest.raises(job_service.RubricRequiredError):
+        await job_service.set_job_status(FakeSession(job), 1, "OPEN")
+
+
+async def test_close_draft_allowed_without_rubric() -> None:
+    # Đóng (→CLOSED) luôn cho phép, kể cả chưa rubric.
+    job = _job(status="DRAFT", rubric=[])
+    out = await job_service.set_job_status(FakeSession(job), 1, "CLOSED")
+    assert out.status == "CLOSED"

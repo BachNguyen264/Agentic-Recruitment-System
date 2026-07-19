@@ -39,7 +39,9 @@ class JobPosting(Base, TimestampMixin):
     # gate_config: {auto_reject, auto_invite} (PRD §9). Có thể đặt theo từng JD (FR-GATE-1).
     gate_config: Mapped[dict] = mapped_column(JSONB, default=_default_gate_config)
 
-    status: Mapped[str] = mapped_column(String(32), default="OPEN")  # OPEN | CLOSED | DRAFT
+    # JD-2a (PRD §8.1, §12.1 FR-HR-JD-2/3): JD tạo mới = DRAFT (nháp); MỞ (→OPEN) cần rubric hợp lệ.
+    # Cột CHUỖI (không phải enum DB) → thêm DRAFT chỉ là mở rộng tập giá trị, KHÔNG cần migration.
+    status: Mapped[str] = mapped_column(String(32), default="DRAFT")  # DRAFT | OPEN | CLOSED (ARCHIVED = JD-4)
     embedding_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)  # con trỏ Qdrant (phase sau)
 
     def __repr__(self) -> str:  # pragma: no cover
