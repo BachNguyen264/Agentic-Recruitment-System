@@ -62,10 +62,10 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   Windows dev: `python -m app` (SelectorEventLoop cho psycopg). Resume qua endpoint test + payload mock (08b thay bằng form).
 - **08b — Magic-link form** (§7.3, §12.2) — ✅ **DONE.** `screening_session` (token urlsafe + expires_at +
   used_at + questions snapshot); interrupt → email câu hỏi + magic-link qua scheduler; public `/screening/<token>`
-  + `GET/POST /api/public/screening/{token}` (projection an toàn: chỉ câu hỏi + tiêu đề JD); nộp → resume BẰNG
-  câu trả lời → human_review; answers hiện cho HR. Bảo mật: token crypto-random, hết hạn, one-time, row-lock
-  chống double-submit, chỉ resume AWAITING_SCREENER. Verified live (API + browser) + adversarial security review
-  (0 finding). Chuẩn hóa answers bằng LLM = hoãn (lưu thô). Endpoint dev resume gated ENABLE_DEV_ENDPOINTS.
+  - `GET/POST /api/public/screening/{token}` (projection an toàn: chỉ câu hỏi + tiêu đề JD); nộp → resume BẰNG
+    câu trả lời → human_review; answers hiện cho HR. Bảo mật: token crypto-random, hết hạn, one-time, row-lock
+    chống double-submit, chỉ resume AWAITING_SCREENER. Verified live (API + browser) + adversarial security review
+    (0 finding). Chuẩn hóa answers bằng LLM = hoãn (lưu thô). Endpoint dev resume gated ENABLE_DEV_ENDPOINTS.
 - **08c — Timeout + reminder + late reply** (§10) — ✅ **DONE.** Seam `ScreeningTimeoutScheduler` +
   `InProcessScheduler` (sweep loop ở lifespan, quét Postgres — KHÔNG Redis); handler nghiệp vụ
   (`send_screening_reminder`/`handle_screening_timeout`) TÁCH khỏi cơ chế (đổi QStash sau không sửa nghiệp vụ).
@@ -89,7 +89,7 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   trong cookie **httpOnly** (bcrypt trực tiếp + pyjwt — KHÔNG passlib); `require_hr` bảo vệ MỌI router HR
   (`/api/jobs|applications|agents` + `/api/auth/me`); `login/logout/me` (lỗi CHUNG, chống enumeration + timing).
   Frontend: nhóm route `app/(hr)/` một guard gọi `/api/auth/me` (KHÔNG middleware — an toàn cross-domain),
-  `/login`, logout, `credentials:"include"`, cookie Secure/SameSite/domain từ ENV. Public/*+/apply+/screening
+  `/login`, logout, `credentials:"include"`, cookie Secure/SameSite/domain từ ENV. Public/\*+/apply+/screening
   giữ MỞ (ứng viên GUEST vĩnh viễn — no account). Verified live (HR chặn khi chưa login · guest nộp CV + magic-
   link vẫn mở · login seed → dashboard · logout → chặn lại · e2e nguyên) + 14 test. **Applicant stays guest
   forever** — no applicant accounts (single-tenant, fire-and-forget). ONE user type only.
@@ -99,9 +99,9 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 
 ## 🔵 PHASE 5 — Hardening & deploy
 
-- **10 — Analytics** (PRD §12.1). CV counts, passed/rejected/pending rates per JD; foundation for the learning loop.
-- **11 — Observability** (NFR-6). Langfuse Cloud: token cost, latency, LLM error rates.
-- **12 — Anti-prompt-injection** (NFR-5). Sanitize/frame CV + applicant answers before they reach the LLM (block injected instructions via CV).
+- **10 — Analytics** (PRD §12.1) — **tí hon / tùy chọn.** Số CV, tỉ lệ passed/rejected/pending per JD (tính được từ DB cho báo cáo).
+- ~~**11 — Observability** (Langfuse)~~ — **ĐÃ BỎ** (không có Super Admin → không khán giả; ops-only). Ghi 'hướng mở rộng' trong báo cáo.
+- **12 — Anti-prompt-injection** (NFR-5) — **hạ ưu tiên → TÙY CHỌN** (probe prod: model kháng tự nhiên; vẫn nên sanitize/frame input, làm cuối nếu còn giờ).
 - **UI redesign.** Full visual pass over the UI (currently plain Tailwind scaffolding built to verify flows). Do
   it HERE, near the end, as its OWN work: incremental (screen by screen), no-backend-touched (presentational
   components make this safe), verify each piece. Prefer polishing in plain Tailwind (spacing/typography/color/
@@ -113,18 +113,56 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
     local), Dockerfile (`alembic upgrade head && exec python -m app`, non-root), `/api/health/live` (liveness
     không I/O — health check nền tảng ping vài giây/lần), hardening công khai (body-size đọc-có-đếm +
     rate-limit theo IP có `PROXY_TRUSTED_HOPS`), `.env.example` + checklist env prod.
-  - ⬜ **CÒN LẠI:** runbook (Neon prod branch → Render service + env → Vercel → nối cross-domain) rồi
-    **verify live** (rủi ro #1: cookie cross-domain; kiểm log "Rate-limit: khóa quota" để chốt số chặng proxy).
+  - ✅ **LIVE DONE:** runbook (Neon prod project → Render + env → Vercel → cross-domain) + verify live.
+    **4 sự cố prod bắt+fix** (docs/deploy-live-issues.md): 🔴 Neon autosuspend giết pool checkpointer
+    (→ pool check-on-borrow + max_idle<300s) · 🟠 rate-limit gộp xô sau proxy (→ CF-Connecting-IP) · 🟠 login
+    mobile do third-party cookie iOS/Android (→ proxy /api/\* same-origin qua Vercel = cookie first-party) ·
+    🔵 favicon/text/badge/screener_sent_at. Injection probe: gpt-5-mini KHÁNG (chấm 0 cho CV nhồi 'cho 100đ').
+    → **GĐ5 deploy HOÀN TẤT — hệ thống LIVE trên internet, chạy mọi thiết bị.**
 
 ---
 
-## ⚪ PHASE 6 — Future / optional (PRD §17)
+## 🟡 PHASE 6 — Tối ưu khâu tạo JD (UX + AI gợi ý rubric) — **CURRENT** (post-deploy)
 
-- **14 — LLM-suggested rubric + HR approval** (semi-auto, pillar 4). Hooks into JD posting (Phase 2): HR enters
-  JD → LLM proposes a rubric → HR edits → save. Solves "HR forgot to set criteria." Strong academic highlight
-  (AI proposes, human approves). Do it if time allows.
+> User chính = HR. Phát hiện khi dùng thật: HR _tê liệt ở ô rubric_ (không đủ chuyên môn đặt tiêu chí/trọng số).
+> Chắt lọc từ khảo sát TopCV, áp cho single-tenant (BỎ field kiểu sàn: ⚠️giới tính/địa lý/lý-do-ứng-tuyển/ảnh/nhận-CV).
+> Xem PRD §8.1, §12.1 (FR-HR-JD-1..4 + FR-HR-RUBRIC-1), §16. Chia slice khi tới (detailed plan per-slice).
+
+- **JD-1 — Màn 'Tin tuyển dụng' + field mới + editor định dạng.** Tách form: tin tuyển dụng (ứng viên thấy) khỏi
+  cấu hình sàng lọc. Thêm level/salary/benefits/employment_type. Mô tả + **yêu cầu** → ô văn bản định dạng
+  (bold/italic/list) **dán được cả khối** (bỏ nhập-từng-dòng). Hiển thị field mới ở /apply.
+- **JD-2 — Màn 'Cấu hình sàng lọc' (post-JD) + rubric-bắt-buộc-để-mở + screener-tùy-chọn.** Rubric + câu hỏi
+  sàng lọc chung một màn trên JD đã lưu. Status `DRAFT`; **mở JD yêu cầu có rubric**. **Screener rỗng → pipeline
+  BỎ QUA bước screener** (đổi định tuyến §8.3/§10; vá luôn case suspend-form-rỗng). Gate → 2 toggle trên JD list.
+- **JD-3 — AI gợi ý rubric** (trụ cột 4, was slice 14). Endpoint LLM structured-output đọc JD đã lưu → đề xuất
+  tiêu chí + trọng số; nút on-demand ở màn cấu hình; **cap 3 retry/JD** (`rubric_suggestion_count`), reset khi nội
+  dung JD đổi. Auth-gated. _Điểm nhấn: AI TĂNG CƯỜNG năng lực người (bắc cầu khoảng trống chuyên môn HR), khác auto-hóa._
+- **JD-4 — Soft-delete (ARCHIVED).** Thêm status ARCHIVED (ẩn khỏi list, giữ dữ liệu+kiểm toán, khôi phục). KHÔNG hard-delete.
+  → **Milestone:** khâu tạo JD dùng được THẬT cho HR không-chuyên-kỹ-thuật.
+
+---
+
+## 🧹 Dọn nhỏ còn treo
+
+- `screener_sent_at=null` (email VẪN gửi — chỉ field không set; 1 dòng, gộp lúc tiện).
+- **Đổi mật khẩu admin prod** (`admin@ars.prod` đã lộ trong chat) — script băm mật khẩu mới cho hr_user.
+
+---
+
+## ⚪ PHASE 7 — UI redesign & tùy chọn cuối
+
+- **UI redesign** — đánh bóng toàn giao diện trên bản live (SAU khâu tạo-JD, vì user chính = HR). Từng phần,
+  no-backend-touched (component presentational), verify từng cái. Ưu tiên Tailwind thuần (spacing/typography/màu/nhất quán).
+- **10 Analytics** (tí hon, tùy chọn) · **12 Anti-injection** (tùy chọn — model đã kháng) · Observability đã BỎ.
+- Rồi **VIẾT BÁO CÁO** — tư liệu sẵn: kiến trúc pipeline cố định (không Supervisor), Hướng A scoring, benchmark model,
+  screener bền qua autosuspend (connection-pool resilience), 2 gate + 'cờ thắng gate', 4 sự cố prod, kháng injection.
+
+---
+
+## ⚪ PHASE 8 — Xa hơn (PRD §17)
+
 - **15 — Others:** Zalo OA for Screener · cross-platform web push (iOS) · full learning loop (collect samples →
-  propose) · multi-JD/applicant · rubric A/B testing.
+  propose) · multi-JD/applicant · rubric A/B testing · hard-delete/GDPR purge có kiểm soát.
 
 ---
 
@@ -155,8 +193,8 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [x] **08d gate auto-mời sau screener** (route_after_screener; ca sạch+auto_invite→thư mời thật→INTERVIEW_SCHEDULED; cờ thắng gate; verified live) — **GĐ3 XONG**
 - [x] **09 HR auth** (hr_user+seed+bcrypt/JWT httpOnly · require_hr router HR · (hr) guard+/login+logout · guest MỞ; verified live + 14 test) — **GĐ4 XONG**
 - [x] **06 object storage** (seam FileStorage · Local+R2 · cv_file_ref=KEY · HR tải CV gốc stream/require_hr · bucket PRIVATE · reset xóa file; verified live 2 backend + bền qua restart)
-- [~] **13 deploy ← ĐANG LÀM.** Code-prep XONG (CORS/bind từ env · Dockerfile · /api/health/live ·
-      hardening công khai · checklist env prod; 213 test, adversarial review 8 fix). **Còn: runbook
-      (Render/Vercel do người dùng thao tác) + verify live.**
-- [ ] 10 analytics · 11 observability · 12 anti-injection · UI redesign
-- [ ] 14 LLM-suggested rubric · 15 optional
+- [x] **13 deploy — ✅ LIVE** (Render + Vercel, cross-domain OK, **4 sự cố prod fixed**, injection probe: model kháng) — **GĐ5 deploy XONG**
+- [ ] **PHASE 6 (CURRENT) — Tối ưu tạo JD:** JD-1 tin-tuyển-dụng+field+editor · JD-2 cấu-hình-sàng-lọc+rubric-bắt-buộc-để-mở+screener-tùy-chọn+gate-trên-list · JD-3 AI-gợi-ý-rubric · JD-4 soft-delete(ARCHIVED)
+- [ ] Dọn: screener_sent_at · **đổi mật khẩu admin prod**
+- [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
+- [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)

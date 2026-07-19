@@ -3,7 +3,7 @@
 > **Tài liệu này là NGUỒN CHÂN LÝ của hệ thống.** Mọi quyết định triển khai phải đối chiếu với PRD này.
 > Khi code và PRD mâu thuẫn → PRD đúng (hoặc cập nhật PRD trước rồi mới sửa code).
 >
-> Phiên bản: 1.0 · Phạm vi: đồ án tốt nghiệp (proof-of-concept hoàn chỉnh).
+> Phiên bản: 1.1 · Phạm vi: đồ án tốt nghiệp (proof-of-concept hoàn chỉnh).
 
 ---
 
@@ -88,7 +88,8 @@ pipeline đa tác tử bất đồng bộ.
 3. **An toàn trước case lạ.** Mỗi agent trả kèm `confidence` + `uncertainty_flags`; dưới ngưỡng → tự chuyển
    `human_review`. "Không chắc thì hỏi HR" là hành vi đúng, không phải thất bại.
 4. **Cải thiện dần bán tự động có người duyệt.** Hệ thống phát hiện mẫu case lạ từ audit*log → *đề xuất\_
-   chỉnh rubric/JD/prompt → HR duyệt mới áp dụng. Agent KHÔNG tự đổi control flow.
+   chỉnh rubric/JD/prompt → HR duyệt mới áp dụng. Agent KHÔNG tự đổi control flow. (Hiện thực đầu tiên:
+   *AI gợi ý rubric từ JD* — AI đề xuất, HR duyệt/chỉnh; xem FR-HR-RUBRIC-1.)
 
 > Đánh đổi cốt lõi: quyền tự trị ở tầng điều phối ĐỔI LẤY độ tin cậy/khả năng kiểm soát + chi phí thấp.
 
@@ -121,11 +122,13 @@ pipeline đa tác tử bất đồng bộ.
 - **Việc:** đối sánh ngữ nghĩa CV–JD; chấm điểm theo bộ tiêu chí có trọng số (rubric); sinh điểm tổng + phân
   rã theo tiêu chí + tóm tắt; là **node ra quyết định** (đạt/không đạt/bất định).
 - **confidence/cờ:** `weak_match` khi khớp yếu; confidence thấp khi điểm sát ngưỡng.
+- **Rubric BẮT BUỘC:** JD phải có rubric mới được MỞ (nhận CV) — xem §12.1. Ranker do đó LUÔN có rubric để chấm, không bao giờ gặp rubric rỗng.
 - **Tool tự trị (phase sau):** truy vấn vector, công cụ chấm điểm.
 
 ### 7.3 Screener (chạy SAU Ranker)
 
 - **Đầu vào:** ứng viên đã qua ngưỡng rank.
+- **TÙY CHỌN theo JD:** nếu JD KHÔNG có câu hỏi sàng lọc → BỎ QUA bước Screener (CV đạt đi thẳng human_review / gate auto-mời, không suspend). Chỉ JD CÓ câu hỏi mới kích hoạt Screener.
 - **Việc:** gửi **bộ câu hỏi cố định** (cấu hình theo JD) qua **email + magic-link form** để thu thập thông
   tin hậu tuyển (lương kỳ vọng, thời gian nhận việc, xác nhận quan tâm, câu hỏi loại trừ do HR đặt). Sau khi
   nhận trả lời, chuẩn hóa thành dữ liệu có cấu trúc.
@@ -145,9 +148,11 @@ pipeline đa tác tử bất đồng bộ.
 
 ## 8. Luồng nghiệp vụ end-to-end
 
-### 8.1 Thiết lập (HR)
+### 8.1 Thiết lập (HR) — luồng 2 bước
 
-1. HR đăng nhập, tạo JD. Hệ thống embedding JD → lưu Qdrant làm chuẩn đối sánh.
+1a. **Tạo Tin tuyển dụng** (ứng viên thấy): tiêu đề, cấp bậc, lương, quyền lợi, loại việc, mô tả, yêu cầu (mô tả + yêu cầu là ô văn bản định dạng, dán được cả khối). Lưu → JD status `DRAFT`; hệ thống embedding JD → Qdrant.
+1b. **Cấu hình sàng lọc** (nội bộ, trên JD đã lưu): nhập rubric (có nút **AI gợi ý** đọc JD → đề xuất tiêu chí + trọng số, HR chỉnh) + câu hỏi sàng lọc (tùy chọn). Gate bật/tắt ở **danh sách JD**.
+1c. **MỞ JD** (`DRAFT/CLOSED → OPEN`) — **yêu cầu JD đã có rubric** (không có rubric không mở được; ranker vì thế luôn có tiêu chí). JD OPEN mới nhận CV.
 
 ### 8.2 Nộp (Ứng viên — web công khai)
 
@@ -162,8 +167,8 @@ pipeline đa tác tử bất đồng bộ.
    - **đạt ngưỡng** → tiếp `screener`.
    - **rank thấp** → _gate auto-từ-chối_: BẬT → tự từ chối (scheduler gửi thư) → `REJECTED`; TẮT → `human_review`.
    - **bất định** (`weak_match`/điểm sát ngưỡng) → **luôn** `human_review` (gate no-op).
-6. `screener`: gửi email + magic-link form → **pipeline SUSPEND** (lưu state, không chiếm tài nguyên). Xem §10.
-   Sau khi có kết quả (trả lời / timeout), tới **GATE MỜI**:
+6. `screener`: **nếu JD KHÔNG có câu hỏi → BỎ QUA bước này**, đi thẳng tới GATE MỜI (không suspend). Nếu JD CÓ câu hỏi → gửi email + magic-link form → **pipeline SUSPEND** (lưu state, không chiếm tài nguyên; xem §10).
+   Sau khi có kết quả (trả lời / timeout / bỏ qua), tới **GATE MỜI**:
    - **ổn + auto-mời BẬT** → `scheduler` gửi thư mời + đặt lịch → `INTERVIEW_SCHEDULED`.
    - **auto-mời TẮT, hoặc có cờ (`no_response`…)** → `human_review`.
 7. `scheduler`: thực thi hành động cuối (mời/từ chối).
@@ -199,6 +204,7 @@ pipeline đa tác tử bất đồng bộ.
 Nguyên lý: **không giữ pipeline "đang chạy" để đợi con người.** Pipeline tạm dừng, lưu state bền vững, thức
 dậy theo sự kiện hoặc theo hạn.
 
+- **FR-SCR-0 (tùy chọn):** Screener chỉ chạy nếu JD CÓ câu hỏi sàng lọc. JD rỗng câu hỏi → BỎ QUA Screener (không suspend); CV đạt đi thẳng human_review / gate auto-mời. (Cũng tránh case suspend-với-form-rỗng.)
 - **FR-SCR-1:** Khi Screener gửi câu hỏi → status `AWAITING_SCREENER`, lưu `screener_sent_at`, `deadline`
   (mặc định +72h, cấu hình được). Lần chạy pipeline kết thúc (không spin). CV chỉ là dòng DB ở trạng thái chờ;
   **không chiếm CPU; không làm nghẽn CV khác**.
@@ -233,7 +239,11 @@ dậy theo sự kiện hoặc theo hạn.
 
 ### 12.1 HR
 
-- FR-HR-JD-1: tạo/sửa/đóng JD; JD được embedding vào Qdrant khi tạo.
+- FR-HR-JD-1: **Luồng tạo JD 2 bước** — (a) tạo *Tin tuyển dụng* (tiêu đề, cấp bậc, lương, quyền lợi, loại việc, mô tả + yêu cầu dạng văn bản định dạng dán-được) → lưu `DRAFT` + embedding Qdrant; (b) *Cấu hình sàng lọc* trên JD đã lưu (rubric + câu hỏi sàng lọc). Sửa mô tả/tiêu đề/yêu cầu → re-embed.
+- FR-HR-JD-2: **Rubric bắt buộc để MỞ** — JD tạo được không cần rubric (DRAFT), nhưng phải có rubric mới `OPEN` (nhận CV). Câu hỏi sàng lọc **tùy chọn** (rỗng → pipeline bỏ qua Screener).
+- FR-HR-RUBRIC-1 (**AI gợi ý rubric** — bước đầu của trụ cột 4): nút on-demand, đọc JD đã lưu (tiêu đề+mô tả+yêu cầu, và cấp bậc làm ngữ cảnh) → LLM đề xuất *tiêu chí + trọng số* (structured output) → HR chỉnh/lưu. **Cap retry 3 lần/JD**, `rubric_suggestion_count` neo trên JD; **reset khi nội dung JD (tiêu đề/mô tả/yêu cầu) đổi** (dùng chung phép so sánh với re-embed). Auth-gated (require_hr).
+- FR-HR-JD-3: **Trạng thái JD** `DRAFT → OPEN → CLOSED` (đóng/tạm dừng, giữ dữ liệu) và **ARCHIVED** (lưu trữ, ẩn khỏi danh sách, giữ dữ liệu + kiểm toán, khôi phục được). **KHÔNG hard-delete JD** (bảo toàn hồ sơ ứng viên + nhật ký kiểm toán); xóa data test chỉ qua script dev.
+- FR-HR-JD-4: Gate (auto_reject/auto_invite) — toggle theo JD, truy cập nhanh **trên danh sách JD**.
 - FR-HR-DASH-1: dashboard giám sát pipeline thời gian thực (trạng thái từng CV, agent trace, hàng đợi).
 - FR-HR-LIST-1: danh sách ứng viên + bộ lọc theo trạng thái (đang chạy / chờ ứng viên / pending review / passed / rejected).
 - FR-HR-DETAIL-1: chi tiết một CV (dữ liệu đã parse, điểm + phân rã, agent trace, audit log).
@@ -328,8 +338,10 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 ## 16. Mô hình dữ liệu (thực thể chính)
 
 - **HRUser:** id, email, password_hash, role.
-- **JobPosting (JD):** id, title, description, requirements, rubric (tiêu chí + trọng số), screener_questions,
-  gate_config (auto_reject, auto_invite), status, embedding_ref (Qdrant), created_at.
+- **JobPosting (JD):** id, title, **level** (cấp bậc), **salary** (min/max/currency/negotiable), **benefits**,
+  **employment_type**, description (văn bản định dạng), requirements (văn bản định dạng), rubric (tiêu chí + trọng số),
+  screener_questions (tùy chọn), gate_config (auto_reject, auto_invite), **rubric_suggestion_count** (cap AI gợi ý),
+  status (`DRAFT`/`OPEN`/`CLOSED`/`ARCHIVED`), embedding_ref (Qdrant), created_at.
 - **Application (Candidate):** id, job_id, applicant_email, cv_file_ref, parsed_data (JSONB), score,
   score_breakdown (JSONB), status, confidence, uncertainty_flags (JSONB), escalation_reason, timestamps.
 - **ScreeningSession:** id, application_id, questions, answers (JSONB), magic_link_token, sent_at, deadline,
@@ -349,7 +361,8 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 - Web push notification xuyên nền tảng cho HR (đặc biệt trên iOS, vốn hạn chế PWA push).
 - Vòng học bán tự động đầy đủ (gom mẫu → đề xuất → HR duyệt) — thiết kế đã chừa, triển khai sau.
 - Đa ngôn ngữ nâng cao, đa JD song song cho một ứng viên, A/B testing rubric.
-- LLM đề xuất rubric từ JD, HR duyệt/chỉnh (bán tự động, trụ cột 4)
+- Hard-delete / purge dữ liệu có kiểm soát (vd nghĩa vụ xóa dữ liệu cá nhân) — hiện chỉ soft-delete (ARCHIVED).
+- (Đã đưa vào phạm vi active: *AI gợi ý rubric từ JD* — xem FR-HR-RUBRIC-1, §12.1.)
 
 ---
 
