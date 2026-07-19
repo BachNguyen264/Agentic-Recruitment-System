@@ -109,6 +109,7 @@ async def update_job(
     new_text = build_jd_text(
         title=data.title, description=data.description, requirements=data.requirements
     )
+    content_changed = new_text != old_text
 
     job.title = data.title
     job.description = data.description       # HTML định dạng — lưu thẳng
@@ -120,10 +121,16 @@ async def update_job(
     job.rubric = [c.model_dump() for c in data.rubric]
     job.screener_questions = list(data.screener_questions)
     job.gate_config = data.gate_config.model_dump()
+    # JD-3 (PRD §12.1 FR-HR-RUBRIC-1): nội dung JD (tiêu đề/mô tả/yêu cầu) đổi → gợi ý rubric CŨ hết
+    # hiệu lực → RESET cap để HR gợi ý lại theo JD mới. Dùng CHUNG phép so sánh với re-embed (một quyết
+    # định cho cả hai — content_changed). Sửa chỉ rubric/gate/screener → count GIỮ NGUYÊN (lưu cấu hình
+    # không tiêu lượt gợi ý).
+    if content_changed:
+        job.rubric_suggestion_count = 0
     await session.commit()
     await session.refresh(job)
 
-    if new_text == old_text:
+    if not content_changed:
         logger.info("update JD id=%s: văn bản embed KHÔNG đổi → BỎ QUA re-embed", job.id)
         return job, None  # chỉ rubric/gate/screener đổi → không tốn API embedding
 
@@ -181,6 +188,23 @@ async def set_gate_config(
     if auto_invite is not None:
         gate["auto_invite"] = auto_invite
     job.gate_config = gate
+    await session.commit()
+    await session.refresh(job)
+    return job
+
+
+async def bump_rubric_suggestion_count(
+    session: AsyncSession, job_id: int
+) -> JobPosting | None:
+    """Tăng cap AI gợi ý rubric của JD sau MỘT lần gợi ý thành công (JD-3). None nếu JD không tồn tại.
+
+    Gọi SAU khi LLM trả đề xuất OK (lỗi LLM KHÔNG tiêu lượt — công bằng với HR). Endpoint kiểm cap
+    (count >= max → 429) TRƯỚC khi gọi LLM; hàm này chỉ +1 + commit.
+    """
+    job = await session.get(JobPosting, job_id)
+    if job is None:
+        return None
+    job.rubric_suggestion_count = (job.rubric_suggestion_count or 0) + 1
     await session.commit()
     await session.refresh(job)
     return job

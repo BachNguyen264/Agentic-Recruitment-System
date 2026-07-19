@@ -11,7 +11,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 # Tập giá trị cho dropdown (validate ở Create; Read để permissive cho row legacy).
 JobLevel = Literal["intern", "fresher", "junior", "mid", "senior", "lead", "manager"]
@@ -92,8 +99,19 @@ class JobPostingRead(BaseModel):
     gate_config: GateConfig = Field(default_factory=GateConfig)
     status: str
     embedding_ref: str | None = None  # null = chưa embed (embedding lỗi / JD legacy)
+    # JD-3: số lần AI đã gợi ý rubric cho JD này (cap ở RUBRIC_SUGGEST_MAX_RETRIES). CHỈ HR thấy
+    # (KHÔNG khai báo ở PublicJobRead). remaining = phần còn lại (backend là nguồn chân lý của cap).
+    rubric_suggestion_count: int = 0
     created_at: datetime
     updated_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def rubric_suggestions_remaining(self) -> int:
+        """Số lần gợi ý rubric còn lại — dẫn xuất từ count + cap env (frontend hiển thị, KHÔNG tự tính cap)."""
+        from app.core.config import settings
+
+        return max(0, settings.rubric_suggest_max_retries - self.rubric_suggestion_count)
 
     @field_validator("requirements", "benefits", mode="before")
     @classmethod

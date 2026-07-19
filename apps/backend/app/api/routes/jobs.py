@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import DBSession
+from app.core.config import settings
 from app.schemas.job_posting import (
     GateConfigUpdate,
     JobPostingCreate,
@@ -15,7 +16,8 @@ from app.schemas.job_posting import (
     SearchTestRequest,
     SearchTestResponse,
 )
-from app.services import job_service, qdrant_service
+from app.schemas.rubric_suggest import RubricSuggestResponse, SuggestedCriterion
+from app.services import job_service, qdrant_service, rubric_suggester
 from app.services.embedding_service import EmbeddingError, embed_text
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -93,6 +95,50 @@ async def update_gate(
     if job is None:
         raise HTTPException(status_code=404, detail="JobPosting không tồn tại")
     return JobPostingRead.model_validate(job)
+
+
+@router.post(
+    "/{job_id}/suggest-rubric",
+    response_model=RubricSuggestResponse,
+    summary="AI gợi ý rubric từ JD (PRD §12.1 FR-HR-RUBRIC-1) — HR duyệt/chỉnh, KHÔNG tự áp",
+)
+async def suggest_rubric(job_id: int, session: DBSession) -> RubricSuggestResponse:
+    """Đọc JD đã lưu (plain-text + cấp bậc) → LLM đề xuất tiêu chí+trọng số. Cap RUBRIC_SUGGEST_MAX_RETRIES
+    lần/JD (reset khi nội dung JD đổi). Auth-gated (router HR-only). Đề xuất TRẢ VỀ cho HR chỉnh trước
+    khi lưu — endpoint KHÔNG ghi rubric vào JD (trụ cột 4: HR duyệt mới áp).
+    """
+    job = await job_service.get_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="JobPosting không tồn tại")
+
+    max_retries = settings.rubric_suggest_max_retries
+    if (job.rubric_suggestion_count or 0) >= max_retries:
+        # Hết lượt → 429 rõ ràng (PRD §12.1: cap 3 lần/JD). Sửa nội dung JD → reset (update_job).
+        raise HTTPException(
+            status_code=429,
+            detail=f"Đã hết lượt AI gợi ý rubric ({max_retries} lần/JD). "
+            "Sửa nội dung JD (tiêu đề/mô tả/yêu cầu) rồi lưu để đặt lại lượt gợi ý.",
+        )
+
+    try:
+        criteria = await rubric_suggester.suggest_rubric(
+            title=job.title,
+            description=job.description or "",
+            requirements=job.requirements or "",
+            level=job.level,
+        )
+    except rubric_suggester.RubricSuggestError as exc:
+        # Lỗi LLM → 502 (KHÔNG tiêu lượt: count chỉ tăng SAU khi có đề xuất). HR thử lại được.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    job = await job_service.bump_rubric_suggestion_count(session, job_id)
+    used = job.rubric_suggestion_count if job else max_retries
+    return RubricSuggestResponse(
+        criteria=[SuggestedCriterion(**c) for c in criteria],
+        used=used,
+        remaining=max(0, max_retries - used),
+        model_used=rubric_suggester.model_label(),
+    )
 
 
 @router.post("/search-test", response_model=SearchTestResponse, summary="Verify tra cứu tương đồng")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import String, Text
+from sqlalchemy import Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,6 +43,10 @@ class JobPosting(Base, TimestampMixin):
     # Cột CHUỖI (không phải enum DB) → thêm DRAFT chỉ là mở rộng tập giá trị, KHÔNG cần migration.
     status: Mapped[str] = mapped_column(String(32), default="DRAFT")  # DRAFT | OPEN | CLOSED (ARCHIVED = JD-4)
     embedding_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)  # con trỏ Qdrant (phase sau)
+
+    # JD-3 (PRD §12.1 FR-HR-RUBRIC-1): cap số lần AI gợi ý rubric / JD. Tăng mỗi lần gọi suggest-rubric;
+    # RESET về 0 khi nội dung JD (tiêu đề/mô tả/yêu cầu) đổi — dùng chung phép so sánh với re-embed (update_job).
+    rubric_suggestion_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<JobPosting id={self.id} title={self.title!r} status={self.status}>"
