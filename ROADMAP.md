@@ -128,9 +128,12 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 > Chắt lọc từ khảo sát TopCV, áp cho single-tenant (BỎ field kiểu sàn: ⚠️giới tính/địa lý/lý-do-ứng-tuyển/ảnh/nhận-CV).
 > Xem PRD §8.1, §12.1 (FR-HR-JD-1..4 + FR-HR-RUBRIC-1), §16. Chia slice khi tới (detailed plan per-slice).
 
-- **JD-1 — Màn 'Tin tuyển dụng' + field mới + editor định dạng.** Tách form: tin tuyển dụng (ứng viên thấy) khỏi
-  cấu hình sàng lọc. Thêm level/salary/benefits/employment_type. Mô tả + **yêu cầu** → ô văn bản định dạng
-  (bold/italic/list) **dán được cả khối** (bỏ nhập-từng-dòng). Hiển thị field mới ở /apply.
+- **JD-1 — Field mới + editor định dạng — ✅ DONE.** Thêm level/salary(JSONB)/benefits/employment_type
+  (migration add-column, requirements GIỮ Text). Mô tả + **yêu cầu** + quyền lợi → editor định dạng
+  (Tiptap: bold/italic/underline/list) **dán được cả khối** (bỏ nhập-từng-dòng); field mới hiển thị ở /apply
+  (render SafeHtml/DOMPurify). **Plain-text cho embedding/LLM**: `build_jd_text` + `jd_dict` bóc HTML (tag
+  KHÔNG lọt vào vector/prompt). Editor code-split khỏi /apply (bundle công khai không phình). Verified:
+  round-trip API + /apply browser + 232 test pass. _(Tách form 2 màn dời sang JD-2 — JD-1 chỉ bổ sung nội dung.)_
 - **JD-2 — Màn 'Cấu hình sàng lọc' (post-JD) + rubric-bắt-buộc-để-mở + screener-tùy-chọn.** Rubric + câu hỏi
   sàng lọc chung một màn trên JD đã lưu. Status `DRAFT`; **mở JD yêu cầu có rubric**. **Screener rỗng → pipeline
   BỎ QUA bước screener** (đổi định tuyến §8.3/§10; vá luôn case suspend-form-rỗng). Gate → 2 toggle trên JD list.
@@ -194,7 +197,8 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [x] **09 HR auth** (hr_user+seed+bcrypt/JWT httpOnly · require_hr router HR · (hr) guard+/login+logout · guest MỞ; verified live + 14 test) — **GĐ4 XONG**
 - [x] **06 object storage** (seam FileStorage · Local+R2 · cv_file_ref=KEY · HR tải CV gốc stream/require_hr · bucket PRIVATE · reset xóa file; verified live 2 backend + bền qua restart)
 - [x] **13 deploy — ✅ LIVE** (Render + Vercel, cross-domain OK, **4 sự cố prod fixed**, injection probe: model kháng) — **GĐ5 deploy XONG**
-- [ ] **PHASE 6 (CURRENT) — Tối ưu tạo JD:** JD-1 tin-tuyển-dụng+field+editor · JD-2 cấu-hình-sàng-lọc+rubric-bắt-buộc-để-mở+screener-tùy-chọn+gate-trên-list · JD-3 AI-gợi-ý-rubric · JD-4 soft-delete(ARCHIVED)
+- [ ] **PHASE 6 (CURRENT) — Tối ưu tạo JD:** [x] JD-1 field+editor định dạng+plain-text embedding (DONE) ·
+  JD-2 cấu-hình-sàng-lọc+rubric-bắt-buộc-để-mở+screener-tùy-chọn+gate-trên-list · JD-3 AI-gợi-ý-rubric · JD-4 soft-delete(ARCHIVED)
 - [ ] Dọn: screener_sent_at · **đổi mật khẩu admin prod**
 - [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)
