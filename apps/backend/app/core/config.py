@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     score_pass_threshold: float = 60.0
     score_near_band: float = 10.0
 
+    # ── AI gợi ý rubric (JD-3 — PRD §12.1 FR-HR-RUBRIC-1, trụ cột 4) ──
+    # Lần dùng LLM thứ 3 (parser=trích · ranker=chấm · suggester=ĐỀ XUẤT rubric có suy luận). Dùng
+    # reasoning_effort (KHÔNG temperature — như ranker); effort chọn qua benchmark (plan §5). MAX_RETRIES:
+    # cap số lần gợi ý / JD (reset khi nội dung JD đổi) — chống farm call (dù đã auth-gated HR).
+    rubric_suggest_model: str = "gpt-5-mini"
+    rubric_suggest_reasoning_effort: str | None = "low"
+    rubric_suggest_max_retries: int = 3
+
     # ── Lưu file CV (slice 06 — PRD §16 cv_file_ref, NFR-4) ──────────
     # Nghiệp vụ KHÔNG đọc/ghi path trực tiếp — đi qua seam `services/storage` (FileStorage).
     #   local = đĩa dev (thư mục cv_upload_dir) · r2 = Cloudflare R2 (S3 API, bucket PRIVATE).
