@@ -54,11 +54,15 @@ def test_public_job_read_excludes_internal_fields() -> None:
 
     dumped = PublicJobRead.model_validate(_job()).model_dump()
 
-    assert set(dumped) == {"id", "title", "description", "requirements", "created_at"}
+    # JD-1: thêm trường hướng-ứng-viên (level/salary/benefits/employment_type) — vẫn KHÔNG nội bộ.
+    assert set(dumped) == {
+        "id", "title", "description", "requirements",
+        "level", "salary", "benefits", "employment_type", "created_at",
+    }
     # Chốt chặn rò rỉ tiêu chí chấm/cấu hình nội bộ:
     for leaked in ("rubric", "gate_config", "screener_questions", "embedding_ref", "status"):
         assert leaked not in dumped
-    assert dumped["requirements"] == ["Node.js", "Express"]  # Text → list
+    assert dumped["requirements"] == "Node.js\nExpress"  # JD-1: văn bản định dạng, trả THẲNG
 
 
 # ── 2) validate_cv: magic bytes ở SERVER ─────────────────────────────────────

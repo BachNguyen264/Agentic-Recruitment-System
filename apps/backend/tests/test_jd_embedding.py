@@ -50,7 +50,7 @@ def _payload(**overrides) -> JobPostingCreate:
     base = dict(
         title="Backend Intern (Node.js)",
         description="Xây REST API cho hệ thống đặt vé.",
-        requirements=["Node.js", "Express", "MongoDB"],
+        requirements="Node.js\nExpress\nMongoDB",  # JD-1: văn bản định dạng (không còn list)
         rubric=[
             RubricCriterion(criterion="Kinh nghiệm Node.js", weight=0.6),
             RubricCriterion(criterion="Hiểu biết DB", weight=0.4),
@@ -65,8 +65,20 @@ def _payload(**overrides) -> JobPostingCreate:
 
 
 def test_build_jd_text_format() -> None:
-    text = build_jd_text(title="T", description="D", requirements=["r1", "  r2  ", ""])
+    text = build_jd_text(title="T", description="D", requirements="r1\n  r2  \n")
     assert text == "T\nD\nr1\nr2"
+
+
+def test_build_jd_text_strips_html() -> None:
+    # JD-1 GOTCHA: tag định dạng TUYỆT ĐỐI không lọt vào embedding (nhiễu vector).
+    text = build_jd_text(
+        title="Backend",
+        description="<p>Xây <strong>REST API</strong></p>",
+        requirements="<ul><li>Node.js</li><li>Express</li></ul>",
+    )
+    assert "<" not in text and ">" not in text
+    assert "strong" not in text and "<li" not in text
+    assert text == "Backend\nXây REST API\nNode.js\nExpress"
 
 
 # ── schema defaults / validation ────────────────────────────────────────────
@@ -86,22 +98,26 @@ def test_rubric_weight_bounds() -> None:
 
 
 def test_read_normalizes_legacy_row() -> None:
-    # Row scaffold cũ: requirements=None (Text), rubric={} (dict JSONB).
+    # Row scaffold cũ (trước JD-1): requirements/benefits=None (Text), salary=None (JSONB),
+    # rubric={} (dict JSONB). Read chuẩn hóa mềm để không vỡ khi đọc JD legacy.
     from datetime import datetime, timezone
+
+    from app.schemas.job_posting import SalaryInfo
 
     now = datetime.now(timezone.utc)
     read = JobPostingRead(
-        id=1, title="Cũ", description="", requirements=None, rubric={},
+        id=1, title="Cũ", description="", requirements=None, benefits=None, salary=None, rubric={},
         screener_questions=[], gate_config={"auto_reject": False, "auto_invite": False},
         status="OPEN", embedding_ref=None, created_at=now, updated_at=now,
     )
-    assert read.requirements == []
+    assert read.requirements == "" and read.benefits == ""  # None → ""
+    assert read.salary == SalaryInfo()  # None → mặc định (VND, không thỏa thuận)
+    assert read.level is None and read.employment_type is None
     assert read.rubric == []
-    # requirements dạng Text join "\n" tách lại đúng list.
-    read2 = read.model_copy(update={"requirements": ["a", "b"]})
+    # JD-1: requirements là văn bản định dạng — lưu/đọc THẲNG (không còn tách list).
     assert JobPostingRead.model_validate(
-        {**read2.model_dump(), "requirements": "a\nb"}
-    ).requirements == ["a", "b"]
+        {**read.model_dump(), "requirements": "<p>a</p><p>b</p>"}
+    ).requirements == "<p>a</p><p>b</p>"
 
 
 # ── create_job (mock embed + upsert) ─────────────────────────────────────────
@@ -175,12 +191,6 @@ async def test_create_job_second_commit_failure_consistent(monkeypatch) -> None:
     assert job.embedding_ref is None  # KHÔNG trả point id khi DB chưa ghi được
     assert warning is not None
     assert session.rollbacks == 1
-
-
-def test_requirements_newline_normalized() -> None:
-    # Item chứa newline sẽ vỡ round-trip Text->list — phải chuẩn hóa thành 1 space.
-    jd = _payload(requirements=["Thành thạo SQL\nvà NoSQL", "  ", "Git\r\ncơ bản"])
-    assert jd.requirements == ["Thành thạo SQL và NoSQL", "Git cơ bản"]
 
 
 # ── point id ổn định ─────────────────────────────────────────────────────────

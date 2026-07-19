@@ -58,7 +58,7 @@ def _payload(**overrides) -> JobPostingCreate:
     base = dict(
         title="Backend Intern (Node.js)",
         description="Xây REST API cho hệ thống đặt vé.",
-        requirements=["Node.js", "Express", "MongoDB"],
+        requirements="Node.js\nExpress\nMongoDB",  # GIỐNG _job → build_jd_text khớp → skip re-embed
         rubric=[RubricCriterion(criterion="Kinh nghiệm Node.js", weight=0.6),
                 RubricCriterion(criterion="Hiểu biết DB", weight=0.4)],
         screener_questions=["Mức lương kỳ vọng?"],
@@ -105,7 +105,7 @@ async def test_update_reembeds_when_requirements_change(monkeypatch) -> None:
     session = FakeSession(_job())
 
     await job_service.update_job(
-        session, 1, _payload(requirements=["Node.js", "PostgreSQL", "Docker"])
+        session, 1, _payload(requirements="Node.js\nPostgreSQL\nDocker")
     )
 
     assert "embed" in called  # requirements đổi → re-embed

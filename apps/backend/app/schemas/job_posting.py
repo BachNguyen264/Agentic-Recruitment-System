@@ -1,8 +1,9 @@
-"""Pydantic I/O cho JobPosting (JD) — PRD §16, §9 (gate_config), §7.2 (chuẩn đối sánh Ranker).
+"""Pydantic I/O cho JobPosting (JD) — PRD §16, §8.1, §9 (gate_config), §7.2 (chuẩn đối sánh Ranker).
 
-DB giữ nguyên schema scaffold (không migration): cột `requirements` là Text nên API nhận
-list[str] và join "\n" khi lưu; Read chuẩn hóa ngược lại. Cột JSONB nhận cả dict legacy
-(row demo scaffold có rubric={}) — validator mềm quy về list rỗng.
+JD-1: `description`/`requirements`/`benefits` là văn bản ĐỊNH DẠNG (HTML do HR soạn ở editor) — API
+nhận/trả THẲNG chuỗi (KHÔNG còn list requirements). Thêm level/salary/employment_type. Cột JSONB nhận
+cả dict legacy (row demo scaffold có rubric={}); validator mềm quy về mặc định. Bóc HTML → plain-text
+cho embedding/LLM làm ở service (build_jd_text / jd_dict), KHÔNG ở schema.
 """
 
 from __future__ import annotations
@@ -10,7 +11,28 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# Tập giá trị cho dropdown (validate ở Create; Read để permissive cho row legacy).
+JobLevel = Literal["intern", "fresher", "junior", "mid", "senior", "lead", "manager"]
+EmploymentType = Literal["full_time", "part_time", "contract", "internship"]
+Currency = Literal["VND", "USD"]
+
+
+class SalaryInfo(BaseModel):
+    """Lương JD (PRD §16). `negotiable` = "Thỏa thuận" → min/max bỏ qua (có thể None)."""
+
+    min: int | None = Field(default=None, ge=0)
+    max: int | None = Field(default=None, ge=0)
+    currency: Currency = "VND"
+    negotiable: bool = False
+
+    @model_validator(mode="after")
+    def _check_range(self) -> SalaryInfo:
+        # Thỏa thuận → không ràng buộc min/max. Ngược lại min ≤ max (khi có cả hai).
+        if not self.negotiable and self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError("Lương tối thiểu không được lớn hơn tối đa.")
+        return self
 
 
 class RubricCriterion(BaseModel):
@@ -39,15 +61,14 @@ class JobStatusUpdate(BaseModel):
 
 class JobPostingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
-    description: str = Field(min_length=1)
-    requirements: list[str] = Field(default_factory=list, description="Các yêu cầu chính.")
+    description: str = Field(min_length=1, description="Mô tả — văn bản định dạng (HTML).")
+    requirements: str = Field(default="", description="Yêu cầu — văn bản định dạng (HTML), dán cả khối.")
+    # JD-1 (PRD §16, §8.1): trường hướng-ứng-viên.
+    level: JobLevel | None = None
+    salary: SalaryInfo = Field(default_factory=SalaryInfo)
+    benefits: str = Field(default="", description="Quyền lợi — văn bản định dạng (HTML).")
+    employment_type: EmploymentType | None = None
 
-    @field_validator("requirements")
-    @classmethod
-    def _normalize_requirement_items(cls, v: list[str]) -> list[str]:
-        # Cột DB là Text join "\n": item chứa newline sẽ bị tách đôi khi đọc lại —
-        # chuẩn hóa mọi whitespace nội bộ thành 1 space, bỏ item rỗng.
-        return [" ".join(item.split()) for item in v if item.strip()]
     rubric: list[RubricCriterion] = Field(default_factory=list)
     screener_questions: list[str] = Field(
         default_factory=list, description="Bộ câu hỏi cố định cho Screener (PRD §10 FR-SCR-6)."
@@ -61,7 +82,11 @@ class JobPostingRead(BaseModel):
     id: int
     title: str
     description: str
-    requirements: list[str] = Field(default_factory=list)
+    requirements: str = ""
+    level: str | None = None
+    salary: SalaryInfo = Field(default_factory=SalaryInfo)
+    benefits: str = ""
+    employment_type: str | None = None
     rubric: list[RubricCriterion] = Field(default_factory=list)
     screener_questions: list[str] = Field(default_factory=list)
     gate_config: GateConfig = Field(default_factory=GateConfig)
@@ -70,15 +95,17 @@ class JobPostingRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    @field_validator("requirements", mode="before")
+    @field_validator("requirements", "benefits", mode="before")
     @classmethod
-    def _split_requirements(cls, v: object) -> object:
-        # Cột DB là Text (join "\n"); legacy có thể None.
-        if v is None:
-            return []
-        if isinstance(v, str):
-            return [line for line in v.splitlines() if line.strip()]
-        return v
+    def _text_or_empty(cls, v: object) -> object:
+        # Cột Text nullable — legacy None → "". Chuỗi HTML (hoặc plain legacy) trả thẳng.
+        return "" if v is None else v
+
+    @field_validator("salary", mode="before")
+    @classmethod
+    def _default_salary(cls, v: object) -> object:
+        # JD legacy: salary NULL → mặc định (min/max None, VND, không thỏa thuận).
+        return SalaryInfo() if v is None else v
 
     @field_validator("rubric", mode="before")
     @classmethod
@@ -100,17 +127,22 @@ class PublicJobRead(BaseModel):
     id: int
     title: str
     description: str
-    requirements: list[str] = Field(default_factory=list)
+    requirements: str = ""
+    level: str | None = None
+    salary: SalaryInfo = Field(default_factory=SalaryInfo)
+    benefits: str = ""
+    employment_type: str | None = None
     created_at: datetime
 
-    @field_validator("requirements", mode="before")
+    @field_validator("requirements", "benefits", mode="before")
     @classmethod
-    def _split_requirements(cls, v: object) -> object:
-        if v is None:
-            return []
-        if isinstance(v, str):
-            return [line for line in v.splitlines() if line.strip()]
-        return v
+    def _text_or_empty(cls, v: object) -> object:
+        return "" if v is None else v
+
+    @field_validator("salary", mode="before")
+    @classmethod
+    def _default_salary(cls, v: object) -> object:
+        return SalaryInfo() if v is None else v
 
 
 class JobPostingCreateResult(BaseModel):

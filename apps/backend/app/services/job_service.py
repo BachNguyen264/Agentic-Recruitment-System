@@ -9,6 +9,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.html_text import html_to_lines, html_to_text
 from app.core.logging import get_logger
 from app.models.job_posting import JobPosting
 from app.schemas.job_posting import JobPostingCreate
@@ -24,8 +25,12 @@ async def create_job(
     """Lưu JD → embed → upsert Qdrant. Trả (row, warning|None). Embed lỗi → JD vẫn tạo."""
     job = JobPosting(
         title=data.title,
-        description=data.description,
-        requirements="\n".join(data.requirements),  # cột Text — Read tách lại thành list
+        description=data.description,   # HTML định dạng — lưu thẳng; bóc HTML chỉ khi embed/LLM
+        requirements=data.requirements,  # HTML định dạng (JD-1: không còn list "\n".join)
+        level=data.level,
+        salary=data.salary.model_dump(),
+        benefits=data.benefits,
+        employment_type=data.employment_type,
         rubric=[c.model_dump() for c in data.rubric],
         screener_questions=list(data.screener_questions),
         gate_config=data.gate_config.model_dump(),
@@ -54,13 +59,13 @@ async def create_job(
 
 
 def jd_dict(job: JobPosting) -> dict:
-    """JD dict cho ranker (state.input.jd / rank-cv). requirements cột Text → tách lại list."""
-    reqs = [line for line in (job.requirements or "").splitlines() if line.strip()]
+    """JD dict cho ranker (state.input.jd / rank-cv). BÓC HTML → plain-text: mô tả/yêu cầu là văn bản
+    định dạng (JD-1) — tag KHÔNG được lọt vào prompt LLM (nhiễu điểm). requirements → list dòng (bullet)."""
     return {
         "job_id": job.id,
         "title": job.title,
-        "description": job.description or "",
-        "requirements": reqs,
+        "description": html_to_text(job.description or ""),
+        "requirements": html_to_lines(job.requirements or ""),
         "rubric": list(job.rubric or []),
         # PRD §9: gate auto-từ-chối cấu hình theo JD — policy đọc SAU ranker (ranker bỏ qua key này).
         "gate_config": dict(job.gate_config or {}),
@@ -80,17 +85,20 @@ async def update_job(
     if job is None:
         return None, None
 
-    old_reqs = [line for line in (job.requirements or "").splitlines() if line.strip()]
     old_text = build_jd_text(
-        title=job.title, description=job.description or "", requirements=old_reqs
+        title=job.title, description=job.description or "", requirements=job.requirements or ""
     )
     new_text = build_jd_text(
         title=data.title, description=data.description, requirements=data.requirements
     )
 
     job.title = data.title
-    job.description = data.description
-    job.requirements = "\n".join(data.requirements)  # cột Text — Read tách lại thành list
+    job.description = data.description       # HTML định dạng — lưu thẳng
+    job.requirements = data.requirements     # HTML định dạng (JD-1)
+    job.level = data.level
+    job.salary = data.salary.model_dump()
+    job.benefits = data.benefits
+    job.employment_type = data.employment_type
     job.rubric = [c.model_dump() for c in data.rubric]
     job.screener_questions = list(data.screener_questions)
     job.gate_config = data.gate_config.model_dump()

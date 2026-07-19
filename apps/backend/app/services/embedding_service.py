@@ -37,10 +37,18 @@ async def embed_text(text: str) -> list[float]:
     return vector
 
 
-def build_jd_text(*, title: str, description: str, requirements: list[str]) -> str:
-    """Ghép JD thành một đoạn text để embed (một vector/JD — không chunk, plan 02a)."""
-    parts = [title, description, *requirements]
-    return "\n".join(p.strip() for p in parts if p and p.strip())
+def build_jd_text(*, title: str, description: str, requirements: str) -> str:
+    """Ghép JD thành một đoạn text để embed (một vector/JD — không chunk, plan 02a).
+
+    JD-1: `description`/`requirements` là văn bản ĐỊNH DẠNG (HTML) → BÓC HTML thành plain-text trước
+    (tag KHÔNG được lọt vào embedding). `title` là input trơn (không định dạng). Chỉ title+mô tả+yêu cầu
+    vào vector — benefits/level/salary KHÔNG (chuẩn đối sánh CV↔JD giữ nguyên như 02a; re-embed vẫn neo
+    trên title/description/requirements).
+    """
+    from app.core.html_text import html_to_text
+
+    parts = [title.strip(), html_to_text(description), html_to_text(requirements)]
+    return "\n".join(p for p in parts if p)
 
 
 def build_cv_text(parsed_data: dict) -> str:
