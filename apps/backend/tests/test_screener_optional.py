@@ -56,10 +56,46 @@ def test_screener_node_no_questions_passthrough() -> None:
     assert out["status"] == ApplicationStatus.SCREENING.value
 
 
-def test_screener_node_missing_jd_passthrough() -> None:
-    # Không JD / không key screener_questions → coi như không có câu hỏi → pass-through (KHÔNG interrupt).
-    assert screener_node({"input": {}})["awaiting_screener"] is False
-    assert screener_node({"input": {"jd": {}}})["uncertainty_flags"] == []
+# ── 1b) ADVERSARIAL FIXES: parse_failed KHÔNG bị auto-mời + cross-deploy snapshot cũ an toàn ──────
+
+
+async def test_ranker_parse_failed_not_laundered_to_clean() -> None:
+    """Finding ① (safety auditor): CV parse-fail (cờ parse_failed, parsed_data=None) → ranker KHÔNG được
+    coi là stub sạch (xóa cờ + confidence 1.0). GIỮ cờ → route_after_ranker → human_review (KHÔNG tới
+    screener/gate mời dù auto_invite ON). Nếu không, CV-không-đọc-được bị AUTO-MỜI."""
+    from app.agents.nodes.ranker import ranker_node
+    from app.agents.policy import route_after_ranker
+
+    state = {
+        "parsed_data": None,
+        "confidence": 0.0,
+        "uncertainty_flags": ["parse_failed"],
+        "escalation_reason": "Không đọc được file CV.",
+        "input": {"jd": {"gate_config": _GATE_INVITE_ON, "screener_questions": []}},
+    }
+    out = await ranker_node(state)
+
+    assert "parse_failed" in out["uncertainty_flags"]  # cờ KHÔNG bị erase
+    assert out["score"] is None and out["confidence"] == 0.0
+    assert route_after_ranker({**state, **out}) == "human_review"  # KHÔNG screener/auto_invite
+
+
+async def test_old_snapshot_missing_key_suspends_not_skips() -> None:
+    """Finding ② (correctness): snapshot CŨ (suspend TRƯỚC JD-2b) THIẾU key screener_questions + auto_invite
+    ON. Guard chạy lúc resume PHẢI coi như CÓ câu hỏi (interrupt, KHÔNG skip) → timeout resume no_response
+    → human_review (KHÔNG auto-mời ứng viên ghosting)."""
+    graph = compile_graph()
+    config = {"configurable": {"thread_id": "old-snap"}}
+    jd_no_key = {"title": "Backend", "gate_config": _GATE_INVITE_ON}  # THIẾU screener_questions (snapshot cũ)
+
+    await _drive(graph, initial_state(force_review=False, application_id=30, jd=jd_no_key), config)
+    assert (await graph.aget_state(config)).next == ("screener",)  # suspend dù thiếu key (KHÔNG skip)
+
+    await _drive(graph, Command(resume={"no_response": True}), config)  # timeout
+    snap = await graph.aget_state(config)
+    assert snap.values.get("status") == ApplicationStatus.PENDING_REVIEW.value  # human_review
+    assert "no_response" in (snap.values.get("uncertainty_flags") or [])
+    assert sum("[scheduler]" in m for m in snap.values.get("messages", [])) == 0  # KHÔNG auto-mời
 
 
 # ── 2) graph e2e: bỏ-qua vs suspend ──────────────────────────────────────────

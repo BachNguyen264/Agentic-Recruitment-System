@@ -295,6 +295,22 @@ async def ranker_node(state: RecruitmentState) -> dict:
     parsed_data = state.get("parsed_data")
     jd = (state.get("input") or {}).get("jd")
 
+    # AN TOÀN (adversarial JD-2b): parser THẬT SỰ thất bại (đặt cờ `parse_failed`, parsed_data=None) →
+    # KHÔNG được rơi vào `_stub`. `_stub` XÓA cờ + đặt confidence=1.0 → CV-không-đọc-được trông "sạch" →
+    # lọt nhánh ĐẠT → screener/gate mời → AUTO-MỜI HỒ SƠ HỎNG (vi phạm §9 "cờ thắng gate"). GIỮ cờ +
+    # confidence 0.0 để route_after_ranker → human_review. Phân biệt với STUB (ENABLE_LLM=false): parser
+    # stub KHÔNG đặt parse_failed, nên nhánh này chỉ bắt lỗi parse THẬT (không phá run-demo/test_graph).
+    if "parse_failed" in (state.get("uncertainty_flags") or []):
+        return {
+            "status": ApplicationStatus.RANKING.value,
+            "score": None,
+            "confidence": 0.0,
+            "uncertainty_flags": ["parse_failed"],
+            "escalation_reason": state.get("escalation_reason")
+            or "CV không đọc/parse được — cần HR xem xét.",
+            "messages": ["[ranker] parse_failed từ parser → giữ cờ, KHÔNG chấm điểm → human_review"],
+        }
+
     if not settings.enable_llm or not parsed_data or not jd:
         return _stub(state)
 
