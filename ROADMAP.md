@@ -151,9 +151,18 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   after_ranker-scoring/parser** (chỉ chặn parse_failed lọt _stub — an toàn, không đổi scoring). **Live-verified
   4 đường (email thật):** has-Q→AWAITING_SCREENER+email screener · no-Q→PENDING_REVIEW không email · no-Q+
   auto_invite→INTERVIEW_SCHEDULED+email mời · CV thấp→human_review DÙ gate ON. `resume_screener` byte-unchanged.
-- **JD-3 — AI gợi ý rubric** (trụ cột 4, was slice 14). Endpoint LLM structured-output đọc JD đã lưu → đề xuất
-  tiêu chí + trọng số; nút on-demand ở màn cấu hình; **cap 3 retry/JD** (`rubric_suggestion_count`), reset khi nội
-  dung JD đổi. Auth-gated. _Điểm nhấn: AI TĂNG CƯỜNG năng lực người (bắc cầu khoảng trống chuyên môn HR), khác auto-hóa._
+- **JD-3 — AI gợi ý rubric — ✅ DONE (LLM-verified + benchmark).** Endpoint `POST /api/jobs/{id}/suggest-rubric`
+  (`require_hr`, router HR-only): đọc JD plain-text (bóc HTML) + cấp bậc → `rubric_suggester` (gpt-5-mini
+  `reasoning_effort`, KHÔNG temperature) structured output `[{criterion, weight, reasoning}]`; nút "✨ AI gợi ý
+  rubric" ở màn cấu hình → ĐIỀN SẴN để HR chỉnh trước khi lưu (KHÔNG tự áp — trụ cột 4). **Cap 3/JD**
+  (`rubric_suggestion_count`, migration hand-written + include_object guard): count≥max→429 KHÔNG gọi LLM; +1 SAU
+  khi LLM OK (lỗi không tiêu lượt); **reset về 0 khi nội dung JD đổi** (dùng CHUNG phép so sánh re-embed trong
+  `update_job`). JobPostingRead lộ count + computed `rubric_suggestions_remaining`. 260 test (13 mới). **Verified
+  thật (LLM):** tạo Lead Node.js → suggest×3 (tiêu chí+trọng số bám JD, trọng số phản ánh lead: Node.js 0.30 +
+  leadership 0.25 nặng nhất) → lần 4 chặn 429 → sửa mô tả reset 0/3 → chưa login 401 → lưu rubric AI + nộp CV →
+  ranker chấm ĐÚNG theo rubric đó (pipeline không hồi quy). **Benchmark low vs medium (3 JD × 2 effort):** cả hai
+  bám JD + trọng số phản ánh vị trí; medium sắc hơn ở phân bố trọng số nhưng ~30-50% chậm hơn (~12s vs ~7-10s) →
+  **chọn `low`** (đủ tốt, đồng nhất ranker; env chỉnh được). _Điểm nhấn: AI TĂNG CƯỜNG năng lực người, khác auto-hóa._
 - **JD-4 — Soft-delete (ARCHIVED).** Thêm status ARCHIVED (ẩn khỏi list, giữ dữ liệu+kiểm toán, khôi phục). KHÔNG hard-delete.
   → **Milestone:** khâu tạo JD dùng được THẬT cho HR không-chuyên-kỹ-thuật.
 
@@ -213,7 +222,7 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [x] **13 deploy — ✅ LIVE** (Render + Vercel, cross-domain OK, **4 sự cố prod fixed**, injection probe: model kháng) — **GĐ5 deploy XONG**
 - [ ] **PHASE 6 (CURRENT) — Tối ưu tạo JD:** [x] JD-1 field+editor+plain-text embedding · [x] JD-2a tách-form-2-màn+
   DRAFT+rubric-bắt-buộc-để-mở+gate-ra-list · [x] JD-2b screener-tùy-chọn (adversarial review 2 vòng + live-verified
-  4 đường) · JD-3 AI-gợi-ý-rubric · JD-4 soft-delete(ARCHIVED)
+  4 đường) · [x] JD-3 AI-gợi-ý-rubric (LLM-verified + benchmark low<medium → chọn low) · JD-4 soft-delete(ARCHIVED)
 - [ ] Dọn: screener_sent_at · **đổi mật khẩu admin prod**
 - [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)

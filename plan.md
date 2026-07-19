@@ -1,12 +1,12 @@
-# SLICE JD-2b — Screener tùy chọn: JD không câu hỏi → BỎ QUA bước screener · plan one-shot
+# SLICE JD-3 — AI gợi ý rubric (đề xuất tiêu chí + trọng số từ JD) · plan one-shot
 
-> **Bản chất:** plan ONE-SHOT. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`**.
-> **Mục tiêu:** CV đạt + JD **KHÔNG có câu hỏi sàng lọc** → pipeline **BỎ QUA bước screener** (không suspend), đi
-> thẳng tới quyết định post-screener (gate auto-mời / human_review). CV đạt + JD **CÓ câu hỏi** → GIỮ NGUYÊN đường
-> screener bất đồng bộ (08a-d). Tham chiếu: PRD §7.3 (FR-SCR-0), §8.3, §10. Tuân thủ `CLAUDE.md`.
+> **Bản chất:** plan ONE-SHOT. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md`** (FR-HR-RUBRIC-1, trụ cột 4 §5).
+> **Mục tiêu:** ở màn "Cấu hình sàng lọc" (JD đã lưu), HR bấm **"AI gợi ý rubric"** → LLM đọc JD → đề xuất
+> **tiêu chí + trọng số** → HR chỉnh/lưu. Xóa nỗi "tê liệt ô rubric". **AI TĂNG CƯỜNG năng lực người** (bắc cầu
+> khoảng trống chuyên môn HR) — khác auto-hóa ở chỗ khác. Tham chiếu: PRD §12.1 (FR-HR-RUBRIC-1), §16, §5.
 >
-> **⚠️ LÁT ĐỤNG GRAPH/POLICY** — đúng vùng đã dày công làm bền (08a-d). Scope HẸP: CHỈ _thêm_ nhánh bỏ-qua khi
-> rỗng; đường có-câu-hỏi phải BẤT BIẾN. **Adversarial review bắt buộc.** Vướng → DỪNG, hỏi.
+> **Điểm nhấn:** lần dùng LLM thứ 3 (parser=trích xuất · ranker=chấm · rubric-suggester=đề xuất — reasoning).
+> **KHÔNG đụng pipeline/graph/ranker-scoring** — chỉ thêm 1 endpoint LLM auth-gated + nút điền-sẵn ở màn cấu hình.
 
 ---
 
@@ -14,77 +14,89 @@
 
 **In scope:**
 
-- **Screener node interrupt CÓ ĐIỀU KIỆN:** interrupt (suspend + gửi email câu hỏi) **CHỈ khi JD có câu hỏi sàng lọc**. JD rỗng câu hỏi → node **pass-through** (KHÔNG suspend, KHÔNG gửi email), đi tiếp.
-- **route_after_screener xử ca pass-through:** CV bỏ-qua-screener (đạt, không cờ, KHÔNG `no_response`) = "sạch" → áp gate auto-mời (BẬT → thư mời; TẮT → human_review), **giống hệt** ca đã trả lời sạch.
-- Đọc "JD có câu hỏi?" từ config JD tại thời điểm pipeline chạy (config-as-of-entry, như gate — checkpointed JD).
-- Test CẢ HAI đường + đối chứng an toàn.
+- Endpoint HR (`require_hr`) **gợi ý rubric**: đọc JD đã lưu (tiêu đề + mô tả + yêu cầu, **cấp bậc làm ngữ cảnh**) →
+  LLM **structured output** → list `{criterion, weight}` (tiêu chí + trọng số) → trả cho frontend.
+- **Model:** `gpt-5-mini` reasoning (**effort qua env** — benchmark low vs medium, xem §5). **reasoning_effort, KHÔNG temperature.**
+- **Cap 3 retry/JD:** cột `rubric_suggestion_count` (đã ghi §16); **reset khi nội dung JD (tiêu đề/mô tả/yêu cầu) đổi** — tái dùng phép so sánh re-embed của 05. Hết cap → chặn + báo rõ.
+- Frontend màn cấu hình sàng lọc: nút "AI gợi ý rubric" → gọi endpoint → **điền sẵn** UI rubric (tiêu chí + trọng số) để HR **chỉnh trước khi lưu** (KHÔNG tự lưu/tự áp). Hiện số lần còn lại.
+- Benchmark low vs medium (§5) — chọn effort bằng dữ liệu.
 
 **Out of scope (KHÔNG làm):**
 
-- KHÔNG đổi đường screener CÓ câu hỏi (08a suspend/resume · 08b magic-link · 08c timeout/nhắc · 08d gate mời) — BẤT BIẾN.
-- KHÔNG đụng route_after_ranker (uncertain/low giữ nguyên — chúng không tới bước screener). KHÔNG đụng ranker-scoring/parser.
-- KHÔNG AI gợi ý rubric (JD-3). KHÔNG soft-delete (JD-4).
+- KHÔNG tự lưu rubric (HR phải xem+chỉnh+lưu). KHÔNG gợi ý mô tả/quyền lợi (chỉ rubric — nếu muốn để lát riêng sau).
+- KHÔNG đụng ranker-scoring/parser/graph/pipeline/screener. KHÔNG dùng LLM chuẩn hóa câu trả lời screener (vẫn hoãn).
+- KHÔNG áp rubric mới lên CV đã chấm (giữ stance: chỉ ảnh hưởng CV chấm SAU).
 
 ---
 
 ## 2. Prerequisites
 
-- JD-2a xong (screener câu hỏi tùy chọn ở UI — JD có thể lưu không câu hỏi). 08a-d (screener async đầy đủ). Checkpointer (08a).
-- Nắm: chỉ CV **confident + đạt** mới tới bước screener (uncertain/low đã rẽ ở route_after_ranker) — nên nhánh bỏ-qua CHỈ áp ca đạt.
+- JD-2a xong (màn cấu hình sàng lọc trên JD đã lưu — nút gợi ý gắn ở đây; JD-id để neo `rubric_suggestion_count`).
+- JD-1 xong (mô tả/yêu cầu văn bản định dạng — **đưa PLAIN-TEXT vào LLM**, bóc HTML như JD-1 đã làm).
+- Config env: `RUBRIC_SUGGEST_MODEL=gpt-5-mini`, `RUBRIC_SUGGEST_REASONING_EFFORT` (low/medium — benchmark), `RUBRIC_SUGGEST_MAX_RETRIES=3`. langchain-openai (đã có).
 
 ## 3. Việc cần làm
 
-### 3.1 Screener node: interrupt có điều kiện · `app/agents/nodes/screener.py`
+### 3.1 Service gợi ý rubric · `app/services/` (LLM, structured output)
 
-- Đọc `screener_questions` của JD (qua job_id của application). **Có câu hỏi** → giữ nguyên hành vi: `interrupt()` suspend + (đường 08b) tạo session/token + email câu hỏi. **Không câu hỏi (rỗng/null)** → **KHÔNG interrupt**: pass-through, set state sao cho route_after_screener coi là "sạch" (KHÔNG gắn `no_response`, KHÔNG cờ), tiếp tục.
-- Đây là guard cục bộ quanh interrupt — KHÔNG viết lại logic suspend/resume/timeout.
+- Hàm nhận JD (tiêu đề + mô tả plain-text + yêu cầu plain-text + cấp bậc) → gọi `gpt-5-mini` (reasoning_effort từ env, **KHÔNG temperature**) với **structured output** ràng buộc schema: `[{criterion: str, weight: float}]`.
+- Prompt: yêu cầu suy ra các trục năng lực cốt lõi từ JD, **cân trọng số theo mức quan trọng** (ngữ cảnh cấp bậc: senior → kinh nghiệm/leadership nặng hơn); trọng số dương, tổng ~1 (gợi ý mềm — code có thể chuẩn hóa lại). Literal `{}` trong prompt → `{{}}` (gotcha str.format).
+- Trả về list tiêu chí+trọng số + (tùy) tóm tắt ngắn lý do mỗi tiêu chí (hiển thị cho HR tham khảo).
 
-### 3.2 route_after_screener xử ca bỏ-qua · `app/agents/policy.py`
+### 3.2 Cap retry + reset · model/migration + endpoint
 
-- Đảm bảo định nghĩa "sạch" của route_after_screener = **confident + đạt + không cờ + không `no_response`** (KHÔNG đòi _phải có answers_). Ca bỏ-qua (no questions → no answers, no no_response) rơi đúng nhánh sạch:
-  - auto_invite BẬT → scheduler thư mời → INTERVIEW_SCHEDULED.
-  - auto_invite TẮT → human_review.
-- Nếu code hiện đòi "có answers mới sạch" → nới để ca no-questions vẫn sạch (vì không có gì để trả lời). Giữ nguyên: `no_response`/cờ/low-conf → human_review ("cờ thắng gate").
+- Cột `rubric_suggestion_count` (int, default 0) trên JobPosting — migration hand-written add_column (**include_object guard**, như JD-1).
+- **Reset về 0 khi nội dung JD (tiêu đề/mô tả/yêu cầu) đổi** — móc vào đúng chỗ đã kiểm-đổi-để-re-embed của 05 (một phép so sánh, quyết cả re-embed lẫn reset count).
+- Endpoint `POST /api/jobs/{id}/suggest-rubric` (`require_hr`): nếu `count >= MAX_RETRIES` → **429/409 báo hết lượt** (rõ); else gọi service, `count += 1`, trả đề xuất. Auth-gated → "farm LLM call" không phải mối lo (chỉ HR đăng nhập gọi).
 
-### 3.3 (Vá kèm) case suspend-form-rỗng
+### 3.3 Frontend màn cấu hình sàng lọc
 
-- Xác nhận: sau JD-2b, KHÔNG còn đường nào suspend + gửi email khi JD rỗng câu hỏi (guard 3.1 chặn). Đây vốn là bug tiềm ẩn — JD-2b vá luôn.
+- Nút **"AI gợi ý rubric"** (cạnh UI rubric) → gọi endpoint → **điền sẵn** list tiêu chí+trọng số vào UI rubric hiện có (05) → HR chỉnh (sửa/thêm/xóa/đổi trọng số) → **Lưu** (đường lưu rubric của JD-2a). Hiện "còn N/3 lần".
+- Trạng thái: loading khi gọi; hết lượt → nút disable + tooltip; lỗi LLM → báo êm, không mất rubric HR đang có.
+- Rõ ràng "đây là AI gợi ý, bạn đang chỉnh" (không gây hiểu là hệ tự quyết).
 
-### 3.4 Test · `app/tests/`
+### 3.4 Test
 
-- **Đường CÓ câu hỏi (không hồi quy):** CV đạt + JD có câu hỏi → suspend AWAITING_SCREENER + email câu hỏi (08a-d nguyên).
-- **Đường KHÔNG câu hỏi (mới):** CV đạt + JD không câu hỏi → KHÔNG suspend, KHÔNG email screener → route_after_screener: gate ON→auto-mời / OFF→human_review.
-- An toàn: uncertain/low → human_review/auto-reject như cũ (không tới screener). `no_response` (đường có câu hỏi timeout) vẫn → human_review.
-- Không có case suspend khi JD rỗng câu hỏi.
+- Service: mock LLM → trả đúng list `{criterion, weight}`; plain-text (không HTML) đưa vào prompt.
+- Endpoint: count tăng mỗi lần; đạt cap → chặn (429/409); nội dung JD đổi → count reset. Auth: chưa login → 401.
+- Frontend: điền-sẵn không tự-lưu; hết lượt disable.
 
-## 4. Verify (chạy thật — CẢ HAI đường)
+## 4. Verify (chạy thật — LLM thật)
 
-1. `make dev-backend` (restart để nạp code mới — nhớ bài học "process cũ") + dashboard.
-2. **Đường CÓ câu hỏi:** JD có câu hỏi sàng lọc + gate mời TẮT → nộp CV đạt (email của bạn) → suspend AWAITING_SCREENER + **email câu hỏi** (đường 08b nguyên vẹn). _(không hồi quy)_
-3. **Đường KHÔNG câu hỏi:** JD KHÔNG câu hỏi (JD-2a cho lưu vậy) + gate mời TẮT → nộp CV đạt → **KHÔNG suspend, KHÔNG email screener** → vào PENDING_REVIEW (human_review) thẳng. Log: không có bước screener/không interrupt.
-4. **Không câu hỏi + auto_invite BẬT:** JD không câu hỏi + gate mời BẬT → CV đạt sạch → **auto-mời thẳng** (thư mời thật) → INTERVIEW_SCHEDULED.
-5. An toàn: CV lệch ngành (bất định) → human_review DÙ gate bật; CV thấp + auto_reject → auto-từ-chối (không đụng).
-6. `make test` xanh.
+1. `make dev-backend` (restart nạp code mới) + dashboard. Tạo JD Leader Node.js (dán mô tả+yêu cầu thật như bạn khảo sát), cấp bậc "lead".
+2. Màn cấu hình sàng lọc → bấm **"AI gợi ý rubric"** → nhận đề xuất tiêu chí + trọng số **bắt nguồn từ JD** (vd: kiến trúc/Node.js/leadership/message-queue... trọng số phản ánh vị trí lead). Chỉnh vài trọng số → Lưu.
+3. Bấm lại 2 lần nữa (tổng 3) → lần 4 **bị chặn** ("hết lượt gợi ý"). Sửa mô tả JD + lưu → **count reset** → gợi ý lại được.
+4. Chưa login gọi `POST /api/jobs/{id}/suggest-rubric` (Postman) → 401.
+5. Lưu rubric AI-gợi-ý → mở JD (OPEN) → nộp CV → ranker chấm theo rubric đó (pipeline không đụng — không hồi quy).
+6. `make test` xanh; `pnpm build` PASS.
 
-## 5. Definition of Done
+## 5. ⭐ BENCHMARK effort: low vs medium (chọn bằng dữ liệu)
 
-- [ ] Screener node interrupt **chỉ khi JD có câu hỏi**; JD rỗng câu hỏi → pass-through (KHÔNG suspend/email).
-- [ ] Ca bỏ-qua = "sạch" → route_after_screener áp gate mời đúng (ON→thư mời / OFF→human_review), KHÔNG gắn no_response.
-- [ ] Đường CÓ câu hỏi (08a suspend/resume · 08b magic-link · 08c timeout · 08d gate) **BẤT BIẾN** — verify không hồi quy.
-- [ ] "Cờ thắng gate" giữ nguyên (uncertain/cờ/no_response → human_review). Không còn case suspend-form-rỗng.
-- [ ] KHÔNG đụng route_after_ranker/ranker/parser/scoring. `make test` xanh.
-- [ ] **Adversarial review** xác nhận: đường cũ nguyên + đường mới đúng + an toàn giữ.
+- Với **2-3 JD thật khác nhau** (vd Leader Node.js · một vị trí junior · một vị trí phi-kỹ-thuật), chạy gợi ý ở **cả `low` và `medium`** (đổi `RUBRIC_SUGGEST_REASONING_EFFORT`), so sánh:
+  - **Chất lượng tiêu chí:** có bắt đúng trục cốt lõi của JD không? có bỏ sót/bịa không?
+  - **Chất lượng TRỌNG SỐ (điểm mấu chốt):** trọng số có _phản ánh mức quan trọng_ theo vị trí không (senior → kinh nghiệm/leadership nặng), hay đều đều/hời hợt? Đây là chỗ effort tạo khác biệt.
+  - Độ trễ + (ước) chi phí mỗi lần (chạy hiếm nên thứ yếu).
+- **Chọn effort thấp nhất cho chất lượng chấp nhận được** (nếu low đã cho trọng số hợp lý → dùng low; nếu medium khác biệt rõ ở trọng số → medium). Ghi nhận xét ngắn (2-3 JD × 2 effort) — **tư liệu benchmark cho báo cáo** (giống benchmark ranker). Để effort ở env → tinh chỉnh sau.
 
-## 6. Gotchas & quy ước (theo CLAUDE.md)
+## 6. Definition of Done
 
-- **Thay đổi CỤC BỘ:** guard interrupt quanh "JD có câu hỏi?" + đảm bảo route_after_screener coi no-questions là sạch. KHÔNG viết lại suspend/resume/timeout/gate.
-- **Ca bỏ-qua KHÔNG phải no_response:** no_response = "có câu hỏi nhưng ứng viên im lặng" (→ human_review). Bỏ-qua = "không có gì để hỏi" (→ sạch). Đừng lẫn hai cái — nếu lẫn, ca no-question sẽ bị đẩy vào review thay vì auto-mời (sai gate ON), hoặc bị coi là ghosting.
-- Config-as-of-entry: đọc screener_questions từ JD tại lúc pipeline chạy (nhất quán với gate). Chạy impact analysis trước khi sửa screener/policy (GitNexus). **Adversarial review bắt buộc** (đụng graph).
-- Commit nhỏ (vd `feat(screener): interrupt có điều kiện (bỏ qua khi JD rỗng câu hỏi)`, `feat(policy): route_after_screener coi no-questions là sạch`, `test(screener): 2 đường có/không câu hỏi`).
-- Nghiệp vụ chưa rõ → **PRD.md** (§7.3 FR-SCR-0, §8.3, §10). Vướng graph → DỪNG, hỏi.
-- Kết thúc: in tóm tắt + lệnh verify (nhấn: CẢ HAI đường + không hồi quy) + checklist DoD + kết quả adversarial review.
+- [ ] Endpoint `suggest-rubric` (require_hr): đọc JD (plain-text + cấp bậc) → `gpt-5-mini` reasoning (effort env, KHÔNG temperature) → structured output tiêu chí+trọng số.
+- [ ] Cap 3 retry/JD (`rubric_suggestion_count`), reset khi nội dung JD đổi (tái dùng check re-embed); hết cap chặn rõ.
+- [ ] Frontend: nút gợi ý → điền-sẵn UI rubric để HR **chỉnh trước khi lưu** (KHÔNG tự lưu/áp); hiện số lần còn lại.
+- [ ] Plain-text vào LLM (bóc HTML); KHÔNG đụng ranker-scoring/parser/graph/pipeline (không hồi quy).
+- [ ] **Benchmark low vs medium** trên 2-3 JD → chọn effort + ghi nhận xét. `make test` xanh; `pnpm build` PASS.
 
-## 7. Sau lát này
+## 7. Gotchas & quy ước (theo CLAUDE.md)
 
-Screener bây giờ chạy có-điều-kiện (đúng FR-SCR-0). Còn **JD-3** (AI gợi ý rubric — điểm nhấn) và **JD-4** (soft-delete
-ARCHIVED + dọn vector Qdrant mồ côi). Xong cụm tối-ưu-tạo-JD → UI redesign → báo cáo. Xem ROADMAP.md.
+- **`gpt-5-mini` = reasoning → dùng `reasoning_effort`, KHÔNG `temperature`** (bài học ranker — set temperature sẽ lỗi).
+- **Plain-text vào LLM** (bóc HTML mô tả/yêu cầu — như JD-1); structured output ràng buộc schema (như parser/ranker).
+- **AI đề xuất, HR duyệt** — KHÔNG tự lưu/tự áp rubric (trụ cột 4: "HR duyệt mới áp dụng"). Neo count vào JD-id (đã lưu), reset theo nội dung.
+- Auth-gated → threat "farm LLM" moot (chỉ HR gọi). Literal `{}` trong prompt → `{{}}` (str.format). Migration include_object guard.
+- Chạy impact analysis trước khi sửa job_service/re-embed-check (GitNexus nếu có, không thì grep). Commit nhỏ (vd `feat(jd): service gợi ý rubric (gpt-5-mini structured)`, `feat(jd): endpoint suggest-rubric + cap retry/reset`, `feat(ui): nút AI gợi ý rubric ở màn cấu hình`, `test(jd): suggest-rubric + cap/reset`).
+- Nghiệp vụ chưa rõ → **PRD.md** (§12.1 FR-HR-RUBRIC-1, §16, §5). Vướng → DỪNG, hỏi.
+- Kết thúc: in tóm tắt + lệnh verify + **kết quả benchmark low vs medium** + checklist DoD.
+
+## 8. Sau lát này
+
+Khâu tạo JD _dùng được thật_ cho HR không-chuyên (xóa nỗi tê-liệt-rubric). Còn **JD-4** (soft-delete ARCHIVED + dọn
+vector Qdrant mồ côi + đường submit-không-job_id pre-existing) → xong cụm tối-ưu-tạo-JD → **UI redesign** → viết báo cáo. Xem ROADMAP.md.
