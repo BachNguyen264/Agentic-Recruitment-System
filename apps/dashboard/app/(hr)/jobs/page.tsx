@@ -4,23 +4,29 @@ import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { JobPosting } from "@ars/shared-types";
-import { getJobs, setGate, setJobStatus } from "@/lib/api";
+import { archiveJob, getJobs, restoreJob, setGate, setJobStatus } from "@/lib/api";
 import { isValidRubric, jobStatusBadgeClass, jobStatusLabel } from "@/lib/jobs";
 
 function fmtDate(iso: string): string {
   return iso.slice(0, 10); // YYYY-MM-DD (xác định, tránh lệch hydrate do timezone)
 }
 
+const TAB = "rounded px-3 py-1 text-sm font-medium transition-colors";
+
 export default function JobsPage() {
   const qc = useQueryClient();
+  const [showArchived, setShowArchived] = useState(false); // JD-4: xem JD đã lưu trữ
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [gatingId, setGatingId] = useState<number | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null); // lưu trữ/khôi phục
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const { data, isLoading, isError, error } = useQuery<JobPosting[]>({
-    queryKey: ["jobs"],
-    queryFn: getJobs,
+    queryKey: ["jobs", showArchived ? "archived" : "active"],
+    queryFn: () => getJobs(showArchived),
   });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["jobs"] });
 
   const statusMutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: "OPEN" | "CLOSED" }) =>
@@ -29,7 +35,7 @@ export default function JobsPage() {
       setTogglingId(id);
       setErrorMsg(null);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["jobs"] }),
+    onSuccess: invalidate,
     // MỞ khi chưa rubric → backend 400 (message rõ từ setJobStatus).
     onError: (err) => setErrorMsg(String((err as Error)?.message) || "Lỗi khi đổi trạng thái JD."),
     onSettled: () => setTogglingId(null),
@@ -42,9 +48,31 @@ export default function JobsPage() {
       setGatingId(id);
       setErrorMsg(null);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["jobs"] }),
+    onSuccess: invalidate,
     onError: (err) => setErrorMsg(String((err as Error)?.message) || "Lỗi khi đổi gate."),
     onSettled: () => setGatingId(null),
+  });
+
+  // JD-4: Lưu trữ (soft-delete) / Khôi phục. Đều invalidate ["jobs"] để đổi giữa hai tab.
+  const archiveMutation = useMutation({
+    mutationFn: (id: number) => archiveJob(id),
+    onMutate: (id: number) => {
+      setBusyId(id);
+      setErrorMsg(null);
+    },
+    onSuccess: invalidate,
+    onError: (err) => setErrorMsg(String((err as Error)?.message) || "Lỗi khi lưu trữ JD."),
+    onSettled: () => setBusyId(null),
+  });
+  const restoreMutation = useMutation({
+    mutationFn: (id: number) => restoreJob(id),
+    onMutate: (id: number) => {
+      setBusyId(id);
+      setErrorMsg(null);
+    },
+    onSuccess: invalidate,
+    onError: (err) => setErrorMsg(String((err as Error)?.message) || "Lỗi khi khôi phục JD."),
+    onSettled: () => setBusyId(null),
   });
 
   const jobs = data ?? [];
@@ -66,9 +94,27 @@ export default function JobsPage() {
         </div>
         <p className="text-sm text-slate-500">
           Quản lý JD: soạn tin (bước 1) → cấu hình rubric/câu hỏi (bước 2) → Mở JD. Gate tự động (PRD §9)
-          bật/tắt ngay trên từng JD. JD nháp/đóng KHÔNG hiện ở trang ứng tuyển.
+          bật/tắt ngay trên từng JD. JD nháp/đóng/lưu-trữ KHÔNG hiện ở trang ứng tuyển.
         </p>
       </header>
+
+      {/* JD-4: bộ lọc Đang hoạt động / Đã lưu trữ */}
+      <div className="inline-flex gap-0.5 rounded-md border border-slate-200 bg-slate-50 p-0.5">
+        <button
+          type="button"
+          onClick={() => setShowArchived(false)}
+          className={`${TAB} ${!showArchived ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+        >
+          Đang hoạt động
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowArchived(true)}
+          className={`${TAB} ${showArchived ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+        >
+          Đã lưu trữ
+        </button>
+      </div>
 
       {errorMsg && (
         <p className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
@@ -88,8 +134,12 @@ export default function JobsPage() {
           role="status"
           className="rounded-md border border-dashed border-slate-300 bg-white px-6 py-12 text-center"
         >
-          <p className="text-sm font-medium text-slate-700">Chưa có JD nào.</p>
-          <p className="mt-1 text-sm text-slate-500">Bấm “Tạo JD mới” để đăng tin đầu tiên.</p>
+          <p className="text-sm font-medium text-slate-700">
+            {showArchived ? "Chưa có JD nào được lưu trữ." : "Chưa có JD nào."}
+          </p>
+          {!showArchived && (
+            <p className="mt-1 text-sm text-slate-500">Bấm “Tạo JD mới” để đăng tin đầu tiên.</p>
+          )}
         </div>
       )}
 
@@ -97,6 +147,7 @@ export default function JobsPage() {
         {jobs.map((job) => {
           const rubricOk = isValidRubric(job.rubric);
           const isOpen = job.status === "OPEN";
+          const isArchived = job.status === "ARCHIVED";
           return (
             <li
               key={job.id}
@@ -119,77 +170,113 @@ export default function JobsPage() {
                     >
                       {jobStatusLabel(job.status)}
                     </span>
-                    {!rubricOk && (
+                    {!isArchived && !rubricOk && (
                       <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
                         Chưa cấu hình rubric
                       </span>
                     )}
-                    {job.embedding_ref === null && (
+                    {!isArchived && job.embedding_ref === null && (
                       <span className="rounded bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700">
                         Chưa embed
                       </span>
                     )}
                   </div>
-                  {/* Gate tự động (PRD §9) — bật/tắt ngay trên JD (JD-2a) */}
-                  <div className="mt-2 flex flex-wrap items-center gap-4">
-                    <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                      <input
-                        type="checkbox"
-                        checked={job.gate_config.auto_reject}
-                        disabled={gatingId === job.id}
-                        onChange={(e) =>
-                          gateMutation.mutate({ id: job.id, patch: { auto_reject: e.target.checked } })
-                        }
-                        className="h-3.5 w-3.5 rounded border-slate-300"
-                      />
-                      Gate auto-từ-chối
-                    </label>
-                    <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                      <input
-                        type="checkbox"
-                        checked={job.gate_config.auto_invite}
-                        disabled={gatingId === job.id}
-                        onChange={(e) =>
-                          gateMutation.mutate({ id: job.id, patch: { auto_invite: e.target.checked } })
-                        }
-                        className="h-3.5 w-3.5 rounded border-slate-300"
-                      />
-                      Gate auto-mời
-                    </label>
-                  </div>
+                  {/* Gate tự động (PRD §9) — chỉ hiện cho JD chưa lưu trữ */}
+                  {!isArchived && (
+                    <div className="mt-2 flex flex-wrap items-center gap-4">
+                      <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={job.gate_config.auto_reject}
+                          disabled={gatingId === job.id}
+                          onChange={(e) =>
+                            gateMutation.mutate({ id: job.id, patch: { auto_reject: e.target.checked } })
+                          }
+                          className="h-3.5 w-3.5 rounded border-slate-300"
+                        />
+                        Gate auto-từ-chối
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={job.gate_config.auto_invite}
+                          disabled={gatingId === job.id}
+                          onChange={(e) =>
+                            gateMutation.mutate({ id: job.id, patch: { auto_invite: e.target.checked } })
+                          }
+                          className="h-3.5 w-3.5 rounded border-slate-300"
+                        />
+                        Gate auto-mời
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex shrink-0 flex-col items-end gap-2">
-                  <div className="flex items-center gap-2">
-                    <Link
-                      href={`/jobs/${job.id}/screening`}
-                      className="rounded-md border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+                  {isArchived ? (
+                    // JD-4: JD đã lưu trữ — chỉ Khôi phục (về CLOSED). Vẫn xem/sửa được qua tiêu đề.
+                    <button
+                      type="button"
+                      onClick={() => restoreMutation.mutate(job.id)}
+                      disabled={busyId === job.id}
+                      className="rounded-md border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-50"
                     >
-                      Cấu hình
-                    </Link>
-                    <Link
-                      href={`/jobs/${job.id}/edit`}
-                      className="rounded-md border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
-                    >
-                      Sửa
-                    </Link>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      statusMutation.mutate({ id: job.id, status: isOpen ? "CLOSED" : "OPEN" })
-                    }
-                    disabled={togglingId === job.id || (!isOpen && !rubricOk)}
-                    aria-label={isOpen ? `Đóng JD ${job.title}` : `Mở JD ${job.title}`}
-                    title={
-                      !isOpen && !rubricOk
-                        ? "Cần cấu hình rubric trước khi mở (bấm Cấu hình)"
-                        : undefined
-                    }
-                    className="rounded-md border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-50"
-                  >
-                    {togglingId === job.id ? "Đang lưu…" : isOpen ? "Đóng" : "Mở JD"}
-                  </button>
+                      {busyId === job.id ? "Đang khôi phục…" : "Khôi phục"}
+                    </button>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/jobs/${job.id}/screening`}
+                          className="rounded-md border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+                        >
+                          Cấu hình
+                        </Link>
+                        <Link
+                          href={`/jobs/${job.id}/edit`}
+                          className="rounded-md border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+                        >
+                          Sửa
+                        </Link>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            statusMutation.mutate({ id: job.id, status: isOpen ? "CLOSED" : "OPEN" })
+                          }
+                          disabled={togglingId === job.id || (!isOpen && !rubricOk)}
+                          aria-label={isOpen ? `Đóng JD ${job.title}` : `Mở JD ${job.title}`}
+                          title={
+                            !isOpen && !rubricOk
+                              ? "Cần cấu hình rubric trước khi mở (bấm Cấu hình)"
+                              : undefined
+                          }
+                          className="rounded-md border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-50"
+                        >
+                          {togglingId === job.id ? "Đang lưu…" : isOpen ? "Đóng" : "Mở JD"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                "Lưu trữ JD này? Nó sẽ ẩn khỏi danh sách và trang ứng tuyển. " +
+                                  "Hồ sơ ứng viên và nhật ký kiểm toán được GIỮ NGUYÊN, có thể Khôi phục sau.",
+                              )
+                            ) {
+                              archiveMutation.mutate(job.id);
+                            }
+                          }}
+                          disabled={busyId === job.id}
+                          aria-label={`Lưu trữ JD ${job.title}`}
+                          className="rounded-md border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-50"
+                        >
+                          {busyId === job.id ? "Đang lưu trữ…" : "Lưu trữ"}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </li>

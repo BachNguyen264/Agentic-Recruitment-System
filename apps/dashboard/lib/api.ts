@@ -112,7 +112,9 @@ export const getApplication = (id: number) =>
   getJson<ApplicationDetail>(`/api/applications/${id}`);
 
 // ── Quản lý JD (slice 05) ──
-export const getJobs = () => getJson<JobPosting[]>("/api/jobs");
+// JD-4: mặc định (archived=false) ẨN JD đã lưu trữ; archived=true → chỉ JD ARCHIVED (màn "Đã lưu trữ").
+export const getJobs = (archived = false) =>
+  getJson<JobPosting[]>(`/api/jobs?archived=${archived}`);
 
 // JD đơn (dùng cho ngữ cảnh chấm điểm ở trang chi tiết + nạp form sửa).
 export const getJob = (id: number) => getJson<JobPosting>(`/api/jobs/${id}`);
@@ -146,6 +148,10 @@ export async function setJobStatus(id: number, status: "OPEN" | "CLOSED"): Promi
 // Bật/tắt gate auto (auto_reject/auto_invite) theo JD — partial (JD-2a: gate ở danh sách JD). PATCH /gate (03c/08d).
 export const setGate = (id: number, patch: { auto_reject?: boolean; auto_invite?: boolean }) =>
   patchJson<JobPosting>(`/api/jobs/${id}/gate`, patch);
+
+// JD-4 soft-delete: Lưu trữ JD (→ ARCHIVED, ẩn khỏi list+/apply, GIỮ hồ sơ) / Khôi phục (→ CLOSED).
+export const archiveJob = (id: number) => postJson<JobPosting>(`/api/jobs/${id}/archive`, {});
+export const restoreJob = (id: number) => postJson<JobPosting>(`/api/jobs/${id}/restore`, {});
 
 // AI gợi ý rubric (JD-3, PRD §12.1). Đọc JD đã lưu → LLM đề xuất tiêu chí+trọng số để HR chỉnh/lưu.
 // Hết lượt (cap 3/JD) → backend 429 với {detail} → surface message rõ ("hết lượt gợi ý…").
