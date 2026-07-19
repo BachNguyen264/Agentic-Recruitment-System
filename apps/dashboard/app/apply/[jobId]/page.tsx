@@ -5,7 +5,9 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { PublicJob } from "@ars/shared-types";
 import { CVFilePicker } from "@/components/CVFilePicker";
+import { SafeHtml } from "@/components/SafeHtml";
 import { getPublicJob, submitApplication } from "@/lib/api";
+import { employmentTypeLabel, formatSalary, levelLabel } from "@/lib/jobs";
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -73,21 +75,55 @@ export default function ApplyDetailPage({ params }: { params: { jobId: string } 
 
       {jobQuery.data && (
         <>
-          <header className="space-y-2">
+          <header className="space-y-3">
             <h1 className="text-2xl font-bold text-slate-900">{jobQuery.data.title}</h1>
-            {jobQuery.data.description && (
-              <p className="whitespace-pre-line text-sm text-slate-600">
-                {jobQuery.data.description}
-              </p>
+
+            {/* Meta hướng-ứng-viên (JD-1): cấp bậc · loại việc · lương */}
+            {(levelLabel(jobQuery.data.level) ||
+              employmentTypeLabel(jobQuery.data.employment_type) ||
+              formatSalary(jobQuery.data.salary)) && (
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                {levelLabel(jobQuery.data.level) && (
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                    {levelLabel(jobQuery.data.level)}
+                  </span>
+                )}
+                {employmentTypeLabel(jobQuery.data.employment_type) && (
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                    {employmentTypeLabel(jobQuery.data.employment_type)}
+                  </span>
+                )}
+                {formatSalary(jobQuery.data.salary) && (
+                  <span className="rounded-full bg-green-100 px-3 py-1 font-medium text-green-800">
+                    {formatSalary(jobQuery.data.salary)}
+                  </span>
+                )}
+              </div>
             )}
-            {jobQuery.data.requirements.length > 0 && (
+
+            {/* Mô tả / Yêu cầu / Quyền lợi: văn bản định dạng → SANITIZE (DOMPurify) trước khi render */}
+            {jobQuery.data.description.trim() && (
+              <SafeHtml
+                html={jobQuery.data.description}
+                className="rte-content text-sm text-slate-600"
+              />
+            )}
+            {jobQuery.data.requirements.trim() && (
               <div className="pt-2">
                 <p className="text-sm font-medium text-slate-700">Yêu cầu</p>
-                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-slate-600">
-                  {jobQuery.data.requirements.map((r, i) => (
-                    <li key={i}>{r}</li>
-                  ))}
-                </ul>
+                <SafeHtml
+                  html={jobQuery.data.requirements}
+                  className="rte-content mt-1 text-sm text-slate-600"
+                />
+              </div>
+            )}
+            {jobQuery.data.benefits.trim() && (
+              <div className="pt-2">
+                <p className="text-sm font-medium text-slate-700">Quyền lợi</p>
+                <SafeHtml
+                  html={jobQuery.data.benefits}
+                  className="rte-content mt-1 text-sm text-slate-600"
+                />
               </div>
             )}
           </header>
