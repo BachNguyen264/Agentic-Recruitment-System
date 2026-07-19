@@ -44,6 +44,21 @@ export function emptySalary(): SalaryInfo {
   return { min: null, max: null, currency: "VND", negotiable: false };
 }
 
+// Bóc HTML → plain-text cho ĐOẠN XEM TRƯỚC (card danh sách /apply). Nội dung định dạng (JD-1) chỉ
+// render đầy đủ ở trang chi tiết (SafeHtml); ở card thì hiện text trơn, cắt dòng — KHÔNG lộ tag thô.
+export function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Tổng trọng số rubric (validate MỀM: nên ≈ 1.0). Ranker vốn chuẩn hóa lại theo trọng số,
 // nên lệch 1.0 KHÔNG chặn cứng — chỉ cảnh báo hướng dẫn HR (plan §3.5).
 export const WEIGHT_TARGET = 1.0;

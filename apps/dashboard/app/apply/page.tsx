@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import type { PublicJob } from "@ars/shared-types";
 import { getOpenJobs } from "@/lib/api";
+import { htmlToPlainText } from "@/lib/jobs";
 
 export default function ApplyListPage() {
   const { data, isLoading, isError } = useQuery<PublicJob[]>({
@@ -47,8 +48,10 @@ export default function ApplyListPage() {
               className="block rounded-md border border-slate-200 bg-white px-5 py-4 transition-colors hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
             >
               <p className="font-medium text-slate-900">{job.title}</p>
-              {job.description && (
-                <p className="mt-1 line-clamp-2 text-sm text-slate-500">{job.description}</p>
+              {htmlToPlainText(job.description) && (
+                <p className="mt-1 line-clamp-2 text-sm text-slate-500">
+                  {htmlToPlainText(job.description)}
+                </p>
               )}
               <span className="mt-2 inline-block text-sm font-medium text-slate-700">
                 Xem &amp; nộp hồ sơ →
