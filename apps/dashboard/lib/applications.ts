@@ -59,6 +59,19 @@ export function statusBadgeClass(status: ApplicationStatus): string {
   return BUCKET_BADGE[statusBucket(status)];
 }
 
+// UI redesign: tông thẻ trạng thái theo rổ — đang xử lý (nhấn cobalt) · chờ HR (hổ phách, cần
+// hành động) · đạt (xanh) · từ chối (đỏ). Dùng với <Tag tone=…> của components/ui.
+const BUCKET_TONE = {
+  processing: "accent",
+  review: "warn",
+  passed: "ok",
+  rejected: "danger",
+} as const;
+
+export function statusTone(status: ApplicationStatus): "accent" | "warn" | "ok" | "danger" {
+  return BUCKET_TONE[statusBucket(status)];
+}
+
 // Nhãn bộ lọc theo rổ (trang danh sách).
 export const BUCKET_FILTERS: { key: StatusBucket | "all"; label: string }[] = [
   { key: "all", label: "Tất cả" },
