@@ -4,9 +4,8 @@ import { useState } from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ScreenerForm } from "@ars/shared-types";
-import Link from "next/link";
 import { SuccessPanel } from "@/components/SuccessPanel";
-import { BackArrow, btn, EmptyState, Field, inputClass } from "@/components/ui";
+import { btn, EmptyState, inputClass } from "@/components/ui";
 import { getScreener, submitScreener } from "@/lib/api";
 
 // Trang trả lời sàng lọc qua magic-link (PRD §7.3, §10). Ứng viên là KHÁCH: chỉ thấy CÂU HỎI +
@@ -47,14 +46,9 @@ export default function ScreeningPage() {
   if (mutation.isSuccess) {
     return (
       <main>
-        <SuccessPanel
-          title="Đã ghi nhận câu trả lời"
-          action={
-            <Link href="/apply" className={btn("secondary")}>
-              <BackArrow /> Về cổng tuyển dụng
-            </Link>
-          }
-        >
+        {/* KHÔNG có nút về cổng tuyển dụng: người vừa trả lời sàng lọc là người ĐÃ nộp hồ sơ —
+            dẫn họ về danh sách vị trí chỉ mời gọi nộp trùng. Đây là điểm kết thúc của hành trình. */}
+        <SuccessPanel title="Đã ghi nhận câu trả lời">
           Bộ phận Tuyển dụng sẽ xem xét và liên hệ với bạn qua email. Cảm ơn bạn!
         </SuccessPanel>
       </main>
@@ -90,9 +84,8 @@ export default function ScreeningPage() {
 
       {formQuery.data && (
         <>
-          <p className="eyebrow mb-1.5">Magic-link · không cần mật khẩu</p>
           <h1 className="text-[26px] sm:text-[30px]">Câu hỏi sàng lọc</h1>
-          <p className="mt-2 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
+          <p className="mt-2 max-w-[62ch] text-[15px] leading-relaxed text-ink/70">
             Vị trí: <strong className="font-semibold text-ink">{formQuery.data.job_title}</strong>.
             Vui lòng trả lời để chúng tôi tiếp tục xem xét hồ sơ của bạn.
           </p>
@@ -109,9 +102,18 @@ export default function ScreeningPage() {
               }}
               className="mt-5"
             >
-              <div className="flex flex-col gap-4">
+              {/* KHÔNG dùng Field ở đây: nhãn của nó cỡ 12px — hợp cho nhãn ô nhập ngắn ("Email"),
+                  nhưng đây là CÂU HỎI, tức nội dung cần đọc kỹ rồi mới trả lời. Đặt 15px cho dễ đọc,
+                  vẫn giữ <label htmlFor> để trình đọc màn hình gắn đúng câu hỏi với ô nhập. */}
+              <div className="flex flex-col gap-5">
                 {questions.map((q, i) => (
-                  <Field key={i} label={`${i + 1}. ${q}`} htmlFor={`q-${i}`}>
+                  <div key={i}>
+                    <label
+                      htmlFor={`q-${i}`}
+                      className="mb-2 block text-[15px] font-semibold leading-snug text-ink"
+                    >
+                      {i + 1}. {q}
+                    </label>
                     <textarea
                       id={`q-${i}`}
                       rows={3}
@@ -119,9 +121,9 @@ export default function ScreeningPage() {
                       onChange={(e) => setAnswers((prev) => ({ ...prev, [i]: e.target.value }))}
                       disabled={mutation.isPending}
                       maxLength={5000}
-                      className={`${inputClass} min-h-16 bg-canvas`}
+                      className={`${inputClass} min-h-20 bg-canvas text-[14px]`}
                     />
-                  </Field>
+                  </div>
                 ))}
               </div>
 
