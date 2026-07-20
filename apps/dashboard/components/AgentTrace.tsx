@@ -57,11 +57,13 @@ const ROUTE: Record<string, string> = {
   error: "Định tuyến → lỗi",
 };
 
+// Khoá = giá trị `mode` ở agents/nodes/scheduler.py (notify_decision: invite|reject;
+// notify_screener: screener|screener_reminder) — KHÔNG phải tên tự đặt.
 const EMAIL: Record<string, string> = {
   invite: "Đã gửi thư mời phỏng vấn",
   reject: "Đã gửi thư từ chối",
   screener: "Đã gửi email câu hỏi sàng lọc",
-  reminder: "Đã gửi email nhắc trả lời sàng lọc",
+  screener_reminder: "Đã gửi email nhắc trả lời sàng lọc",
 };
 
 function describe(node: string, action: string): { label: string; tone: Tone } {
