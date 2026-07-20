@@ -19,7 +19,7 @@ function confidenceStyle(c: number): { label: string; cls: string } {
 
 function Chip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="rounded bg-slate-100 px-2 py-0.5 text-sm text-slate-700">{children}</span>
+    <span className="rounded bg-steel-100 px-2 py-0.5 text-sm text-ink/80">{children}</span>
   );
 }
 
@@ -27,8 +27,8 @@ function Field({ label, value }: { label: string; value: string | null | undefin
   const text = value?.toString().trim();
   return (
     <div>
-      <dt className="text-xs uppercase tracking-wide text-slate-400">{label}</dt>
-      <dd className="text-sm text-slate-800">{text ? text : "—"}</dd>
+      <dt className="text-xs uppercase tracking-wide text-ink/45">{label}</dt>
+      <dd className="text-sm text-ink">{text ? text : "—"}</dd>
     </div>
   );
 }
@@ -66,7 +66,7 @@ export function ParsedCVResult({
 
       {failed ? (
         // parse_failed: cảnh báo rõ, KHÔNG cố render trường trống.
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           <p className="font-medium">Không đọc được CV</p>
           <p className="mt-1 text-red-700">
             {escalation_reason ??
@@ -75,12 +75,12 @@ export function ParsedCVResult({
         </div>
       ) : parsed_data == null || Object.keys(parsed_data).length === 0 ? (
         // parsed_data có thể là {} (row scaffold/legacy chưa qua parser) — coi như chưa có dữ liệu.
-        <p className="text-sm text-slate-500">Không có dữ liệu bóc tách.</p>
+        <p className="text-sm text-ink/55">Không có dữ liệu bóc tách.</p>
       ) : (
         <div className="space-y-4">
           {/* Liên hệ */}
-          <div className="rounded-md border border-slate-200 bg-white px-4 py-3">
-            <p className="text-base font-semibold text-slate-900">
+          <div className="rounded-lg border border-divider bg-canvas px-4 py-3">
+            <p className="text-base font-semibold text-ink">
               {parsed_data.full_name?.trim() || "(Không rõ họ tên)"}
             </p>
             <dl className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -100,8 +100,8 @@ export function ParsedCVResult({
           {/* Tóm tắt nghề nghiệp */}
           {parsed_data.professional_summary?.trim() && (
             <div className="space-y-1">
-              <h3 className="text-sm font-semibold text-slate-700">Tóm tắt</h3>
-              <p className="text-sm leading-relaxed text-slate-700">
+              <h3 className="text-sm font-semibold text-ink/80">Tóm tắt</h3>
+              <p className="text-sm leading-relaxed text-ink/80">
                 {parsed_data.professional_summary}
               </p>
             </div>
@@ -110,7 +110,7 @@ export function ParsedCVResult({
           {/* Kỹ năng (?? [] — JSONB có thể thiếu trường ở row cũ/partial) */}
           {(parsed_data.skills ?? []).length > 0 && (
             <div className="space-y-1.5">
-              <h3 className="text-sm font-semibold text-slate-700">
+              <h3 className="text-sm font-semibold text-ink/80">
                 Kỹ năng ({parsed_data.skills.length})
               </h3>
               <div className="flex flex-wrap gap-1.5">
@@ -124,28 +124,28 @@ export function ParsedCVResult({
           {/* Kinh nghiệm */}
           {(parsed_data.experiences ?? []).length > 0 && (
             <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-slate-700">
+              <h3 className="text-sm font-semibold text-ink/80">
                 Kinh nghiệm ({parsed_data.experiences.length})
               </h3>
               <ol className="space-y-2">
                 {parsed_data.experiences.map((exp, i) => (
                   <li
                     key={i}
-                    className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm"
+                    className="rounded-lg border border-divider bg-canvas px-4 py-3 text-sm"
                   >
                     <div className="flex flex-wrap items-baseline gap-x-2">
-                      <span className="font-medium text-slate-900">
+                      <span className="font-medium text-ink">
                         {exp.title?.trim() || "(Vị trí không rõ)"}
                       </span>
-                      <span className="text-slate-500">
+                      <span className="text-ink/55">
                         {exp.company?.trim() || "Dự án cá nhân"}
                       </span>
                       {exp.duration?.trim() && (
-                        <span className="text-slate-400">· {exp.duration}</span>
+                        <span className="text-ink/45">· {exp.duration}</span>
                       )}
                     </div>
                     {exp.summary?.trim() && (
-                      <p className="mt-1 text-slate-600">{exp.summary}</p>
+                      <p className="mt-1 text-ink/65">{exp.summary}</p>
                     )}
                   </li>
                 ))}
@@ -156,19 +156,19 @@ export function ParsedCVResult({
           {/* Học vấn */}
           {(parsed_data.education ?? []).length > 0 && (
             <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-slate-700">
+              <h3 className="text-sm font-semibold text-ink/80">
                 Học vấn ({parsed_data.education.length})
               </h3>
               <ol className="space-y-2">
                 {parsed_data.education.map((edu, i) => (
                   <li
                     key={i}
-                    className="rounded-md border border-slate-200 bg-white px-4 py-3 text-sm"
+                    className="rounded-lg border border-divider bg-canvas px-4 py-3 text-sm"
                   >
-                    <div className="font-medium text-slate-900">
+                    <div className="font-medium text-ink">
                       {edu.school?.trim() || "(Trường không rõ)"}
                     </div>
-                    <div className="mt-0.5 flex flex-wrap gap-x-2 text-slate-500">
+                    <div className="mt-0.5 flex flex-wrap gap-x-2 text-ink/55">
                       {edu.field?.trim() && <span>{edu.field}</span>}
                       {edu.degree?.trim() && <span>· {edu.degree}</span>}
                       {edu.year?.trim() && <span>· {edu.year}</span>}
@@ -182,7 +182,7 @@ export function ParsedCVResult({
           {/* Chứng chỉ (?? [] — tương thích parsed_data cũ thiếu trường) */}
           {(parsed_data.certificates ?? []).length > 0 && (
             <div className="space-y-1.5">
-              <h3 className="text-sm font-semibold text-slate-700">
+              <h3 className="text-sm font-semibold text-ink/80">
                 Chứng chỉ ({parsed_data.certificates.length})
               </h3>
               <div className="flex flex-wrap gap-1.5">
@@ -200,7 +200,7 @@ export function ParsedCVResult({
           {/* Ngôn ngữ */}
           {(parsed_data.languages ?? []).length > 0 && (
             <div className="space-y-1.5">
-              <h3 className="text-sm font-semibold text-slate-700">
+              <h3 className="text-sm font-semibold text-ink/80">
                 Ngôn ngữ ({parsed_data.languages.length})
               </h3>
               <div className="flex flex-wrap gap-1.5">
@@ -217,10 +217,10 @@ export function ParsedCVResult({
           {/* Giải thưởng */}
           {(parsed_data.awards ?? []).length > 0 && (
             <div className="space-y-1.5">
-              <h3 className="text-sm font-semibold text-slate-700">
+              <h3 className="text-sm font-semibold text-ink/80">
                 Giải thưởng ({parsed_data.awards.length})
               </h3>
-              <ul className="list-disc space-y-0.5 pl-5 text-sm text-slate-700">
+              <ul className="list-disc space-y-0.5 pl-5 text-sm text-ink/80">
                 {parsed_data.awards.map((a, i) => (
                   <li key={i}>{a}</li>
                 ))}
@@ -231,14 +231,14 @@ export function ParsedCVResult({
           {/* Khác (lưới an toàn) */}
           {(parsed_data.other ?? []).length > 0 && (
             <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-slate-700">
+              <h3 className="text-sm font-semibold text-ink/80">
                 Khác ({parsed_data.other.length})
               </h3>
               <dl className="space-y-1">
                 {parsed_data.other.map((o, i) => (
                   <div key={i} className="text-sm">
-                    <dt className="font-medium text-slate-700">{o.label}</dt>
-                    <dd className="text-slate-600">{o.content}</dd>
+                    <dt className="font-medium text-ink/80">{o.label}</dt>
+                    <dd className="text-ink/65">{o.content}</dd>
                   </div>
                 ))}
               </dl>

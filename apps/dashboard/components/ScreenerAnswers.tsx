@@ -5,18 +5,18 @@ import type { ScreenerAnswer } from "@ars/shared-types";
 export function ScreenerAnswers({ answers }: { answers: ScreenerAnswer[] }) {
   if (!answers || answers.length === 0) return null;
   return (
-    <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 px-4 py-3">
-      <p className="text-sm font-semibold text-slate-700">Câu trả lời sàng lọc</p>
-      <ol className="space-y-2">
+    <section className="rounded-xl border-2 border-divider bg-surface p-4">
+      <h2 className="mb-2.5 font-heading text-[15px] font-bold">Câu trả lời sàng lọc</h2>
+      <ol>
         {answers.map((qa, i) => (
-          <li key={i} className="text-sm">
-            <p className="font-medium text-slate-800">{qa.question}</p>
-            <p className="mt-0.5 whitespace-pre-line text-slate-600">
+          <li key={i} className="border-t border-divider py-2">
+            <p className="text-[13px] font-semibold">{qa.question}</p>
+            <p className="mt-0.5 whitespace-pre-line text-[13px] text-ink/70">
               {qa.answer?.trim() || "(không trả lời)"}
             </p>
           </li>
         ))}
       </ol>
-    </div>
+    </section>
   );
 }
