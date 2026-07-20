@@ -40,6 +40,8 @@ const ACTION: Record<string, { label: string; tone: Tone }> = {
   auto_invite_failed: { label: "Gate tự-mời: gửi thư mời thất bại", tone: "danger" },
   screener_skipped: { label: "Bỏ qua sàng lọc — JD không có câu hỏi", tone: "neutral" },
   screener_timeout: { label: "Hết hạn sàng lọc — ứng viên không phản hồi", tone: "danger" },
+  screener_resumed: { label: "Ứng viên đã trả lời — chạy tiếp từ điểm dừng", tone: "ok" },
+  queued_for_human_review: { label: "Đưa vào hàng đợi HR xem xét", tone: "accent" },
   stub_pass_through: { label: "Đi qua node (chưa có xử lý)", tone: "neutral" },
   approve: { label: "HR duyệt → giao scheduler mời phỏng vấn", tone: "ok" },
   reject: { label: "HR từ chối → giao scheduler gửi thư từ chối", tone: "accent" },
@@ -62,7 +64,13 @@ const EMAIL: Record<string, string> = {
   reminder: "Đã gửi email nhắc trả lời sàng lọc",
 };
 
-function describe(action: string): { label: string; tone: Tone } {
+function describe(node: string, action: string): { label: string; tone: Tone } {
+  // Lần chạy ĐẦU, background.py rơi node human_review vào nhánh `else` nên ghi "stub_pass_through"
+  // — trong khi node đó THẬT SỰ đặt PENDING_REVIEW + lý do. Dịch thẳng sẽ thành "chưa có xử lý",
+  // sai sự thật. Đường resume ghi đúng tên (`queued_for_human_review`); ở đây gộp về cùng nghĩa.
+  if (node === "human_review" && action === "stub_pass_through") {
+    return ACTION.queued_for_human_review;
+  }
   const known = ACTION[action];
   if (known) return known;
   // Hành động có tham số: "route:<nhánh>" và "email_sent:<loại>".
@@ -158,7 +166,7 @@ export function AgentTrace({ app, entries, isLoading, isError }: AgentTraceProps
       {rows.length > 0 && (
         <ol className="mt-4">
           {rows.map((e, i) => {
-            const { label, tone } = describe(e.action);
+            const { label, tone } = describe(e.node, e.action);
             const st = TONE[tone];
             const last = i === rows.length - 1;
             const detailFacts = facts(e);
