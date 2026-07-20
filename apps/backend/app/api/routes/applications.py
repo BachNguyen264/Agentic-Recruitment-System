@@ -14,7 +14,8 @@ from pydantic import ValidationError
 from app.api.deps import DBSession
 from app.core.logging import get_logger
 from app.schemas.application import ApplicationCreate, ApplicationRead, ReviewRequest
-from app.services import application_service, screening
+from app.schemas.audit import AuditEntryRead
+from app.services import application_service, audit_service, screening
 from app.services import review as review_service
 from app.services.storage import (
     StorageError,
@@ -87,6 +88,27 @@ async def get_application(application_id: int, session: DBSession) -> Applicatio
     # Chi tiết: kèm câu trả lời sàng lọc (nếu có) cho HR (PRD §7.3, §11).
     answers = await screening.latest_answers(session, application_id)
     return ApplicationRead.model_validate(app_row).model_copy(update={"screener_answers": answers})
+
+
+@router.get(
+    "/{application_id}/audit",
+    response_model=list[AuditEntryRead],
+    summary="Nhật ký kiểm toán của hồ sơ — agent trace THẬT (PRD §16)",
+)
+async def get_application_audit(
+    application_id: int, session: DBSession
+) -> list[AuditEntryRead]:
+    """Trả các bước đã ghi vào `audit_log`, cũ → mới.
+
+    Đây là nguồn cho "Agent trace" ở màn chi tiết: mốc thời gian + node + hành động THẬT do pipeline
+    ghi lại, thay cho việc suy đoán trạng thái node từ dữ liệu hồ sơ. Chỉ đọc (append-only).
+    404 khi hồ sơ không tồn tại — phân biệt với hồ sơ CÓ THẬT nhưng chưa có bước nào (trả []).
+    """
+    app_row = await application_service.get_application(session, application_id)
+    if app_row is None:
+        raise HTTPException(status_code=404, detail="Application không tồn tại")
+    rows = await audit_service.list_for_application(session, application_id)
+    return [AuditEntryRead.model_validate(r) for r in rows]
 
 
 @router.get(
