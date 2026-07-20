@@ -100,6 +100,19 @@ export interface ApplicationDetail extends ApplicationListItem {
   has_cv: boolean;
 }
 
+// Một bước trong nhật ký kiểm toán (PRD §16) — khớp AuditEntryRead (backend).
+// Nguồn cho "Agent trace" ở màn chi tiết: mốc thời gian + node + hành động THẬT do pipeline ghi lại.
+export interface AuditEntry {
+  id: number;
+  node: string; // parser | ranker | screener | scheduler | human_review | gate | system
+  action: string; // parsed | ranked | route:human_review | email_sent:invite | approve | …
+  confidence: number | null;
+  uncertainty_flags: string[];
+  escalation_reason: string | null;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
 // human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.
 export type ReviewDecision = "approve" | "reject";
 
