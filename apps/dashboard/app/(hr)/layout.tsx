@@ -276,7 +276,14 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
           )}
         </div>
 
-        <main className="ars-scroll min-h-0 flex-1 overflow-y-auto bg-canvas">{children}</main>
+        {/* `relative` là BẮT BUỘC, không phải trang trí: con `position:absolute` (vd .sr-only của
+            Tailwind — nhãn cho trình đọc màn hình) lấy containing block là tổ tiên ĐÃ ĐỊNH VỊ. Khi
+            main còn `static`, chúng nhận initial containing block nên KHÔNG bị overflow của main cắt
+            → tự kéo dài chiều cao document và sinh THANH CUỘN THỨ HAI cạnh thanh của main (thấy rõ ở
+            /review: hai nhãn sr-only nằm sâu trong danh sách ReviewCard). */}
+        <main className="ars-scroll relative min-h-0 flex-1 overflow-y-auto bg-canvas">
+          {children}
+        </main>
       </div>
     </div>
   );

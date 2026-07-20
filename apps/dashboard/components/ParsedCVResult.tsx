@@ -23,12 +23,22 @@ function Chip({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Field({ label, value }: { label: string; value: string | null | undefined }) {
+function Field({
+  label,
+  value,
+  className = "",
+}: {
+  label: string;
+  value: string | null | undefined;
+  className?: string;
+}) {
   const text = value?.toString().trim();
   return (
-    <div>
+    // min-w-0 + break-words: ô lưới mặc định KHÔNG co dưới kích thước nội dung, nên một email dài
+    // sẽ tràn sang ô bên cạnh (đè lên "Điện thoại") thay vì tự xuống dòng.
+    <div className={`min-w-0 ${className}`}>
       <dt className="text-xs uppercase tracking-wide text-ink/45">{label}</dt>
-      <dd className="text-sm text-ink">{text ? text : "—"}</dd>
+      <dd className="break-words text-sm text-ink">{text ? text : "—"}</dd>
     </div>
   );
 }
@@ -83,8 +93,9 @@ export function ParsedCVResult({
             <p className="text-base font-semibold text-ink">
               {parsed_data.full_name?.trim() || "(Không rõ họ tên)"}
             </p>
-            <dl className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <Field label="Email" value={parsed_data.email} />
+            {/* Điện thoại + số năm KN NGẮN → xếp chung một hàng; email DÀI → chiếm trọn hàng dưới.
+                Cột chi tiết ứng viên chỉ rộng ~1fr nên chia đều 3 cột sẽ bóp email vỡ bố cục. */}
+            <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2">
               <Field label="Điện thoại" value={parsed_data.phone} />
               <Field
                 label="Tổng năm KN"
@@ -94,6 +105,7 @@ export function ParsedCVResult({
                     : null
                 }
               />
+              <Field label="Email" value={parsed_data.email} className="col-span-2" />
             </dl>
           </div>
 
