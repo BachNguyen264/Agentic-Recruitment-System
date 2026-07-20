@@ -18,9 +18,13 @@ export function validateCvFile(file: File): string | null {
 export function CVFilePicker({
   onFile,
   disabled = false,
+  hint = "Chỉ .pdf / .docx · tối đa 10MB",
 }: {
   onFile: (file: File | null) => void;
   disabled?: boolean;
+  /** Dòng phụ dưới lời mời chọn file. /cv-check nói thêm "không lưu trữ" (đúng — parse trong bộ
+   *  nhớ); /apply thì KHÔNG được nói vậy vì hồ sơ nộp lên CÓ lưu. */
+  hint?: string;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,10 +56,24 @@ export function CVFilePicker({
         role="button"
         tabIndex={disabled ? -1 : 0}
         aria-disabled={disabled}
-        aria-label="Chọn file CV (.pdf hoặc .docx)"
+        // Tên nhãn phải ĐỔI THEO trạng thái: aria-label GHI ĐÈ nội dung con, mà tên file bên trong
+        // lại là chỉ báo DUY NHẤT rằng đã chọn được file. Để nhãn tĩnh thì người dùng trình đọc màn
+        // hình bấm "Phân tích CV" mà không có cách nào biết đang phân tích file nào.
+        aria-label={
+          file
+            ? `Đã chọn ${file.name}. Bấm để chọn file CV khác.`
+            : "Chọn file CV (.pdf hoặc .docx)"
+        }
         onClick={() => !disabled && inputRef.current?.click()}
         onKeyDown={(e) => {
-          if (!disabled && (e.key === "Enter" || e.key === " ")) inputRef.current?.click();
+          if (disabled) return;
+          if (e.key === "Enter") inputRef.current?.click();
+          // Space: chặn mặc định (nếu không trang vừa mở hộp thoại chọn file VỪA cuộn xuống),
+          // rồi kích hoạt ở keyup như hành vi chuẩn của <button>.
+          if (e.key === " ") e.preventDefault();
+        }}
+        onKeyUp={(e) => {
+          if (!disabled && e.key === " ") inputRef.current?.click();
         }}
         onDragOver={(e) => {
           if (disabled) return;
@@ -69,9 +87,13 @@ export function CVFilePicker({
           setDragging(false);
           select(e.dataTransfer.files?.[0] ?? null);
         }}
-        className={`flex flex-col items-center justify-center rounded-md border-2 border-dashed px-4 py-8 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 ${
+        className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-7 text-center transition-colors ${
           disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
-        } ${dragging ? "border-slate-900 bg-slate-100" : "border-slate-300 bg-white hover:bg-slate-50"}`}
+        } ${
+          dragging
+            ? "border-accent bg-accent-100"
+            : "border-divider bg-surface hover:border-ink/40"
+        }`}
       >
         <input
           ref={inputRef}
@@ -81,16 +103,35 @@ export function CVFilePicker({
           disabled={disabled}
           onChange={(e) => select(e.target.files?.[0] ?? null)}
         />
-        <p className="text-sm font-medium text-slate-700">Kéo-thả CV vào đây, hoặc bấm để chọn</p>
-        <p className="mt-1 text-xs text-slate-400">Chỉ .pdf / .docx · tối đa 10MB</p>
-        {file && (
-          <p className="mt-3 text-sm text-slate-800">
-            Đã chọn: <span className="font-medium">{file.name}</span>
-          </p>
-        )}
+
+        <svg
+          viewBox="0 0 24 24"
+          className="h-[26px] w-[26px] text-ink/45"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="17 8 12 3 7 8" />
+          <line x1="12" x2="12" y1="3" y2="15" />
+        </svg>
+
+        {/* Đã chọn file → tên file THAY CHO lời mời chọn (khớp thiết kế): trạng thái hiện tại quan
+            trọng hơn hướng dẫn đã dùng xong. Vẫn bấm/thả lại được để đổi file. */}
+        <p className="mt-2 break-all text-[13px] font-semibold">
+          {file ? file.name : "Kéo-thả CV vào đây, hoặc bấm để chọn"}
+        </p>
+        <p className="mt-1 text-xs text-ink/45">{file ? "Bấm để chọn file khác" : hint}</p>
       </div>
+
       {error && (
-        <p className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <p
+          role="alert"
+          className="rounded-xl border-2 border-red-200 bg-red-50 px-4 py-2.5 text-[13px] text-red-700"
+        >
           {error}
         </p>
       )}
