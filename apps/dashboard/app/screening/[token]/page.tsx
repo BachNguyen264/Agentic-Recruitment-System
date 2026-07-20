@@ -4,19 +4,36 @@ import { useState } from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ScreenerForm } from "@ars/shared-types";
+import Link from "next/link";
+import { SuccessPanel } from "@/components/SuccessPanel";
+import { BackArrow, btn, EmptyState, Field, inputClass } from "@/components/ui";
 import { getScreener, submitScreener } from "@/lib/api";
 
-// Trang trả lời sàng lọc (magic-link, PRD §7.3, §10). Ứng viên guest: chỉ thấy CÂU HỎI + tiêu đề JD
-// (KHÔNG rubric/điểm). Token sai/hết hạn/đã nộp → thông báo tương ứng (không form). Chống double-submit.
+// Trang trả lời sàng lọc qua magic-link (PRD §7.3, §10). Ứng viên là KHÁCH: chỉ thấy CÂU HỎI +
+// tên vị trí — không rubric, không điểm, không trạng thái hồ sơ.
+//
+// Token sai / hết hạn / đã dùng rồi (one-time) → backend trả lỗi kèm message rõ; hiện thông báo,
+// KHÔNG dựng form.
 export default function ScreeningPage() {
   const params = useParams<{ token: string }>();
   const token = params.token;
 
+  // KHOÁ CHẶT query — tải MỘT lần rồi thôi. Hai lý do, cả hai đều làm ứng viên mất bài:
+  //  1. Rate-limit theo IP ở đường công khai: refetch mỗi lần focus lại tab sẽ đốt quota, tới lúc
+  //     bấm "Gửi câu trả lời" thì 429 → quá hạn → hồ sơ bị xử như KHÔNG PHẢN HỒI.
+  //  2. NGHIÊM TRỌNG HƠN — refetchOnReconnect/refetchOnMount mặc định BẬT: ứng viên đang gõ dở,
+  //     mạng chớp (wifi ↔ 4G) → query chạy lại → nếu sweep timeout (08c) vừa đóng phiên thì query
+  //     chuyển sang isError, nhánh formQuery.data biến mất và TOÀN BỘ chữ đã gõ bị xoá khỏi màn
+  //     hình. Guest không có tài khoản để khiếu nại.
   const formQuery = useQuery<ScreenerForm>({
     queryKey: ["screener", token],
     queryFn: () => getScreener(token),
     enabled: Boolean(token),
-    retry: false, // token sai/hết hạn/đã nộp → lỗi, đừng retry.
+    retry: false,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
   });
 
   const [answers, setAnswers] = useState<Record<number, string>>({});
@@ -26,86 +43,99 @@ export default function ScreeningPage() {
     mutationFn: () => submitScreener(token, questions.map((_, i) => answers[i] ?? "")),
   });
 
-  // ── Màn xác nhận (sau khi nộp thành công) — KHÔNG hiện điểm/trạng thái ──
+  // ── Sau khi gửi thành công — KHÔNG hiện điểm/trạng thái ──
   if (mutation.isSuccess) {
     return (
-      <main className="mx-auto max-w-2xl p-6 sm:p-8">
-        <div className="rounded-md border border-green-200 bg-green-50 px-6 py-10 text-center">
-          <p className="text-lg font-semibold text-green-800">Cảm ơn bạn! 🎉</p>
-          <p className="mx-auto mt-2 max-w-md text-sm text-green-700">
-            Câu trả lời của bạn đã được ghi nhận. Bộ phận Tuyển dụng sẽ xem xét và liên hệ với bạn
-            qua email.
-          </p>
-        </div>
+      <main>
+        <SuccessPanel
+          title="Đã ghi nhận câu trả lời"
+          action={
+            <Link href="/apply" className={btn("secondary")}>
+              <BackArrow /> Về cổng tuyển dụng
+            </Link>
+          }
+        >
+          Bộ phận Tuyển dụng sẽ xem xét và liên hệ với bạn qua email. Cảm ơn bạn!
+        </SuccessPanel>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto max-w-2xl space-y-6 p-6 sm:p-8">
-      {formQuery.isLoading && <p className="text-sm text-slate-500">Đang tải câu hỏi…</p>}
+    <main>
+      {formQuery.isLoading && (
+        <p role="status" className="text-[13px] text-ink/50">
+          Đang tải câu hỏi…
+        </p>
+      )}
 
-      {/* Token sai/hết hạn/đã nộp → backend trả message rõ; hiện thông báo, KHÔNG form. */}
+      {/* Message do BACKEND quyết (services/screening.py phân biệt 404 sai / 409 đã gửi / 410 hết
+          hạn) và đã được viết cẩn thận — in NGUYÊN VĂN, không diễn giải lại. Đặc biệt ca hết hạn
+          backend cố ý TRẤN AN ("hồ sơ vẫn đang được xem xét") vì hồ sơ thật sự đi tiếp sang HR;
+          thêm câu "liên kết có thể đã hết hạn hoặc đã được dùng" vào đây là tự mâu thuẫn và làm
+          ứng viên tưởng mình đã trượt. Dòng phụ bên dưới giữ TRUNG TÍNH để đúng cho cả ba ca. */}
       {formQuery.isError && (
-        <div className="rounded-md border border-slate-200 bg-white px-6 py-10 text-center">
-          <p className="text-sm font-medium text-slate-700">
+        <div
+          role="alert"
+          className="rounded-xl border-2 border-divider bg-surface px-6 py-10 text-center"
+        >
+          <p className="font-heading text-[15px] font-bold">
             {String((formQuery.error as Error)?.message) || "Liên kết không hợp lệ."}
           </p>
-          <p className="mt-2 text-xs text-slate-400">
-            Nếu bạn cho rằng đây là nhầm lẫn, vui lòng liên hệ bộ phận Tuyển dụng.
+          <p className="mx-auto mt-1.5 max-w-[46ch] text-[13px] text-ink/55">
+            Nếu bạn cho rằng đây là nhầm lẫn, vui lòng trả lời email chúng tôi đã gửi.
           </p>
         </div>
       )}
 
       {formQuery.data && (
         <>
-          <header className="space-y-1">
-            <h1 className="text-2xl font-bold text-slate-900">Câu hỏi sàng lọc</h1>
-            <p className="text-sm text-slate-500">
-              Vị trí: <span className="font-medium text-slate-700">{formQuery.data.job_title}</span>. Vui
-              lòng trả lời các câu hỏi dưới đây để tiếp tục quy trình.
-            </p>
-          </header>
+          <p className="eyebrow mb-1.5">Magic-link · không cần mật khẩu</p>
+          <h1 className="text-[26px] sm:text-[30px]">Câu hỏi sàng lọc</h1>
+          <p className="mt-2 max-w-[62ch] text-[13px] leading-relaxed text-ink/55">
+            Vị trí: <strong className="font-semibold text-ink">{formQuery.data.job_title}</strong>.
+            Vui lòng trả lời để chúng tôi tiếp tục xem xét hồ sơ của bạn.
+          </p>
 
           {questions.length === 0 ? (
-            <p className="text-sm text-slate-500">Không có câu hỏi bổ sung.</p>
+            <div className="mt-5">
+              <EmptyState>Liên kết này không có câu hỏi nào.</EmptyState>
+            </div>
           ) : (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 if (!mutation.isPending) mutation.mutate();
               }}
-              className="space-y-5"
+              className="mt-5"
             >
-              {questions.map((q, i) => (
-                <div key={i} className="space-y-1.5">
-                  <label htmlFor={`q-${i}`} className="block text-sm font-medium text-slate-700">
-                    {i + 1}. {q}
-                  </label>
-                  <textarea
-                    id={`q-${i}`}
-                    rows={2}
-                    value={answers[i] ?? ""}
-                    onChange={(e) => setAnswers((prev) => ({ ...prev, [i]: e.target.value }))}
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:bg-slate-50"
-                    disabled={mutation.isPending}
-                    maxLength={5000}
-                  />
-                </div>
-              ))}
+              <div className="flex flex-col gap-4">
+                {questions.map((q, i) => (
+                  <Field key={i} label={`${i + 1}. ${q}`} htmlFor={`q-${i}`}>
+                    <textarea
+                      id={`q-${i}`}
+                      rows={3}
+                      value={answers[i] ?? ""}
+                      onChange={(e) => setAnswers((prev) => ({ ...prev, [i]: e.target.value }))}
+                      disabled={mutation.isPending}
+                      maxLength={5000}
+                      className={`${inputClass} min-h-16 bg-canvas`}
+                    />
+                  </Field>
+                ))}
+              </div>
 
               {mutation.isError && (
-                <p className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+                <p
+                  role="alert"
+                  className="mt-4 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700"
+                >
                   {String((mutation.error as Error)?.message) ||
                     "Không gửi được câu trả lời. Vui lòng thử lại."}
                 </p>
               )}
 
-              <button
-                type="submit"
-                disabled={mutation.isPending}
-                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-50"
-              >
+              <button type="submit" disabled={mutation.isPending} className={btn("primary", "mt-4")}>
                 {mutation.isPending ? "Đang gửi…" : "Gửi câu trả lời"}
               </button>
             </form>

@@ -61,16 +61,20 @@ export function Field({
   label,
   hint,
   required,
+  htmlFor,
   children,
 }: {
   label: string;
   hint?: string;
   required?: boolean;
+  /** id của ô nhập bên trong. Truyền vào thì bấm nhãn sẽ focus đúng ô và trình đọc màn hình đọc
+   *  được nhãn — thiếu nó thì <label> chỉ là chữ trang trí (nhãn nằm CẠNH ô, không bọc ô). */
+  htmlFor?: string;
   children: React.ReactNode;
 }) {
   return (
     <div>
-      <label className="mb-1.5 block text-xs font-semibold text-ink/70">
+      <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-semibold text-ink/70">
         {label}
         {required && <span className="text-accent"> *</span>}
       </label>

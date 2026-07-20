@@ -6,6 +6,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import type { PublicJob } from "@ars/shared-types";
 import { CVFilePicker } from "@/components/CVFilePicker";
 import { SafeHtml } from "@/components/SafeHtml";
+import { SuccessPanel } from "@/components/SuccessPanel";
+import { BackArrow, btn, Field, inputClass } from "@/components/ui";
 import { getPublicJob, submitApplication } from "@/lib/api";
 import { employmentTypeLabel, formatSalary, levelLabel } from "@/lib/jobs";
 
@@ -13,14 +15,30 @@ function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+// Khối văn bản định dạng của JD (mô tả/yêu cầu/quyền lợi — JD-1). Nội dung do HR soạn bằng editor
+// nên là HTML → BẮT BUỘC đi qua SafeHtml (DOMPurify) trước khi render trên trang CÔNG KHAI.
+function JobSection({ title, html }: { title: string; html: string }) {
+  if (!html.trim()) return null;
+  return (
+    <section className="mt-4">
+      <h2 className="font-heading text-[13px] font-bold">{title}</h2>
+      <SafeHtml
+        html={html}
+        className="rte-content mt-2 text-[13px] leading-relaxed text-ink/80"
+      />
+    </section>
+  );
+}
+
 export default function ApplyDetailPage({ params }: { params: { jobId: string } }) {
   const id = Number(params.jobId);
 
+  // KHÔNG refetch/polling trên đường công khai (rate-limit theo IP — xem ghi chú ở /apply).
   const jobQuery = useQuery<PublicJob>({
     queryKey: ["public-job", id],
     queryFn: () => getPublicJob(id),
     enabled: Number.isFinite(id),
-    retry: false, // JD đóng/không tồn tại → 404, đừng retry.
+    retry: false, // JD đóng/lưu-trữ/không tồn tại → 404, đừng thử lại.
   });
 
   const [email, setEmail] = useState("");
@@ -32,145 +50,119 @@ export default function ApplyDetailPage({ params }: { params: { jobId: string } 
 
   const canSubmit = isValidEmail(email) && file !== null && !mutation.isPending;
 
-  // ── Màn xác nhận (sau khi nộp thành công) — KHÔNG hiện điểm/trạng thái ──
+  // ── Sau khi nộp thành công — KHÔNG hiện điểm/trạng thái (ứng viên là khách, PRD §5) ──
   if (mutation.isSuccess) {
     return (
-      <main className="mx-auto max-w-2xl p-6 sm:p-8">
-        <div className="rounded-md border border-green-200 bg-green-50 px-6 py-10 text-center">
-          <p className="text-lg font-semibold text-green-800">Cảm ơn bạn đã ứng tuyển! 🎉</p>
-          <p className="mx-auto mt-2 max-w-md text-sm text-green-700">
-            Hồ sơ của bạn đã được gửi thành công. Chúng tôi sẽ xem xét và liên hệ với bạn qua email.
-          </p>
-          <Link
-            href="/apply"
-            className="mt-6 inline-block rounded-md border border-green-300 bg-white px-4 py-2 text-sm font-medium text-green-800 hover:bg-green-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500"
-          >
-            ← Xem vị trí khác
-          </Link>
-        </div>
+      <main>
+        <SuccessPanel
+          title="Cảm ơn bạn đã ứng tuyển!"
+          action={
+            <Link href="/apply" className={btn("secondary")}>
+              <BackArrow /> Xem vị trí khác
+            </Link>
+          }
+        >
+          Hồ sơ đã được gửi thành công. Chúng tôi sẽ xem xét và liên hệ kết quả với bạn qua email.
+        </SuccessPanel>
       </main>
     );
   }
 
+  const job = jobQuery.data;
+  const meta = job
+    ? [levelLabel(job.level), employmentTypeLabel(job.employment_type)].filter(Boolean).join(" · ")
+    : "";
+  const salary = job ? formatSalary(job.salary) : null;
+
   return (
-    <main className="mx-auto max-w-2xl space-y-6 p-6 sm:p-8">
-      <Link href="/apply" className="text-sm text-slate-500 hover:underline">
-        ← Tất cả vị trí
+    <main>
+      <Link href="/apply" className={btn("ghost", "mb-3 !pl-0")}>
+        <BackArrow /> Tất cả vị trí
       </Link>
 
-      {jobQuery.isLoading && <p className="text-sm text-slate-500">Đang tải vị trí…</p>}
+      {jobQuery.isLoading && <p className="text-[13px] text-ink/50">Đang tải vị trí…</p>}
+
       {jobQuery.isError && (
-        <div className="rounded-md border border-slate-200 bg-white px-6 py-10 text-center">
-          <p className="text-sm font-medium text-slate-700">
+        <div className="rounded-xl border-2 border-divider bg-surface px-6 py-10 text-center">
+          <p className="font-heading text-[15px] font-bold">
             Vị trí này không còn mở hoặc không tồn tại.
           </p>
-          <Link
-            href="/apply"
-            className="mt-4 inline-block text-sm font-medium text-slate-700 underline hover:text-slate-900"
-          >
-            Xem các vị trí đang mở
+          <p className="mx-auto mt-1.5 max-w-[44ch] text-[13px] text-ink/55">
+            Tin tuyển dụng có thể đã đóng. Bạn xem các vị trí đang mở nhé.
+          </p>
+          <Link href="/apply" className={btn("secondary", "mt-4")}>
+            Xem vị trí đang mở
           </Link>
         </div>
       )}
 
-      {jobQuery.data && (
+      {job && (
         <>
-          <header className="space-y-3">
-            <h1 className="text-2xl font-bold text-slate-900">{jobQuery.data.title}</h1>
-
-            {/* Meta hướng-ứng-viên (JD-1): cấp bậc · loại việc · lương */}
-            {(levelLabel(jobQuery.data.level) ||
-              employmentTypeLabel(jobQuery.data.employment_type) ||
-              formatSalary(jobQuery.data.salary)) && (
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                {levelLabel(jobQuery.data.level) && (
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
-                    {levelLabel(jobQuery.data.level)}
-                  </span>
-                )}
-                {employmentTypeLabel(jobQuery.data.employment_type) && (
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
-                    {employmentTypeLabel(jobQuery.data.employment_type)}
-                  </span>
-                )}
-                {formatSalary(jobQuery.data.salary) && (
-                  <span className="rounded-full bg-green-100 px-3 py-1 font-medium text-green-800">
-                    {formatSalary(jobQuery.data.salary)}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {/* Mô tả / Yêu cầu / Quyền lợi: văn bản định dạng → SANITIZE (DOMPurify) trước khi render */}
-            {jobQuery.data.description.trim() && (
-              <SafeHtml
-                html={jobQuery.data.description}
-                className="rte-content text-sm text-slate-600"
-              />
-            )}
-            {jobQuery.data.requirements.trim() && (
-              <div className="pt-2">
-                <p className="text-sm font-medium text-slate-700">Yêu cầu</p>
-                <SafeHtml
-                  html={jobQuery.data.requirements}
-                  className="rte-content mt-1 text-sm text-slate-600"
-                />
-              </div>
-            )}
-            {jobQuery.data.benefits.trim() && (
-              <div className="pt-2">
-                <p className="text-sm font-medium text-slate-700">Quyền lợi</p>
-                <SafeHtml
-                  html={jobQuery.data.benefits}
-                  className="rte-content mt-1 text-sm text-slate-600"
-                />
-              </div>
+          <header>
+            <h1 className="text-[26px] sm:text-[32px]">{job.title}</h1>
+            {meta && <p className="mt-1.5 text-[13px] text-ink/55">{meta}</p>}
+            {salary && (
+              <p className="mt-2.5">
+                <span className="inline-flex rounded bg-ink px-2.5 py-1 text-[12px] font-semibold text-canvas">
+                  {salary}
+                </span>
+              </p>
             )}
           </header>
+
+          {job.description.trim() && (
+            <SafeHtml
+              html={job.description}
+              className="rte-content mt-4 text-[14px] leading-relaxed text-ink/85"
+            />
+          )}
+          <JobSection title="Yêu cầu" html={job.requirements} />
+          <JobSection title="Quyền lợi" html={job.benefits} />
 
           <form
             onSubmit={(e) => {
               e.preventDefault();
               if (canSubmit) mutation.mutate();
             }}
-            className="space-y-4 border-t border-slate-200 pt-6"
+            className="mt-7 border-t-2 border-divider pt-5"
           >
-            <h2 className="text-lg font-semibold text-slate-900">Nộp hồ sơ</h2>
+            <h2 className="text-[20px] sm:text-[22px]">Nộp hồ sơ</h2>
 
-            <div className="space-y-1.5">
-              <label htmlFor="email" className="block text-sm font-medium text-slate-700">
-                Email <span className="text-red-500">*</span>
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="ban@example.com"
-                autoComplete="email"
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
-              />
-              <p className="text-xs text-slate-400">Chúng tôi sẽ liên hệ kết quả qua email này.</p>
-            </div>
+            <div className="mt-4 flex flex-col gap-4">
+              <Field
+                label="Email"
+                required
+                htmlFor="apply-email"
+                hint="Chúng tôi sẽ liên hệ kết quả qua email này."
+              >
+                <input
+                  id="apply-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="ban@example.com"
+                  autoComplete="email"
+                  disabled={mutation.isPending}
+                  className={inputClass}
+                />
+              </Field>
 
-            <div className="space-y-1.5">
-              <span className="block text-sm font-medium text-slate-700">
-                CV <span className="text-red-500">*</span>
-              </span>
-              <CVFilePicker onFile={setFile} disabled={mutation.isPending} />
+              <Field label="CV (.pdf / .docx)" required>
+                <CVFilePicker onFile={setFile} disabled={mutation.isPending} />
+              </Field>
             </div>
 
             {mutation.isError && (
-              <p className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
-                {String((mutation.error as Error)?.message) || "Không gửi được hồ sơ. Vui lòng thử lại."}
+              <p
+                role="alert"
+                className="mt-4 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700"
+              >
+                {String((mutation.error as Error)?.message) ||
+                  "Không gửi được hồ sơ. Vui lòng thử lại."}
               </p>
             )}
 
-            <button
-              type="submit"
-              disabled={!canSubmit}
-              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-50"
-            >
+            <button type="submit" disabled={!canSubmit} className={btn("primary", "mt-4")}>
               {mutation.isPending ? "Đang gửi…" : "Nộp hồ sơ"}
             </button>
           </form>
