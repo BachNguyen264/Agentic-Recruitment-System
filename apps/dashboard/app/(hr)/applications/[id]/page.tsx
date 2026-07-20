@@ -3,14 +3,14 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { ApplicationDetail, AuditEntry, JobPosting } from "@ars/shared-types";
+import type { ApplicationDetail, JobPosting } from "@ars/shared-types";
 import { AgentTrace } from "@/components/AgentTrace";
 import { ParsedCVResult } from "@/components/ParsedCVResult";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { ScreenerAnswers } from "@/components/ScreenerAnswers";
 import { SafeHtml } from "@/components/SafeHtml";
 import { BackArrow, btn, Tag } from "@/components/ui";
-import { downloadCv, getApplication, getApplicationAudit, getJob } from "@/lib/api";
+import { downloadCv, getApplication, getJob } from "@/lib/api";
 import { statusLabel, statusTone, toBreakdown } from "@/lib/applications";
 
 function initialsOf(email: string): string {
@@ -37,13 +37,6 @@ export default function ApplicationDetailPage() {
     queryKey: ["job", app?.job_id],
     queryFn: () => getJob(app!.job_id!),
     enabled: app?.job_id != null,
-  });
-
-  // Nhật ký kiểm toán (PRD §16) — nguồn THẬT cho Agent trace.
-  const auditQuery = useQuery<AuditEntry[]>({
-    queryKey: ["application", id, "audit"],
-    queryFn: () => getApplicationAudit(id),
-    enabled: Number.isFinite(id),
   });
 
   return (
@@ -147,12 +140,7 @@ export default function ApplicationDetailPage() {
           <div className="mt-5 grid items-start gap-6 lg:grid-cols-[1.55fr_1fr]">
             {/* TRÁI: trace + điểm + câu trả lời sàng lọc */}
             <div className="flex min-w-0 flex-col gap-5">
-              <AgentTrace
-                app={app}
-                entries={auditQuery.data}
-                isLoading={auditQuery.isLoading}
-                isError={auditQuery.isError}
-              />
+              <AgentTrace app={app} />
 
               {/* Cờ "cần chú ý" chỉ hiện khi còn chờ quyết — hồ sơ đã quyết xem điểm sạch. */}
               <ScoreBreakdown

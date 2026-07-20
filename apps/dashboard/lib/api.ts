@@ -1,7 +1,6 @@
 import type {
   ApplicationDetail,
   ApplicationListItem,
-  AuditEntry,
   HrUser,
   JobMutationResult,
   JobPosting,
@@ -111,10 +110,6 @@ export const getApplications = () =>
 
 export const getApplication = (id: number) =>
   getJson<ApplicationDetail>(`/api/applications/${id}`);
-
-// Nhật ký kiểm toán của hồ sơ (PRD §16) — nguồn cho "Agent trace" THẬT ở màn chi tiết.
-export const getApplicationAudit = (id: number) =>
-  getJson<AuditEntry[]>(`/api/applications/${id}/audit`);
 
 // ── Quản lý JD (slice 05) ──
 // JD-4: mặc định (archived=false) ẨN JD đã lưu trữ; archived=true → chỉ JD ARCHIVED (màn "Đã lưu trữ").
