@@ -1,11 +1,16 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ApplicationDetail, ApplicationListItem, ReviewDecision } from "@ars/shared-types";
+import type {
+  ApplicationDetail,
+  ApplicationListItem,
+  JobPosting,
+  ReviewDecision,
+} from "@ars/shared-types";
 import { ReviewCard } from "@/components/ReviewCard";
-import { getApplication, getApplications, submitReview } from "@/lib/api";
+import { EmptyState, PageHeader } from "@/components/ui";
+import { getApplication, getApplications, getJobs, submitReview } from "@/lib/api";
 
 export default function ReviewPage() {
   const qc = useQueryClient();
@@ -29,9 +34,14 @@ export default function ReviewPage() {
       queryFn: () => getApplication(id),
     })),
   });
-  const cases = detailQueries
-    .map((q) => q.data)
-    .filter((d): d is ApplicationDetail => Boolean(d));
+  const cases = detailQueries.map((q) => q.data).filter((d): d is ApplicationDetail => Boolean(d));
+
+  // Tên vị trí cho từng ca (ReviewCard hiện "email · vị trí" thay cho "JD #id").
+  const { data: jobs } = useQuery<JobPosting[]>({
+    queryKey: ["jobs", "active"],
+    queryFn: () => getJobs(),
+  });
+  const jobTitle = new Map((jobs ?? []).map((j) => [j.id, j.title]));
 
   const mutation = useMutation({
     mutationFn: ({ id, decision, note }: { id: number; decision: ReviewDecision; note: string }) =>
@@ -53,46 +63,52 @@ export default function ReviewPage() {
     mutation.mutate({ id, decision, note });
 
   return (
-    <main className="mx-auto max-w-4xl space-y-6 p-8">
-      <header className="space-y-1">
-        <Link href="/" className="text-sm text-slate-500 hover:underline">
-          ← Về dashboard
-        </Link>
-        <h1 className="text-2xl font-bold">Hàng đợi review</h1>
-        <p className="text-sm text-slate-500">
-          Các ca cần HR quyết (PRD §11). Duyệt → mời phỏng vấn; Từ chối → gửi thư từ chối. Quyết định
-          giao cho scheduler thực thi.
-        </p>
-      </header>
+    <div className="mx-auto max-w-[900px] px-4 pb-8 pt-6 sm:px-8">
+      <PageHeader
+        eyebrow="Human-in-the-loop"
+        title="Hàng đợi review"
+        description={
+          <>
+            Mỗi ca kèm ReviewCard (tóm tắt + điểm + lý do).{" "}
+            <strong className="font-semibold text-ink">Duyệt</strong> → giao scheduler mời phỏng vấn;{" "}
+            <strong className="font-semibold text-ink">Từ chối</strong> → scheduler gửi thư từ chối.
+            Mọi quyết định ghi vào audit_log.
+          </>
+        }
+      />
 
       {errorMsg && (
-        <p className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <p
+          role="alert"
+          className="mb-4 rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700"
+        >
           {errorMsg}
         </p>
       )}
 
-      {listQuery.isLoading && <p className="text-sm text-slate-500">Đang tải hàng đợi…</p>}
+      {listQuery.isLoading && <p className="text-sm text-ink/50">Đang tải hàng đợi…</p>}
       {listQuery.isError && (
-        <p className="text-sm text-red-600">
-          Không tải được hàng đợi ({String((listQuery.error as Error)?.message)}). Backend đã chạy
-          ở :8000 chưa?
+        <p className="rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+          Không tải được hàng đợi ({String((listQuery.error as Error)?.message)}). Backend đã chạy ở
+          :8000 chưa?
         </p>
       )}
       {listQuery.data && pendingIds.length === 0 && (
-        <p className="text-sm text-slate-400">Không có ca nào chờ HR quyết. 🎉</p>
+        <EmptyState>Không có ca nào chờ HR quyết. Hàng đợi trống.</EmptyState>
       )}
 
-      <div className="space-y-5">
+      <div className="flex flex-col gap-4">
         {cases.map((app) => (
           <ReviewCard
             key={app.id}
             app={app}
+            jobTitle={app.job_id ? jobTitle.get(app.job_id) : undefined}
             submitting={submittingId === app.id}
             onApprove={(note) => decide(app.id, "approve", note)}
             onReject={(note) => decide(app.id, "reject", note)}
           />
         ))}
       </div>
-    </main>
+    </div>
   );
 }
