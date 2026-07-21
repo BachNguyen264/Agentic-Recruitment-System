@@ -11,7 +11,7 @@ function Row({ label, state }: { label: string; state: string }) {
   return (
     <div className="flex items-center justify-between border-b border-divider px-4 py-2.5 last:border-b-0">
       <span className="text-[13px] font-semibold">{label}</span>
-      <span className="flex items-center gap-2 text-[13px] text-ink/60">
+      <span className="flex items-center gap-2 text-[13px] text-ink/65">
         <span
           className={`h-2 w-2 flex-none rounded-full ${ok ? "bg-accent" : "bg-red-500"}`}
           aria-hidden
@@ -34,16 +34,23 @@ export function ServiceStatus() {
     queryFn: () => getJson<HealthStatus>("/api/health"),
     refetchInterval: 300_000,
     refetchOnWindowFocus: false,
+    // staleTime BẮT BUỘC: chỉ giãn refetchInterval là chưa đủ — /api/health là endpoint kiểm-SÂU
+    // (ping Postgres+Redis+Qdrant) và nằm trong rổ rate-limit 20 lượt/giờ. staleTime mặc định 0 nên
+    // MỖI lần quay lại Bảng điều hành lại gọi mới; HR vào ra ~20 lần là 429 → panel báo sai "backend
+    // sập". Coi dữ liệu tươi trong 5 phút để remount trong khoảng đó không gọi lại.
+    staleTime: 300_000,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
   });
 
   return (
     <section>
       <h2 className="text-[22px]">Trạng thái dịch vụ</h2>
       <div className="mt-3 overflow-hidden rounded-xl border-2 border-divider bg-surface">
-        {isLoading && <p className="px-4 py-4 text-sm text-ink/50">Đang kiểm tra…</p>}
+        {isLoading && <p className="px-4 py-4 text-sm text-ink/65">Đang kiểm tra…</p>}
         {isError && (
           <p className="px-4 py-4 text-sm text-red-600">
-            Không gọi được backend ({String((error as Error)?.message)}). Backend đã chạy ở :8000 chưa?
+            Không gọi được backend ({String((error as Error)?.message)}).
           </p>
         )}
         {data && (
@@ -52,7 +59,7 @@ export function ServiceStatus() {
             <Row label="Postgres (Neon)" state={data.services.postgres} />
             <Row label="Redis (Upstash)" state={data.services.redis} />
             <Row label="Qdrant Cloud" state={data.services.qdrant} />
-            <div className="px-4 py-2.5 text-[13px] text-ink/55">
+            <div className="px-4 py-2.5 text-[13px] text-ink/65">
               Tổng thể:{" "}
               <span className={`font-bold ${data.status === "ok" ? "text-ink" : "text-red-600"}`}>
                 {data.status === "ok" ? "hoạt động" : data.status}

@@ -33,12 +33,18 @@ function JobSection({ title, html }: { title: string; html: string }) {
 export default function ApplyDetailPage({ params }: { params: { jobId: string } }) {
   const id = Number(params.jobId);
 
-  // KHÔNG refetch/polling trên đường công khai (rate-limit theo IP — xem ghi chú ở /apply).
+  // Khoá refetch trên đường công khai (rate-limit theo IP — xem ghi chú ở /apply). Đặc biệt
+  // refetchOnWindowFocus mặc định BẬT sẽ khiến banner "vị trí không còn mở" nhảy ra ĐÈ form ứng
+  // viên đang điền nếu JD vừa bị đóng — tắt tường minh.
   const jobQuery = useQuery<PublicJob>({
     queryKey: ["public-job", id],
     queryFn: () => getPublicJob(id),
     enabled: Number.isFinite(id),
     retry: false, // JD đóng/lưu-trữ/không tồn tại → 404, đừng thử lại.
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
   });
 
   const [email, setEmail] = useState("");
@@ -80,14 +86,14 @@ export default function ApplyDetailPage({ params }: { params: { jobId: string } 
         <BackArrow /> Tất cả vị trí
       </Link>
 
-      {jobQuery.isLoading && <p className="text-[13px] text-ink/50">Đang tải vị trí…</p>}
+      {jobQuery.isLoading && <p className="text-[13px] text-ink/65">Đang tải vị trí…</p>}
 
       {jobQuery.isError && (
         <div className="rounded-xl border-2 border-divider bg-surface px-6 py-10 text-center">
           <p className="font-heading text-[15px] font-bold">
             Vị trí này không còn mở hoặc không tồn tại.
           </p>
-          <p className="mx-auto mt-1.5 max-w-[44ch] text-[13px] text-ink/55">
+          <p className="mx-auto mt-1.5 max-w-[44ch] text-[13px] text-ink/65">
             Tin tuyển dụng có thể đã đóng. Bạn xem các vị trí đang mở nhé.
           </p>
           <Link href="/apply" className={btn("secondary", "mt-4")}>
@@ -100,7 +106,7 @@ export default function ApplyDetailPage({ params }: { params: { jobId: string } 
         <>
           <header>
             <h1 className="text-[26px] sm:text-[32px]">{job.title}</h1>
-            {meta && <p className="mt-1.5 text-[13px] text-ink/55">{meta}</p>}
+            {meta && <p className="mt-1.5 text-[13px] text-ink/65">{meta}</p>}
             {salary && (
               <p className="mt-2.5">
                 <span className="inline-flex rounded bg-ink px-2.5 py-1 text-[12px] font-semibold text-canvas">

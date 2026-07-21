@@ -74,19 +74,20 @@ function StatTile({
 }) {
   return (
     <div className={`rounded-xl border-2 p-4 ${accent ? "border-accent bg-accent" : "border-divider bg-surface"}`}>
-      <p className={`text-xs font-semibold uppercase tracking-[0.08em] ${accent ? "text-white/80" : "text-ink/55"}`}>
+      {/* text-white đặc trên accent (#1f6feb) = 4.63:1 ĐẠT AA; white/80 chỉ 3.54:1 (trượt, chữ nhỏ) */}
+      <p className={`text-xs font-semibold uppercase tracking-[0.08em] ${accent ? "text-white" : "text-ink/65"}`}>
         {label}
       </p>
       <p className={`mt-2.5 font-heading text-[40px] font-bold leading-none ${accent ? "text-white" : ""}`}>
         {value}
       </p>
-      {action ?? <p className={`mt-1.5 text-[13px] ${accent ? "text-white/80" : "text-ink/55"}`}>{caption}</p>}
+      {action ?? <p className={`mt-1.5 text-[13px] ${accent ? "text-white" : "text-ink/65"}`}>{caption}</p>}
     </div>
   );
 }
 
 export default function DashboardPage() {
-  const { data: apps, isLoading } = useQuery<ApplicationListItem[]>({
+  const { data: apps, isLoading, isError } = useQuery<ApplicationListItem[]>({
     queryKey: ["applications"],
     queryFn: getApplications,
     refetchInterval: 5000,
@@ -117,13 +118,25 @@ export default function DashboardPage() {
           <p className="eyebrow mb-1.5">Giám sát pipeline · thời gian thực</p>
           <h1 className="text-[28px] sm:text-[38px]">Bảng điều hành</h1>
         </div>
-        <p className="flex items-center gap-2.5 text-[13px] text-ink/55">
+        <p className="flex items-center gap-2.5 text-[13px] text-ink/65">
           <span className="h-2 w-2 flex-none rounded-full bg-accent motion-safe:animate-pulse-dot" aria-hidden />
           Cập nhật trực tiếp · mỗi 5 giây
         </p>
       </div>
 
       <hr className="my-4 h-0.5 border-0 bg-divider" />
+
+      {/* Không đọc được danh sách hồ sơ → mọi chỉ số dưới đây là 0 GIẢ (query lỗi trả mảng rỗng).
+          Nói thẳng thay vì để HR đọc "Chờ HR duyệt: 0" tưởng hàng đợi trống (comment đầu file cam
+          kết "MỌI con số dẫn xuất từ dữ liệu THẬT" — hiện 0 khi chưa đọc được là vi phạm cam kết đó). */}
+      {isError && (
+        <p
+          role="alert"
+          className="mb-4 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+        >
+          Không tải được danh sách hồ sơ — các chỉ số bên dưới có thể chưa đúng. Đang thử lại tự động…
+        </p>
+      )}
 
       {/* Bốn chỉ số chính */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -145,7 +158,7 @@ export default function DashboardPage() {
       {/* Pipeline đa tác tử */}
       <div className="mt-8 flex items-center justify-between gap-4">
         <h2 className="text-[22px]">Pipeline đa tác tử</h2>
-        <p className="text-[13px] text-ink/55">Luồng cố định · không Supervisor</p>
+        <p className="text-[13px] text-ink/65">Luồng cố định · không Supervisor</p>
       </div>
       <div className="mt-4 rounded-xl border-2 border-divider bg-surface p-4 pb-4 sm:p-6">
         <div className="flex flex-col items-stretch gap-3 md:flex-row md:gap-0">
@@ -161,7 +174,7 @@ export default function DashboardPage() {
                     <span className="font-heading text-[13px] font-bold">{n.label}</span>
                   </div>
                   <p className="font-heading text-[30px] font-bold leading-none">{count}</p>
-                  <p className="text-xs leading-snug text-ink/55">{n.caption}</p>
+                  <p className="text-xs leading-snug text-ink/65">{n.caption}</p>
                 </div>
                 {i < NODES.length - 1 && (
                   <div className="hidden w-[34px] flex-none items-center justify-center text-ink/40 md:flex" aria-hidden>
@@ -192,7 +205,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-3 rounded-lg border-2 border-divider bg-canvas px-4 py-3 lg:w-[200px] lg:flex-none">
             <div className="flex-1">
               <p className="font-heading text-sm font-bold">Kết thúc</p>
-              <p className="text-xs text-ink/55">hẹn PV / từ chối</p>
+              <p className="text-xs text-ink/65">hẹn PV / từ chối</p>
             </div>
             <p className="font-heading text-[26px] font-bold leading-none">{cDone}</p>
           </div>
@@ -209,9 +222,15 @@ export default function DashboardPage() {
             </Link>
           </div>
           <div className="mt-3 overflow-hidden rounded-xl border-2 border-divider">
-            {isLoading && <p className="px-4 py-6 text-sm text-ink/50">Đang tải…</p>}
-            {!isLoading && inflight.length === 0 && (
-              <p className="px-4 py-8 text-center text-sm text-ink/50">
+            {isLoading && <p className="px-4 py-6 text-sm text-ink/65">Đang tải…</p>}
+            {isError && (
+              <p className="px-4 py-8 text-center text-sm text-red-700">
+                Không tải được danh sách. Đang thử lại…
+              </p>
+            )}
+            {/* KHÔNG khẳng định "không có hồ sơ nào đang chạy" khi query đang lỗi (chưa đọc được) */}
+            {!isLoading && !isError && inflight.length === 0 && (
+              <p className="px-4 py-8 text-center text-sm text-ink/65">
                 Không có hồ sơ nào đang chạy. CV mới nộp sẽ hiện ở đây.
               </p>
             )}
@@ -226,13 +245,13 @@ export default function DashboardPage() {
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold">{a.applicant_email}</span>
-                  <span className="block truncate text-xs text-ink/50">
+                  <span className="block truncate text-xs text-ink/65">
                     {a.job_id ? (jobTitle.get(a.job_id) ?? `JD #${a.job_id}`) : "Không gắn JD"}
                   </span>
                 </span>
                 <span className="flex flex-none items-center gap-2">
                   <span className="h-[7px] w-[7px] rounded-full bg-accent motion-safe:animate-pulse-dot" aria-hidden />
-                  <span className="hidden text-[13px] text-ink/60 sm:inline">
+                  <span className="hidden text-[13px] text-ink/65 sm:inline">
                     {STATUS_LABEL[a.status] ?? a.status}
                   </span>
                 </span>
@@ -246,7 +265,7 @@ export default function DashboardPage() {
 
           <div>
             <div className="rounded-xl border-2 border-divider bg-canvas p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-ink/55">
+              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-ink/65">
                 Hai gate cấu hình
               </p>
               <div className="mt-3 flex items-center justify-between">

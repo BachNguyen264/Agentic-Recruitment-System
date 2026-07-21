@@ -14,7 +14,7 @@ const STATE_STYLE: Record<NodeState, { ring: string; dot: string; text: string }
   active: { ring: "border-accent bg-accent", dot: "text-white", text: "đang chạy" },
   failed: { ring: "border-red-500 bg-red-500", dot: "text-white", text: "lỗi" },
   waiting: { ring: "border-accent bg-canvas", dot: "text-accent", text: "đang chờ" },
-  skipped: { ring: "border-divider bg-steel-200", dot: "text-ink/50", text: "bỏ qua" },
+  skipped: { ring: "border-divider bg-steel-200", dot: "text-ink/65", text: "bỏ qua" },
   pending: { ring: "border-divider bg-canvas", dot: "text-ink/30", text: "chưa chạy" },
 };
 
@@ -105,7 +105,18 @@ function deriveNodes(app: ApplicationDetail) {
         : "Đã gửi câu hỏi qua email — đang chờ ứng viên trả lời.";
   } else if (pastRanker && (decided || s === "PENDING_REVIEW")) {
     screener = "skipped";
-    screenerNote = "JD không có câu hỏi sàng lọc → pipeline bỏ qua bước này.";
+    // KHÔNG khẳng định mù "JD không có câu hỏi": hồ sơ DƯỚI NGƯỠNG bị route_after_ranker đưa thẳng
+    // sang human_review/auto-reject, KHÔNG BAO GIỜ tới screener — nói "bỏ qua vì JD không có câu hỏi"
+    // là sai sự thật. recommendation (dẫn xuất từ điểm) phân biệt được: "consider_reject" ⟺ dưới
+    // ngưỡng và không cờ; "invite" ⟺ đạt ngưỡng (tới đây tức JD không câu hỏi vì ca có câu hỏi đã
+    // rẽ nhánh answers/AWAITING ở trên).
+    if (app.recommendation === "consider_reject") {
+      screenerNote = "Điểm dưới ngưỡng đạt → pipeline chuyển thẳng HR, không tới bước sàng lọc.";
+    } else if (app.recommendation === "invite") {
+      screenerNote = "Đạt ngưỡng nhưng JD không có câu hỏi sàng lọc → pipeline bỏ qua bước này.";
+    } else {
+      screenerNote = "Pipeline không đi qua bước sàng lọc ở hồ sơ này.";
+    }
   } else if (s === "SCREENING") {
     screener = "active";
     screenerNote = "Đang khởi tạo vòng sàng lọc.";
@@ -141,7 +152,7 @@ export function AgentTrace({ app }: { app: ApplicationDetail }) {
     <section className="rounded-xl border-2 border-divider bg-surface p-5">
       <div className="flex flex-wrap items-center justify-between gap-2.5">
         <h2 className="text-[20px]">Agent trace</h2>
-        <span className="text-xs text-ink/50">parser → ranker → screener → scheduler</span>
+        <span className="text-xs text-ink/65">parser → ranker → screener → scheduler</span>
       </div>
 
       <ol className="mt-4">
@@ -161,7 +172,7 @@ export function AgentTrace({ app }: { app: ApplicationDetail }) {
               <div className={`min-w-0 flex-1 ${last ? "" : "pb-4"}`}>
                 <div className="flex flex-wrap items-baseline gap-2">
                   <span className="font-heading text-[15px] font-bold">{n.label}</span>
-                  <span className="text-xs text-ink/55">{st.text}</span>
+                  <span className="text-xs text-ink/65">{st.text}</span>
                   {n.key === "ranker" && app.confidence != null && n.state === "done" && (
                     <span className="text-xs font-semibold text-accent">
                       confidence {app.confidence.toFixed(2)}
@@ -197,7 +208,7 @@ export function AgentTrace({ app }: { app: ApplicationDetail }) {
         </div>
       )}
 
-      <p className="mt-3 border-t border-divider pt-2.5 text-xs text-ink/45">
+      <p className="mt-3 border-t border-divider pt-2.5 text-xs text-ink/65">
         Trạng thái từng node suy ra từ dữ liệu hồ sơ. Mốc thời gian + tool-call chi tiết nằm trong
         audit_log (chưa mở qua API).
       </p>

@@ -8,11 +8,17 @@ import { getOpenJobs } from "@/lib/api";
 import { employmentTypeLabel, formatSalary, htmlToPlainText, levelLabel } from "@/lib/jobs";
 
 export default function ApplyListPage() {
-  // KHÔNG refetchInterval / refetchOnWindowFocus: đường công khai có rate-limit theo IP. Ứng viên
-  // chuyển qua lại giữa các tab sẽ đốt sạch quota rồi POST hồ sơ bị 429 — mất bài dự tuyển.
+  // Khoá refetch trên đường công khai (rate-limit theo IP): tải MỘT lần rồi thôi. Trước đây comment
+  // nói "KHÔNG refetchOnWindowFocus" nhưng object KHÔNG hề tắt — refetchOnWindowFocus/OnMount/
+  // OnReconnect mặc định BẬT (QueryClient trần). Ứng viên chuyển tab qua lại đốt quota rồi POST hồ
+  // sơ bị 429 → mất bài dự tuyển. Nay tắt tường minh cả bốn.
   const { data, isLoading, isError } = useQuery<PublicJob[]>({
     queryKey: ["public-jobs"],
     queryFn: getOpenJobs,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
   });
 
   const jobs = data ?? [];
@@ -20,12 +26,12 @@ export default function ApplyListPage() {
   return (
     <main>
       <h1 className="text-[30px] sm:text-[36px]">Vị trí đang tuyển</h1>
-      <p className="mt-2 max-w-[60ch] text-[14px] leading-relaxed text-ink/60">
+      <p className="mt-2 max-w-[60ch] text-[14px] leading-relaxed text-ink/65">
         Chọn một vị trí để xem chi tiết và nộp hồ sơ. Chỉ cần email và CV (PDF/DOCX) — không cần tạo
         tài khoản.
       </p>
 
-      {isLoading && <p className="mt-5 text-[13px] text-ink/50">Đang tải vị trí…</p>}
+      {isLoading && <p className="mt-5 text-[13px] text-ink/65">Đang tải vị trí…</p>}
       {isError && (
         <p
           role="alert"
@@ -62,7 +68,7 @@ export default function ApplyListPage() {
                   <span className="font-heading text-[18px] font-bold sm:text-[19px]">
                     {job.title}
                   </span>
-                  {meta && <span className="text-[13px] text-ink/50">{meta}</span>}
+                  {meta && <span className="text-[13px] text-ink/65">{meta}</span>}
                 </div>
 
                 {summary && (
