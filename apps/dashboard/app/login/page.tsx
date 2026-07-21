@@ -1,14 +1,16 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { Logo } from "@/components/Logo";
+import { btn, Field, inputClass } from "@/components/ui";
 import { login } from "@/lib/api";
 
-// Trang đăng nhập HR (slice 09, PRD §4). CÔNG KHAI (ngoài nhóm (hr)) — không bị guard. Đăng nhập
-// thành công → về ?next (mặc định /). Lỗi → message CHUNG từ backend (không lộ email tồn tại).
+// Trang đăng nhập HR (slice 09, PRD §4). CÔNG KHAI (ngoài nhóm (hr)) — không bị guard.
+// MỘT vai HR-admin duy nhất: KHÔNG đăng ký, KHÔNG quên mật khẩu, KHÔNG OAuth (đừng thêm link nào
+// như vậy). Lỗi đăng nhập dùng message CHUNG từ backend — không lộ email nào tồn tại.
 function LoginForm() {
-  const router = useRouter();
   const params = useSearchParams();
   const next = params.get("next") || "/";
   const [email, setEmail] = useState("");
@@ -17,62 +19,61 @@ function LoginForm() {
   const mutation = useMutation({
     mutationFn: () => login(email.trim(), password),
     onSuccess: () => {
-      // next chỉ nhận đường dẫn nội bộ (chống open-redirect: phải bắt đầu bằng "/" và không "//").
+      // next CHỈ nhận đường dẫn nội bộ (chống open-redirect: phải bắt đầu "/" và không "//").
       const safe = next.startsWith("/") && !next.startsWith("//") ? next : "/";
-      // replace + full nav để layout (hr) chạy lại getMe với cookie mới.
+      // replace + điều hướng đầy đủ để layout (hr) chạy lại getMe với cookie mới.
       window.location.replace(safe);
     },
   });
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-6">
-      <div className="space-y-6">
-        <header className="space-y-1">
-          <h1 className="text-2xl font-bold text-slate-900">Đăng nhập HR</h1>
-          <p className="text-sm text-slate-500">
-            Khu vực quản trị tuyển dụng. Chỉ dành cho HR — ứng viên nộp hồ sơ ở trang tuyển dụng công
-            khai.
-          </p>
-        </header>
+    <main className="flex min-h-screen items-center justify-center bg-canvas px-5 py-10">
+      <div className="w-full max-w-[360px]">
+        <Logo size={30} />
+
+        <h1 className="mt-6 text-[26px] sm:text-[30px]">Đăng nhập HR</h1>
+        <p className="mt-1.5 text-[13px] leading-relaxed text-ink/65">
+          Khu vực quản trị tuyển dụng. Ứng viên nộp hồ sơ ở cổng công khai — không cần tài khoản.
+        </p>
 
         <form
           onSubmit={(e) => {
             e.preventDefault();
             mutation.mutate();
           }}
-          className="space-y-4"
+          className="mt-5 flex flex-col gap-3.5"
         >
-          <div className="space-y-1">
-            <label htmlFor="email" className="text-sm font-medium text-slate-700">
-              Email
-            </label>
+          <Field label="Email" htmlFor="login-email">
             <input
-              id="email"
+              id="login-email"
               type="email"
               autoComplete="username"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+              disabled={mutation.isPending}
+              className={inputClass}
             />
-          </div>
-          <div className="space-y-1">
-            <label htmlFor="password" className="text-sm font-medium text-slate-700">
-              Mật khẩu
-            </label>
+          </Field>
+
+          <Field label="Mật khẩu" htmlFor="login-password">
             <input
-              id="password"
+              id="login-password"
               type="password"
               autoComplete="current-password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+              disabled={mutation.isPending}
+              className={inputClass}
             />
-          </div>
+          </Field>
 
           {mutation.isError && (
-            <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <p
+              role="alert"
+              className="rounded-xl border-2 border-red-200 bg-red-50 px-4 py-2.5 text-[13px] text-red-700"
+            >
               {String((mutation.error as Error)?.message) || "Đăng nhập thất bại."}
             </p>
           )}
@@ -80,7 +81,7 @@ function LoginForm() {
           <button
             type="submit"
             disabled={mutation.isPending}
-            className="w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-50"
+            className={btn("primary", "mt-1 w-full !py-2.5")}
           >
             {mutation.isPending ? "Đang đăng nhập…" : "Đăng nhập"}
           </button>
@@ -90,10 +91,12 @@ function LoginForm() {
   );
 }
 
-// useSearchParams cần Suspense boundary (Next 14 static export rule).
+// useSearchParams cần Suspense boundary (quy tắc Next 14).
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-slate-500">Đang tải…</div>}>
+    <Suspense
+      fallback={<div className="p-8 text-[13px] text-ink/65">Đang tải…</div>}
+    >
       <LoginForm />
     </Suspense>
   );

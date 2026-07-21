@@ -78,15 +78,6 @@ export function isValidRubric(rubric: RubricCriterion[]): boolean {
   return rubric.length > 0 && weightSum(rubric) > 0;
 }
 
-// Badge trạng thái JD — DRAFT nháp (JD-2a); OPEN đang nhận CV; CLOSED đã đóng; ARCHIVED lưu trữ (JD-4).
-export function jobStatusBadgeClass(status: string): string {
-  if (status === "OPEN") return "bg-green-100 text-green-800";
-  if (status === "CLOSED") return "bg-slate-200 text-slate-600";
-  if (status === "DRAFT") return "bg-amber-100 text-amber-800";
-  if (status === "ARCHIVED") return "bg-slate-100 text-slate-400";
-  return "bg-slate-100 text-slate-500";
-}
-
 export function jobStatusLabel(status: string): string {
   if (status === "OPEN") return "Đang mở";
   if (status === "CLOSED") return "Đã đóng";

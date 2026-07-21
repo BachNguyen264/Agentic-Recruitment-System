@@ -6,8 +6,9 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { JobPosting, RubricCriterion } from "@ars/shared-types";
 import { ScreeningConfigForm } from "@/components/ScreeningConfigForm";
+import { BackArrow, btn, Tag } from "@/components/ui";
 import { getJob, setJobStatus, suggestRubric, updateJob } from "@/lib/api";
-import { jobStatusBadgeClass, jobStatusLabel, toJobInput } from "@/lib/jobs";
+import { jobStatusLabel, toJobInput } from "@/lib/jobs";
 
 type ConfigPayload = { rubric: RubricCriterion[]; questions: string[] };
 
@@ -63,49 +64,57 @@ export default function ScreeningConfigPage({ params }: { params: { id: string }
   });
 
   return (
-    <main className="mx-auto max-w-2xl space-y-6 p-8">
-      <header className="space-y-1">
-        <Link href="/jobs" className="text-sm text-slate-500 hover:underline">
-          ← Danh sách JD
+    <main className="mx-auto max-w-[720px] space-y-5 px-4 pb-8 pt-5 sm:px-8">
+      <div>
+        <Link href="/jobs" className={btn("ghost", "mb-3 !pl-0")}>
+          <BackArrow /> Danh sách JD
         </Link>
-        <h1 className="text-2xl font-bold">Cấu hình sàng lọc</h1>
-        <p className="text-sm text-slate-500">
-          Bước 2/2: rubric (bắt buộc để MỞ JD) + câu hỏi sàng lọc (tùy chọn). Chỉ HR thấy — KHÔNG lộ cho
-          ứng viên.
+        <p className="eyebrow mb-1.5">Bước 2/2 · Cấu hình sàng lọc</p>
+        <h1 className="text-[26px] sm:text-[30px]">Cấu hình sàng lọc</h1>
+        <p className="mt-2 max-w-[66ch] text-[13px] leading-relaxed text-ink/65">
+          Rubric (bắt buộc để MỞ JD) + câu hỏi sàng lọc (tùy chọn). Chỉ HR thấy — không lộ cho ứng
+          viên.
         </p>
-      </header>
+      </div>
 
-      {isLoading && <p className="text-sm text-slate-500">Đang tải JD…</p>}
+      {isLoading && <p className="text-sm text-ink/65">Đang tải JD…</p>}
       {isError && (
-        <p className="text-sm text-red-600">
+        <p className="rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
           Không tải được JD ({String((error as Error)?.message)}).
         </p>
       )}
 
       {job && (
         <>
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 bg-white px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-divider bg-canvas px-4 py-3">
             <div className="min-w-0">
-              <p className="truncate font-medium text-slate-900">{job.title}</p>
-              <p className="text-xs text-slate-400">JD #{job.id}</p>
+              <p className="truncate font-heading text-[15px] font-bold">{job.title}</p>
+              <p className="text-xs text-ink/65">JD #{job.id}</p>
             </div>
-            <div className="flex items-center gap-2">
-              <span
-                className={`rounded px-2 py-0.5 text-xs font-medium ${jobStatusBadgeClass(job.status)}`}
-              >
+            <div className="flex items-center gap-3">
+              <Tag tone={job.status === "OPEN" ? "ok" : job.status === "DRAFT" ? "warn" : "neutral"}>
                 {jobStatusLabel(job.status)}
-              </span>
-              <Link
-                href={`/jobs/${job.id}/edit`}
-                className="text-sm font-medium text-slate-600 hover:text-slate-900 hover:underline"
-              >
+              </Tag>
+              <Link href={`/jobs/${job.id}/edit`} className={btn("ghost")}>
                 ← Sửa tin
               </Link>
             </div>
           </div>
 
           {savedMsg && (
-            <p className="rounded-md border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-700">
+            <p className="flex items-center gap-2 rounded-xl border-2 border-ink bg-surface px-4 py-2.5 text-[13px]">
+              <svg
+                viewBox="0 0 24 24"
+                className="h-4 w-4 flex-none"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2.4}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
               {savedMsg}
             </p>
           )}

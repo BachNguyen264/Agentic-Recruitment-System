@@ -4,12 +4,20 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ApplicationDetail, JobPosting } from "@ars/shared-types";
+import { AgentTrace } from "@/components/AgentTrace";
 import { ParsedCVResult } from "@/components/ParsedCVResult";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { ScreenerAnswers } from "@/components/ScreenerAnswers";
 import { SafeHtml } from "@/components/SafeHtml";
+import { BackArrow, btn, Tag } from "@/components/ui";
 import { downloadCv, getApplication, getJob } from "@/lib/api";
-import { statusBadgeClass, statusLabel, toBreakdown } from "@/lib/applications";
+import { statusLabel, statusTone, toBreakdown } from "@/lib/applications";
+
+function initialsOf(email: string): string {
+  const name = email.split("@")[0] ?? "";
+  const parts = name.split(/[._-]+/).filter(Boolean);
+  return ((parts.length >= 2 ? parts[0][0] + parts[1][0] : name.slice(0, 2)) || "??").toUpperCase();
+}
 
 export default function ApplicationDetailPage() {
   const params = useParams<{ id: string }>();
@@ -32,102 +40,146 @@ export default function ApplicationDetailPage() {
   });
 
   return (
-    <main className="mx-auto max-w-4xl space-y-6 p-8">
-      <Link href="/applications" className="text-sm text-slate-500 hover:underline">
-        ← Về danh sách ứng viên
+    <div className="mx-auto max-w-[1120px] px-4 pb-8 pt-5 sm:px-8">
+      <Link href="/applications" className={btn("ghost", "mb-3 !pl-0")}>
+        <BackArrow /> Về danh sách ứng viên
       </Link>
 
-      {appQuery.isLoading && <p className="text-sm text-slate-500">Đang tải chi tiết…</p>}
+      {appQuery.isLoading && <p className="text-sm text-ink/65">Đang tải chi tiết…</p>}
       {appQuery.isError && (
-        <p className="text-sm text-red-600">
-          Không tải được ứng viên #{params.id} (
-          {String((appQuery.error as Error)?.message)}). Ứng viên có tồn tại không?
+        <p className="rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+          Không tải được ứng viên #{params.id} ({String((appQuery.error as Error)?.message)}). Ứng
+          viên có tồn tại không?
         </p>
       )}
 
       {app && (
         <>
-          <header className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="mr-1 text-2xl font-bold">{app.applicant_email}</h1>
-              <span
-                className={`rounded px-2 py-0.5 text-sm font-medium ${statusBadgeClass(app.status)}`}
-              >
-                {statusLabel(app.status)}
-              </span>
+          <div className="flex flex-wrap items-start gap-4">
+            <span className="flex h-14 w-14 flex-none items-center justify-center rounded-xl bg-ink font-heading text-xl font-bold text-canvas">
+              {initialsOf(app.applicant_email)}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="text-[26px] sm:text-[30px]">{app.applicant_email.split("@")[0]}</h1>
+                <Tag tone={statusTone(app.status)}>{statusLabel(app.status)}</Tag>
+              </div>
+              <p className="mt-1 text-[13px] text-ink/65">
+                {app.applicant_email}
+                {jobQuery.data ? (
+                  <>
+                    {" · "}Ứng tuyển:{" "}
+                    <span className="font-semibold text-ink">{jobQuery.data.title}</span>
+                  </>
+                ) : app.job_id != null ? (
+                  <> · JD #{app.job_id}</>
+                ) : (
+                  <> · Chưa gắn JD</>
+                )}
+              </p>
             </div>
-            <p className="text-sm text-slate-500">
-              {jobQuery.data ? (
-                <>
-                  Ứng tuyển: <span className="font-medium text-slate-700">{jobQuery.data.title}</span>{" "}
-                  (JD #{app.job_id})
-                </>
-              ) : app.job_id != null ? (
-                <>JD #{app.job_id}</>
-              ) : (
-                <>Chưa gắn JD</>
-              )}
-            </p>
 
-            {/* Tải CV gốc (slice 06): file stream qua backend có kiểm đăng nhập — KHÔNG public URL. */}
+            {/* Tải CV gốc (slice 06): stream qua backend có kiểm đăng nhập — KHÔNG public URL. */}
             {app.has_cv && (
-              <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div className="flex flex-none flex-col items-end gap-1">
                 <button
                   type="button"
                   onClick={() => cvDownload.mutate()}
                   disabled={cvDownload.isPending}
-                  className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-50"
+                  className={btn("secondary")}
                 >
-                  {cvDownload.isPending ? "Đang tải…" : "⬇ Tải CV gốc"}
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-[15px] w-[15px]"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" x2="12" y1="15" y2="3" />
+                  </svg>
+                  {cvDownload.isPending ? "Đang tải…" : "Tải CV gốc"}
                 </button>
                 {cvDownload.isError && (
-                  <span role="alert" className="text-sm text-red-600">
+                  <span role="alert" className="text-xs text-red-600">
                     {String((cvDownload.error as Error)?.message) || "Không tải được CV."}
                   </span>
                 )}
               </div>
             )}
-          </header>
+          </div>
 
-          {/* Lý do cần HR xem xét (PRD §11) — chỉ báo HÀNH ĐỘNG: CHỈ hiện khi còn chờ quyết
-              (PENDING_REVIEW). Hồ sơ đã quyết chỉ xem trạng thái cuối, không nhắc "cần xem xét" (BUG B). */}
+          {/* Lý do cần HR xem xét (PRD §11) — chỉ báo HÀNH ĐỘNG: CHỈ hiện khi còn chờ quyết. */}
           {app.status === "PENDING_REVIEW" && app.escalation_reason?.trim() && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              <p className="font-medium">Cần HR xem xét</p>
-              <p className="mt-1 text-amber-800">{app.escalation_reason}</p>
+            <div className="mt-4 rounded-xl border-2 border-accent bg-accent-100 px-4 py-3">
+              <p className="flex items-center gap-2 font-heading text-[13px] font-bold text-accent-800">
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2.2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                  <path d="M12 9v4" />
+                  <path d="M12 17h.01" />
+                </svg>
+                Cần HR xem xét
+              </p>
+              <p className="mt-1.5 text-[13px] text-accent-800">{app.escalation_reason}</p>
             </div>
           )}
 
-          {/* Điểm đối sánh + từng tiêu chí (tái dùng ở ReviewCard). Cờ "cần chú ý" chỉ hiện khi
-              còn chờ quyết — hồ sơ đã quyết xem điểm sạch, không badge cờ (BUG B). */}
-          <ScoreBreakdown breakdown={toBreakdown(app)} showFlags={app.status === "PENDING_REVIEW"} />
+          <div className="mt-5 grid items-start gap-6 lg:grid-cols-[1.55fr_1fr]">
+            {/* TRÁI: trace + điểm + câu trả lời sàng lọc */}
+            <div className="flex min-w-0 flex-col gap-5">
+              <AgentTrace app={app} />
 
-          {/* Câu trả lời sàng lọc (screener, 08b) — nếu ứng viên đã trả lời form magic-link */}
-          <ScreenerAnswers answers={app.screener_answers} />
-
-
-          {/* Ngữ cảnh JD: yêu cầu chính, để HR biết ứng viên được chấm dựa trên gì. JD-1: yêu cầu là
-              văn bản định dạng → render qua SafeHtml (sanitize + khôi phục bullet). */}
-          {jobQuery.data && jobQuery.data.requirements.trim() && (
-            <section className="space-y-2">
-              <h2 className="text-lg font-semibold">Yêu cầu JD</h2>
-              <SafeHtml
-                html={jobQuery.data.requirements}
-                className="rte-content rounded-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
+              {/* Cờ "cần chú ý" chỉ hiện khi còn chờ quyết — hồ sơ đã quyết xem điểm sạch. */}
+              <ScoreBreakdown
+                breakdown={toBreakdown(app)}
+                showFlags={app.status === "PENDING_REVIEW"}
               />
-            </section>
-          )}
 
-          {/* Dữ liệu bóc tách (tái dùng ParsedCVResult; ẩn badge confidence — ScoreBreakdown đã lo) */}
-          <ParsedCVResult
-            parsed_data={app.parsed_data}
-            confidence={app.confidence ?? 1}
-            uncertainty_flags={app.uncertainty_flags.filter((f) => f === "parse_failed")}
-            escalation_reason={app.escalation_reason}
-            showConfidence={false}
-          />
+              <ScreenerAnswers answers={app.screener_answers} />
+            </div>
+
+            {/* PHẢI: dữ liệu bóc tách + yêu cầu JD */}
+            <div className="flex min-w-0 flex-col gap-4">
+              <div className="rounded-xl border-2 border-divider bg-canvas p-4">
+                <ParsedCVResult
+                  parsed_data={app.parsed_data}
+                  confidence={app.confidence ?? 1}
+                  uncertainty_flags={app.uncertainty_flags.filter((f) => f === "parse_failed")}
+                  escalation_reason={app.escalation_reason}
+                  showConfidence={false}
+                />
+              </div>
+
+              {/* Ngữ cảnh JD: HR biết ứng viên được chấm dựa trên gì. JD-1: yêu cầu là văn bản
+                  định dạng → render qua SafeHtml (sanitize + khôi phục bullet). */}
+              {jobQuery.data && jobQuery.data.requirements.trim() && (
+                <section className="rounded-xl border-2 border-divider bg-canvas p-4">
+                  <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-ink/65">
+                    Yêu cầu JD
+                  </h2>
+                  <SafeHtml
+                    html={jobQuery.data.requirements}
+                    className="rte-content text-[13px] leading-relaxed text-ink/80"
+                  />
+                </section>
+              )}
+            </div>
+          </div>
         </>
       )}
-    </main>
+    </div>
   );
 }

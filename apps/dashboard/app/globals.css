@@ -2,6 +2,72 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Nền tảng UI redesign (hệ "Marine") ────────────────────────────────────
+   Token màu/chữ khai báo ở tailwind.config.ts; đây là lớp base + tiện ích dùng lại. */
+@layer base {
+  body {
+    @apply bg-canvas font-sans text-ink antialiased;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-heading font-bold;
+    letter-spacing: -0.025em;
+    line-height: 1.15;
+  }
+  /* Ổ khóa bàn phím: viền nhấn rõ trên mọi nền (a11y). */
+  :focus-visible {
+    outline: 2px solid #1f6feb;
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: rgba(31, 111, 235, 0.24);
+  }
+}
+
+@layer components {
+  /* Nhãn "eyebrow" phía trên tiêu đề trang — chữ nhỏ, giãn ký tự, màu nhấn. */
+  .eyebrow {
+    @apply text-xs font-semibold uppercase tracking-[0.14em] text-accent;
+  }
+  /* Panel phẳng viền 2px — ngôn ngữ chủ đạo của thiết kế (không dùng đổ bóng). */
+  .panel {
+    @apply rounded-xl border-2 border-divider bg-surface;
+  }
+  .panel-plain {
+    @apply rounded-xl border-2 border-divider bg-canvas;
+  }
+}
+
+/* Thanh cuộn mảnh cho vùng nội dung dài (khớp thiết kế). */
+.ars-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.ars-scroll::-webkit-scrollbar-thumb {
+  background: #d3dde9;
+  border-radius: 6px;
+}
+.ars-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Tôn trọng "giảm chuyển động" — tắt mọi animation/transition. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* JD-1: nội dung văn bản định dạng — dùng chung editor Tiptap (HR) + render /apply (ứng viên).
    Tailwind preflight reset list-style → khôi phục bullet/số + khoảng cách cho rich-text. */
 .rte-content ul { list-style: disc; margin: 0.25rem 0; padding-left: 1.5rem; }

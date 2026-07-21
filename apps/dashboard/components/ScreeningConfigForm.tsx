@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { RubricCriterion, SuggestedCriterion } from "@ars/shared-types";
+import { btn } from "@/components/ui";
 import { isValidRubric, isWeightBalanced, WEIGHT_TARGET, weightSum } from "@/lib/jobs";
 
 // JD-2a màn 2 "Cấu hình sàng lọc" (trên JD ĐÃ LƯU): rubric (tiêu chí + trọng số) + câu hỏi sàng lọc.
@@ -9,8 +10,8 @@ import { isValidRubric, isWeightBalanced, WEIGHT_TARGET, weightSum } from "@/lib
 // chưa hợp lệ (≥1 tiêu chí, tổng trọng số > 0 — khớp backend). "Lưu cấu hình" chỉ lưu, không mở.
 
 const INPUT =
-  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500";
-const LABEL = "block text-sm font-medium text-slate-700";
+  "w-full min-h-9 rounded-lg border-2 border-ink/55 bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink/55 hover:border-ink/70 focus-visible:border-accent focus-visible:outline-none";
+const LABEL = "mb-1.5 block text-xs font-semibold text-ink/70";
 
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
@@ -43,7 +44,7 @@ function StringList({
             type="button"
             onClick={() => onChange(items.filter((_, j) => j !== i))}
             aria-label="Xóa dòng"
-            className="shrink-0 rounded-md border border-slate-200 px-2.5 py-2 text-sm text-slate-500 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+            className="shrink-0 rounded-lg border border-divider px-2.5 py-2 text-sm text-ink/65 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             ✕
           </button>
@@ -52,7 +53,7 @@ function StringList({
       <button
         type="button"
         onClick={() => onChange([...items, ""])}
-        className="text-sm font-medium text-slate-600 hover:text-slate-900"
+        className="text-sm font-medium text-ink/65 hover:text-ink"
       >
         + {addLabel}
       </button>
@@ -137,7 +138,7 @@ export function ScreeningConfigForm({
   return (
     <div className="space-y-6">
       {errorMsg && (
-        <p className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
           {errorMsg}
         </p>
       )}
@@ -148,14 +149,14 @@ export function ScreeningConfigForm({
           <label className={LABEL}>
             Rubric chấm điểm (HR tự nhập) <span className="text-red-500">*</span>
           </label>
-          <span className={`text-xs ${balanced ? "text-slate-400" : "text-amber-600"}`}>
+          <span className={`text-xs ${balanced ? "text-ink/65" : "text-amber-600"}`}>
             Tổng trọng số: <span className="font-semibold">{sum.toFixed(2)}</span>
             {!balanced && ` (nên ≈ ${WEIGHT_TARGET.toFixed(1)})`}
           </span>
         </div>
 
         {/* JD-3: AI gợi ý rubric — điền sẵn tiêu chí+trọng số từ JD để HR CHỈNH (không tự áp). */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-indigo-100 bg-indigo-50/60 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-3.5 rounded-xl border-2 border-accent bg-accent-100 px-4 py-3">
           <button
             type="button"
             onClick={handleSuggest}
@@ -165,18 +166,30 @@ export function ScreeningConfigForm({
                 ? "AI đọc JD (tiêu đề/mô tả/yêu cầu) → đề xuất tiêu chí + trọng số để bạn chỉnh"
                 : "Đã hết lượt gợi ý — sửa nội dung JD rồi lưu để đặt lại"
             }
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50"
+            className={btn("primary", "flex-none")}
           >
-            {suggesting ? "Đang gợi ý…" : "✨ AI gợi ý rubric"}
+            <svg
+              viewBox="0 0 24 24"
+              className="h-[15px] w-[15px]"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+            </svg>
+            {suggesting ? "Đang gợi ý…" : "AI gợi ý rubric"}
           </button>
-          <span className="text-xs text-slate-500">
+          <span className="min-w-[180px] flex-1 text-[13px] leading-snug text-accent-800">
             {suggestionsRemaining > 0
-              ? `Còn ${suggestionsRemaining} lượt. AI đề xuất — bạn chỉnh trước khi lưu.`
-              : "Hết lượt gợi ý cho JD này (sửa nội dung JD để đặt lại)."}
+              ? `Còn ${suggestionsRemaining} lượt gợi ý cho JD này. AI đề xuất — bạn chỉnh trước khi lưu.`
+              : "Hết lượt gợi ý cho JD này. Sửa nội dung JD (tiêu đề/mô tả/yêu cầu) rồi lưu để đặt lại."}
           </span>
         </div>
         {suggestErr && (
-          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
             {suggestErr}
           </p>
         )}
@@ -199,13 +212,13 @@ export function ScreeningConfigForm({
                 value={c.weight}
                 aria-label={`Trọng số tiêu chí ${i + 1}`}
                 onChange={(e) => setCrit(i, { weight: clamp01(parseFloat(e.target.value)) })}
-                className="w-24 shrink-0 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+                className="w-24 shrink-0 rounded-lg border border-divider px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               />
               <button
                 type="button"
                 onClick={() => setRubric(rubric.filter((_, j) => j !== i))}
                 aria-label="Xóa tiêu chí"
-                className="shrink-0 rounded-md border border-slate-200 px-2.5 py-2 text-sm text-slate-500 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+                className="shrink-0 rounded-lg border border-divider px-2.5 py-2 text-sm text-ink/65 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               >
                 ✕
               </button>
@@ -214,12 +227,12 @@ export function ScreeningConfigForm({
           <button
             type="button"
             onClick={() => setRubric([...rubric, { criterion: "", weight: 0 }])}
-            className="text-sm font-medium text-slate-600 hover:text-slate-900"
+            className="text-sm font-medium text-ink/65 hover:text-ink"
           >
             + Thêm tiêu chí
           </button>
         </div>
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-ink/65">
           Cần ≥1 tiêu chí + tổng trọng số &gt; 0 để MỞ JD. Tổng nên ≈ 1.0 (ranker tự chuẩn hóa).
         </p>
       </div>
@@ -233,15 +246,15 @@ export function ScreeningConfigForm({
           placeholder="vd: Mức lương kỳ vọng?"
           addLabel="Thêm câu hỏi"
         />
-        <p className="text-xs text-slate-400">Dùng cho vòng Screener (PRD §10).</p>
+        <p className="text-xs text-ink/65">Dùng cho vòng Screener (PRD §10).</p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-4">
+      <div className="flex flex-wrap items-center gap-3 border-t border-divider pt-4">
         <button
           type="button"
           onClick={() => onSave(cleanRubric, cleanQuestions)}
           disabled={busy}
-          className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-50"
+          className="rounded-lg border border-divider px-4 py-2 text-sm font-medium text-ink/80 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
         >
           {saving ? "Đang lưu…" : "Lưu cấu hình"}
         </button>
@@ -251,7 +264,7 @@ export function ScreeningConfigForm({
             onClick={() => onSaveAndOpen(cleanRubric, cleanQuestions)}
             disabled={busy || !rubricOk}
             title={rubricOk ? "Lưu cấu hình và mở JD để nhận CV" : "Cần ≥1 tiêu chí rubric (tổng trọng số > 0) để mở JD"}
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-50"
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
           >
             {opening ? "Đang mở…" : "Lưu & Mở JD"}
           </button>

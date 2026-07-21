@@ -11,8 +11,8 @@ import { EMPLOYMENT_TYPE_OPTIONS, LEVEL_OPTIONS } from "@/lib/jobs";
 // khi submit để không gửi item rỗng (JobPostingCreate validate criterion non-empty).
 
 const INPUT =
-  "w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500";
-const LABEL = "block text-sm font-medium text-slate-700";
+  "w-full min-h-9 rounded-lg border-2 border-ink/55 bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink/55 hover:border-ink/70 focus-visible:border-accent focus-visible:outline-none";
+const LABEL = "mb-1.5 block text-xs font-semibold text-ink/70";
 
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
@@ -94,12 +94,12 @@ export function JobForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {(localError || errorMsg) && (
-        <p className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
           {localError ?? errorMsg}
         </p>
       )}
       {warning && (
-        <p className="rounded-md border border-orange-200 bg-orange-50 px-4 py-2 text-sm text-orange-800">
+        <p className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-2 text-sm text-orange-800">
           {warning}
         </p>
       )}
@@ -160,16 +160,16 @@ export function JobForm({
       </div>
 
       {/* Lương */}
-      <fieldset className="space-y-3 rounded-md border border-slate-200 p-4">
-        <legend className="px-1 text-sm font-medium text-slate-700">Lương</legend>
+      <fieldset className="space-y-3 rounded-lg border border-divider p-4">
+        <legend className="px-1 text-sm font-medium text-ink/80">Lương</legend>
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
             checked={salary.negotiable}
             onChange={(e) => setSalary({ negotiable: e.target.checked })}
-            className="h-4 w-4 rounded border-slate-300"
+            className="h-4 w-4 rounded border-divider"
           />
-          <span className="text-sm text-slate-700">Thỏa thuận (không hiển thị mức lương cụ thể)</span>
+          <span className="text-sm text-ink/80">Thỏa thuận (không hiển thị mức lương cụ thể)</span>
         </label>
         {!salary.negotiable && (
           <div className="flex flex-wrap items-center gap-2">
@@ -180,9 +180,9 @@ export function JobForm({
               onChange={(e) => setSalary({ min: parseAmount(e.target.value) })}
               placeholder="Từ"
               aria-label="Lương tối thiểu"
-              className="w-40 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+              className="w-40 rounded-lg border border-divider px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             />
-            <span className="text-slate-400">–</span>
+            <span className="text-ink/65">–</span>
             <input
               type="number"
               min={0}
@@ -190,13 +190,13 @@ export function JobForm({
               onChange={(e) => setSalary({ max: parseAmount(e.target.value) })}
               placeholder="Đến"
               aria-label="Lương tối đa"
-              className="w-40 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+              className="w-40 rounded-lg border border-divider px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             />
             <select
               value={salary.currency}
               onChange={(e) => setSalary({ currency: e.target.value === "USD" ? "USD" : "VND" })}
               aria-label="Đơn vị tiền tệ"
-              className="w-24 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+              className="w-24 rounded-lg border border-divider px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
               <option value="VND">VND</option>
               <option value="USD">USD</option>
@@ -215,7 +215,7 @@ export function JobForm({
           onChange={(html) => set("description", html)}
           ariaLabel="Mô tả công việc"
         />
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-ink/65">
           Dán được cả khối; định dạng bằng thanh công cụ (đậm/nghiêng/gạch chân/danh sách).
         </p>
       </div>
@@ -228,7 +228,7 @@ export function JobForm({
           onChange={(html) => set("requirements", html)}
           ariaLabel="Yêu cầu ứng viên"
         />
-        <p className="text-xs text-slate-400">Dán cả danh sách yêu cầu; định dạng tùy ý.</p>
+        <p className="text-xs text-ink/65">Dán cả danh sách yêu cầu; định dạng tùy ý.</p>
       </div>
 
       {/* Quyền lợi (editor định dạng) */}
@@ -241,11 +241,11 @@ export function JobForm({
         />
       </div>
 
-      <div className="flex items-center gap-3 border-t border-slate-200 pt-4">
+      <div className="flex items-center gap-3 border-t border-divider pt-4">
         <button
           type="submit"
           disabled={submitting}
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:opacity-50"
+          className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
         >
           {submitting ? "Đang lưu…" : submitLabel}
         </button>

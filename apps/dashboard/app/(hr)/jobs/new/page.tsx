@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { JobPostingInput } from "@ars/shared-types";
 import { JobForm } from "@/components/JobForm";
+import { BackArrow, btn } from "@/components/ui";
 import { createJob } from "@/lib/api";
 import { emptyJobInput } from "@/lib/jobs";
 
@@ -26,15 +27,17 @@ export default function NewJobPage() {
   });
 
   return (
-    <main className="mx-auto max-w-2xl space-y-6 p-8">
-      <header className="space-y-1">
-        <Link href="/jobs" className="text-sm text-slate-500 hover:underline">
-          ← Danh sách JD
-        </Link>
-        <h1 className="text-2xl font-bold">Tin tuyển dụng mới</h1>
-        <p className="text-sm text-slate-500">
-          Bước 1/2: điền thông tin tin tuyển dụng (ứng viên thấy). Lưu xong JD ở dạng{" "}
-          <span className="font-medium text-amber-700">Nháp</span> → sang bước cấu hình rubric để mở JD.
+    <main className="mx-auto max-w-[720px] px-4 pb-8 pt-5 sm:px-8">
+      <Link href="/jobs" className={btn("ghost", "mb-3 !pl-0")}>
+        <BackArrow /> Danh sách JD
+      </Link>
+      <header className="mb-5">
+        <p className="eyebrow mb-1.5">Bước 1/2 · Tin tuyển dụng</p>
+        <h1 className="text-[26px] sm:text-[30px]">Tạo JD mới</h1>
+        <p className="mt-2 max-w-[66ch] text-[13px] leading-relaxed text-ink/65">
+          Thông tin ứng viên nhìn thấy ở cổng tuyển dụng. Lưu xong JD ở dạng{" "}
+          <strong className="font-semibold text-accent-800">Nháp</strong> → sang bước cấu hình rubric
+          để mở JD.
         </p>
       </header>
 

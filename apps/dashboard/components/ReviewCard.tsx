@@ -1,114 +1,169 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import type { ApplicationDetail, Recommendation } from "@ars/shared-types";
-import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { ScreenerAnswers } from "@/components/ScreenerAnswers";
-import { toBreakdown } from "@/lib/applications";
+import { btn, inputClass, Tag, type TagTone } from "@/components/ui";
 
 // THUẦN presentational: nhận callback onApprove/onReject, KHÔNG tự fetch/mutate (page lo useMutation).
 // `note` là state form cục bộ (thu ghi chú rồi đẩy lên callback) — không phá tính presentational.
 interface ReviewCardProps {
   app: ApplicationDetail;
+  jobTitle?: string;
   onApprove: (note: string) => void;
   onReject: (note: string) => void;
   submitting?: boolean;
 }
 
-const RECO: Record<Recommendation, { label: string; cls: string }> = {
-  invite: { label: "Đề xuất: Mời", cls: "bg-green-100 text-green-800" },
-  consider_reject: { label: "Đề xuất: Cân nhắc từ chối", cls: "bg-red-100 text-red-800" },
-  review_carefully: { label: "Đề xuất: Xem kỹ", cls: "bg-amber-100 text-amber-800" },
+const RECO: Record<Recommendation, { label: string; tone: TagTone }> = {
+  invite: { label: "Đề xuất: Mời", tone: "ok" },
+  consider_reject: { label: "Đề xuất: Cân nhắc từ chối", tone: "danger" },
+  review_carefully: { label: "Đề xuất: Xem kỹ", tone: "warn" },
 };
 
-export function ReviewCard({ app, onApprove, onReject, submitting = false }: ReviewCardProps) {
+export function ReviewCard({
+  app,
+  jobTitle,
+  onApprove,
+  onReject,
+  submitting = false,
+}: ReviewCardProps) {
   const [note, setNote] = useState("");
   const reco = RECO[app.recommendation];
   const skills = app.parsed_data?.skills ?? [];
   const topExp = app.parsed_data?.experiences?.[0];
+  const criteria = app.score_breakdown?.criteria ?? [];
+  const rankFailed = (app.uncertainty_flags ?? []).includes("rank_failed");
 
   return (
-    <article className="space-y-4 rounded-lg border border-slate-200 bg-white p-5">
-      {/* Header: tên + email + đề xuất hệ thống */}
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <article className="rounded-xl border-2 border-divider bg-surface p-5">
+      {/* Header: tên + email·vị trí + đề xuất hệ thống */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-lg font-semibold text-slate-900">
-            {app.parsed_data?.full_name?.trim() || app.applicant_email}
+          <h3 className="text-[19px]">
+            {app.parsed_data?.full_name?.trim() || app.applicant_email.split("@")[0]}
           </h3>
-          <p className="text-xs text-slate-400">
-            {app.applicant_email} · JD #{app.job_id ?? "—"}
+          <p className="mt-0.5 text-[13px] text-ink/65">
+            {app.applicant_email} · {jobTitle ?? (app.job_id ? `JD #${app.job_id}` : "Chưa gắn JD")}
           </p>
         </div>
-        {reco && (
-          <span className={`shrink-0 rounded px-2 py-0.5 text-sm font-medium ${reco.cls}`}>
-            {reco.label}
-          </span>
-        )}
+        {reco && <Tag tone={reco.tone}>{reco.label}</Tag>}
       </div>
 
       {/* Tóm tắt ứng viên: kỹ năng chính + kinh nghiệm nổi bật */}
-      {(skills.length > 0 || topExp) && (
-        <div className="space-y-1.5 text-sm">
-          {skills.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {skills.slice(0, 8).map((s, i) => (
-                <span key={`${s}-${i}`} className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">
-                  {s}
-                </span>
+      {skills.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {skills.slice(0, 8).map((s, i) => (
+            <Tag key={`${s}-${i}`} tone="neutral">
+              {s}
+            </Tag>
+          ))}
+        </div>
+      )}
+      {topExp && (
+        <p className="mt-2 text-[13px] text-ink/70">
+          {topExp.title?.trim() || "—"}
+          {topExp.company?.trim() ? ` · ${topExp.company}` : ""}
+          {topExp.duration?.trim() ? ` (${topExp.duration})` : ""}
+        </p>
+      )}
+
+      {/* Lý do vào review (escalation) — nổi bật, đây là thứ HR cần đọc trước khi quyết */}
+      {app.escalation_reason?.trim() && (
+        <p className="mt-3 rounded-r-lg border-l-[3px] border-accent bg-accent-100 px-3 py-2.5 text-[13px] text-accent-800">
+          <strong className="font-bold">Vì sao vào review: </strong>
+          {app.escalation_reason}
+        </p>
+      )}
+
+      {/* Câu trả lời sàng lọc (08b) — hiển thị khi ứng viên đã trả lời */}
+      {app.screener_answers.length > 0 && (
+        <div className="mt-3">
+          <ScreenerAnswers answers={app.screener_answers} />
+        </div>
+      )}
+
+      {/* Điểm rubric — bản GỌN cho hàng đợi (chi tiết đầy đủ ở trang chi tiết) */}
+      {rankFailed ? (
+        <p className="mt-3.5 rounded-lg border-2 border-accent bg-accent-100 px-4 py-3 text-[13px] font-semibold text-accent-800">
+          Chưa chấm được điểm — Ranker gặp lỗi, ca này cần HR xem xét thủ công.
+        </p>
+      ) : (
+        <>
+          <div className="mt-3.5 flex items-baseline gap-2.5">
+            <span className="font-heading text-[30px] font-bold leading-none">
+              {app.score != null ? app.score : "—"}
+            </span>
+            <span className="text-[13px] text-ink/65">/ 100 điểm rubric</span>
+          </div>
+          {criteria.length > 0 && (
+            <div className="mt-2.5 grid gap-x-4 gap-y-2 sm:grid-cols-2">
+              {criteria.map((c, i) => (
+                <div key={i}>
+                  <div className="flex justify-between gap-2 text-xs">
+                    <span className="truncate">{c.criterion?.trim() || "(không tên)"}</span>
+                    <span className="flex-none font-bold">{c.score}</span>
+                  </div>
+                  <div className="mt-1 h-1 rounded-full bg-steel-200">
+                    <div
+                      className="h-1 rounded-full bg-ink"
+                      style={{ width: `${Math.max(0, Math.min(100, c.score))}%` }}
+                    />
+                  </div>
+                </div>
               ))}
             </div>
           )}
-          {topExp && (
-            <p className="text-slate-600">
-              {topExp.title?.trim() || "—"}
-              {topExp.company?.trim() ? ` · ${topExp.company}` : ""}
-              {topExp.duration?.trim() ? ` (${topExp.duration})` : ""}
-            </p>
-          )}
-        </div>
+        </>
       )}
 
-      {/* Lý do vào review (escalation) — nổi bật */}
-      {app.escalation_reason?.trim() && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
-          <span className="font-medium">Vì sao vào review: </span>
-          {app.escalation_reason}
-        </div>
-      )}
-
-      {/* Câu trả lời sàng lọc (screener, 08b) — hiển thị cho HR khi ứng viên đã trả lời */}
-      <ScreenerAnswers answers={app.screener_answers} />
-
-      {/* Điểm từng tiêu chí (tái dùng ScoreBreakdown từ 03a) */}
-      <ScoreBreakdown breakdown={toBreakdown(app)} />
-
-      {/* Ghi chú + hành động */}
-      <div className="space-y-2 border-t border-slate-100 pt-3">
+      {/* Ghi chú + hành động. Nhãn nút NÊU RÕ hệ quả (đều gửi email thật cho ứng viên). */}
+      <div className="mt-4 border-t border-divider pt-3.5">
+        <label htmlFor={`note-${app.id}`} className="sr-only">
+          Ghi chú quyết định
+        </label>
         <textarea
+          id={`note-${app.id}`}
           value={note}
           onChange={(e) => setNote(e.target.value)}
           placeholder="Ghi chú (tùy chọn) — lý do duyệt/từ chối…"
           rows={2}
           disabled={submitting}
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 disabled:bg-slate-50"
+          className={`${inputClass} bg-canvas`}
         />
-        <div className="flex flex-wrap gap-2">
+        <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
           <button
             type="button"
             disabled={submitting}
             onClick={() => onApprove(note)}
-            className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600"
+            className={btn("primary")}
           >
+            <svg
+              viewBox="0 0 24 24"
+              className="h-[15px] w-[15px]"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.4}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
             {submitting ? "Đang xử lý…" : "Duyệt → mời phỏng vấn"}
           </button>
           <button
             type="button"
             disabled={submitting}
             onClick={() => onReject(note)}
-            className="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+            className={btn("secondary")}
           >
-            Từ chối
+            Từ chối → gửi thư từ chối
           </button>
+          <Link href={`/applications/${app.id}`} className={btn("ghost", "ml-auto")}>
+            Xem chi tiết đầy đủ →
+          </Link>
         </div>
       </div>
     </article>
