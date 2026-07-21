@@ -137,7 +137,7 @@ export default function JobsPage() {
             >
               {t.label}
               {t.n != null && (
-                <span className={active ? "text-white/70" : "text-ink/40"}> ({t.n})</span>
+                <span className={active ? "text-white" : "text-ink/65"}> ({t.n})</span>
               )}
             </button>
           );
@@ -153,11 +153,10 @@ export default function JobsPage() {
         </p>
       )}
 
-      {isLoading && <p className="mt-4 text-sm text-ink/50">Đang tải danh sách JD…</p>}
+      {isLoading && <p className="mt-4 text-sm text-ink/65">Đang tải danh sách JD…</p>}
       {isError && (
         <p className="mt-4 rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-          Không tải được danh sách JD ({String((error as Error)?.message)}). Backend đã chạy ở :8000
-          chưa?
+          Không tải được danh sách JD ({String((error as Error)?.message)}). Vui lòng thử lại.
         </p>
       )}
 
@@ -189,7 +188,7 @@ export default function JobsPage() {
                     </h3>
                     <Tag tone={statusTone(job.status)}>{jobStatusLabel(job.status)}</Tag>
                   </div>
-                  <p className="mt-1.5 text-[13px] text-ink/55">
+                  <p className="mt-1.5 text-[13px] text-ink/65">
                     JD #{job.id} · {job.rubric.length} tiêu chí rubric · tạo {fmtDate(job.created_at)}
                   </p>
 
@@ -252,7 +251,7 @@ export default function JobsPage() {
                 {/* Gate tự động (PRD §9) — cột phải, chỉ cho JD chưa lưu trữ */}
                 {!isArchived ? (
                   <div className="flex flex-none flex-col gap-3.5 border-t-2 border-divider pt-4 sm:w-[212px] sm:border-l-2 sm:border-t-0 sm:pl-4 sm:pt-0">
-                    <span className="text-xs font-semibold uppercase tracking-[0.08em] text-ink/45">
+                    <span className="text-xs font-semibold uppercase tracking-[0.08em] text-ink/65">
                       Gate tự động
                     </span>
                     <Toggle

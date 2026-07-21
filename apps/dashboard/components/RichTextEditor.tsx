@@ -29,8 +29,8 @@ function ToolbarButton({
       // mousedown preventDefault: giữ selection trong editor khi bấm nút (không blur).
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
-      className={`min-w-[1.75rem] rounded px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 ${
-        active ? "bg-slate-200 text-slate-900" : "text-slate-600 hover:bg-slate-100"
+      className={`min-w-[1.75rem] rounded px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+        active ? "bg-accent-100 text-accent-800" : "text-ink/65 hover:bg-ink/[0.06]"
       }`}
     >
       {children}
@@ -75,8 +75,8 @@ export function RichTextEditor({
   });
 
   return (
-    <div className="rte rounded-md border border-slate-300 focus-within:ring-2 focus-within:ring-slate-500">
-      <div className="flex flex-wrap items-center gap-1 border-b border-slate-200 px-2 py-1.5">
+    <div className="rte rounded-lg border-2 border-ink/55 focus-within:ring-2 focus-within:ring-accent">
+      <div className="flex flex-wrap items-center gap-1 border-b border-divider px-2 py-1.5">
         {editor && (
           <>
             <ToolbarButton
@@ -100,7 +100,7 @@ export function RichTextEditor({
             >
               <span className="underline">U</span>
             </ToolbarButton>
-            <span className="mx-1 h-4 w-px bg-slate-200" aria-hidden />
+            <span className="mx-1 h-4 w-px bg-divider" aria-hidden />
             <ToolbarButton
               active={editor.isActive("bulletList")}
               onClick={() => editor.chain().focus().toggleBulletList().run()}
@@ -118,7 +118,7 @@ export function RichTextEditor({
           </>
         )}
       </div>
-      <EditorContent editor={editor} className="text-sm text-slate-900" />
+      <EditorContent editor={editor} className="text-sm text-ink" />
     </div>
   );
 }

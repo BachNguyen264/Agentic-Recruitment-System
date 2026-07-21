@@ -47,7 +47,7 @@ export default function ApplicationsPage() {
       <PageHeader
         eyebrow="Danh sách hồ sơ"
         title="Ứng viên"
-        description="Toàn bộ CV đã nộp kèm điểm và trạng thái theo bốn rổ pipeline (PRD §13). Bấm một hàng để mở chi tiết điểm, agent trace và nhật ký kiểm toán."
+        description="Toàn bộ CV đã nộp kèm điểm và trạng thái theo bốn rổ pipeline (PRD §13). Bấm một hàng để mở chi tiết điểm và agent trace."
       />
 
       {/* Bộ lọc theo rổ trạng thái */}
@@ -67,7 +67,7 @@ export default function ApplicationsPage() {
                   : "border-divider text-ink/70 hover:bg-ink/[0.06]"
               }`}
             >
-              {f.label} <span className={active ? "text-white/70" : "text-ink/40"}>({n})</span>
+              {f.label} <span className={active ? "text-white" : "text-ink/65"}>({n})</span>
             </button>
           );
         })}
@@ -75,15 +75,15 @@ export default function ApplicationsPage() {
 
       {isError && (
         <p className="mt-4 rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-          Không tải được danh sách ({String((error as Error)?.message)}). Backend đã chạy ở :8000 chưa?
+          Không tải được danh sách ({String((error as Error)?.message)}). Vui lòng thử lại.
         </p>
       )}
 
       <div className="mt-4 overflow-hidden rounded-xl border-2 border-divider bg-canvas">
-        {isLoading && <p className="px-4 py-6 text-sm text-ink/50">Đang tải danh sách…</p>}
+        {isLoading && <p className="px-4 py-6 text-sm text-ink/65">Đang tải danh sách…</p>}
 
         {!isLoading && filtered.length === 0 && (
-          <p className="px-6 py-10 text-center text-[13px] text-ink/50">
+          <p className="px-6 py-10 text-center text-[13px] text-ink/65">
             {apps.length === 0
               ? "Chưa có ứng viên nào — nộp CV qua cổng tuyển dụng công khai để pipeline chạy."
               : "Không có ứng viên trong rổ này."}
@@ -98,7 +98,7 @@ export default function ApplicationsPage() {
                   {["Ứng viên", "Vị trí", "Điểm", "Trạng thái"].map((h, i) => (
                     <th
                       key={h}
-                      className={`border-b-2 border-divider px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink/60 ${
+                      className={`border-b-2 border-divider px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink/65 ${
                         i === 2 ? "text-right" : "text-left"
                       }`}
                     >
@@ -119,7 +119,7 @@ export default function ApplicationsPage() {
                           <span className="block truncate font-semibold">
                             {a.applicant_email.split("@")[0]}
                           </span>
-                          <span className="block truncate text-xs text-ink/50">
+                          <span className="block truncate text-xs text-ink/65">
                             {a.applicant_email}
                           </span>
                         </span>

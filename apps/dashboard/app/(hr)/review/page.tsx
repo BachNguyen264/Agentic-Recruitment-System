@@ -86,11 +86,10 @@ export default function ReviewPage() {
         </p>
       )}
 
-      {listQuery.isLoading && <p className="text-sm text-ink/50">Đang tải hàng đợi…</p>}
+      {listQuery.isLoading && <p className="text-sm text-ink/65">Đang tải hàng đợi…</p>}
       {listQuery.isError && (
         <p className="rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-          Không tải được hàng đợi ({String((listQuery.error as Error)?.message)}). Backend đã chạy ở
-          :8000 chưa?
+          Không tải được hàng đợi ({String((listQuery.error as Error)?.message)}). Vui lòng thử lại.
         </p>
       )}
       {listQuery.data && pendingIds.length === 0 && (
