@@ -45,7 +45,7 @@ export default function ApplicationDetailPage() {
         <BackArrow /> Về danh sách ứng viên
       </Link>
 
-      {appQuery.isLoading && <p className="text-sm text-ink/50">Đang tải chi tiết…</p>}
+      {appQuery.isLoading && <p className="text-sm text-ink/65">Đang tải chi tiết…</p>}
       {appQuery.isError && (
         <p className="rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
           Không tải được ứng viên #{params.id} ({String((appQuery.error as Error)?.message)}). Ứng
@@ -64,7 +64,7 @@ export default function ApplicationDetailPage() {
                 <h1 className="text-[26px] sm:text-[30px]">{app.applicant_email.split("@")[0]}</h1>
                 <Tag tone={statusTone(app.status)}>{statusLabel(app.status)}</Tag>
               </div>
-              <p className="mt-1 text-[13px] text-ink/55">
+              <p className="mt-1 text-[13px] text-ink/65">
                 {app.applicant_email}
                 {jobQuery.data ? (
                   <>
@@ -167,7 +167,7 @@ export default function ApplicationDetailPage() {
                   định dạng → render qua SafeHtml (sanitize + khôi phục bullet). */}
               {jobQuery.data && jobQuery.data.requirements.trim() && (
                 <section className="rounded-xl border-2 border-divider bg-canvas p-4">
-                  <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-ink/50">
+                  <h2 className="mb-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-ink/65">
                     Yêu cầu JD
                   </h2>
                   <SafeHtml

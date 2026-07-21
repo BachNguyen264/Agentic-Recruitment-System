@@ -27,7 +27,7 @@ export function PublicHeader({ href, tagline }: { href?: string; tagline: string
         ) : (
           brand
         )}
-        <span className="text-right text-xs text-ink/45">{tagline}</span>
+        <span className="text-right text-xs text-ink/65">{tagline}</span>
       </div>
     </header>
   );

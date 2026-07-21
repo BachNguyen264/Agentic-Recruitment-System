@@ -39,7 +39,7 @@ function Field({
     // min-w-0 + break-words: ô lưới mặc định KHÔNG co dưới kích thước nội dung, nên một email dài
     // sẽ tràn sang ô bên cạnh (đè lên "Điện thoại") thay vì tự xuống dòng.
     <div className={`min-w-0 ${className}`}>
-      <dt className="text-xs uppercase tracking-[0.06em] text-ink/45">{label}</dt>
+      <dt className="text-xs uppercase tracking-[0.06em] text-ink/65">{label}</dt>
       <dd className="break-words text-[13px] text-ink">{text ? text : "—"}</dd>
     </div>
   );
@@ -84,7 +84,7 @@ export function ParsedCVResult({
         </div>
       ) : parsed_data == null || Object.keys(parsed_data).length === 0 ? (
         // parsed_data có thể là {} (row scaffold/legacy chưa qua parser) — coi như chưa có dữ liệu.
-        <p className="text-[13px] text-ink/55">Không có dữ liệu bóc tách.</p>
+        <p className="text-[13px] text-ink/65">Không có dữ liệu bóc tách.</p>
       ) : (
         <div className="space-y-4">
           {/* Liên hệ */}
@@ -143,12 +143,12 @@ export function ParsedCVResult({
                       <span className="text-[13px] font-semibold">
                         {exp.title?.trim() || "(Vị trí không rõ)"}
                       </span>
-                      <span className="text-[13px] text-ink/60">
+                      <span className="text-[13px] text-ink/65">
                         {exp.company?.trim() || "Dự án cá nhân"}
                       </span>
                     </div>
                     {exp.duration?.trim() && (
-                      <p className="text-xs text-ink/45">{exp.duration}</p>
+                      <p className="text-xs text-ink/65">{exp.duration}</p>
                     )}
                     {exp.summary?.trim() && (
                       <p className="mt-1 text-[13px] leading-relaxed text-ink/70">{exp.summary}</p>
@@ -169,7 +169,7 @@ export function ParsedCVResult({
                     <div className="text-[13px] font-semibold">
                       {edu.school?.trim() || "(Trường không rõ)"}
                     </div>
-                    <div className="flex flex-wrap gap-x-1.5 text-xs text-ink/50">
+                    <div className="flex flex-wrap gap-x-1.5 text-xs text-ink/65">
                       {edu.field?.trim() && <span>{edu.field}</span>}
                       {edu.degree?.trim() && <span>· {edu.degree}</span>}
                       {edu.year?.trim() && <span>· {edu.year}</span>}

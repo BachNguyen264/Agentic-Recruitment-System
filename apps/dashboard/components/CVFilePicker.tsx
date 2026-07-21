@@ -106,7 +106,7 @@ export function CVFilePicker({
 
         <svg
           viewBox="0 0 24 24"
-          className="h-[26px] w-[26px] text-ink/45"
+          className="h-[26px] w-[26px] text-ink/65"
           fill="none"
           stroke="currentColor"
           strokeWidth={1.8}
@@ -124,7 +124,7 @@ export function CVFilePicker({
         <p className="mt-2 break-all text-[13px] font-semibold">
           {file ? file.name : "Kéo-thả CV vào đây, hoặc bấm để chọn"}
         </p>
-        <p className="mt-1 text-xs text-ink/45">{file ? "Bấm để chọn file khác" : hint}</p>
+        <p className="mt-1 text-xs text-ink/65">{file ? "Bấm để chọn file khác" : hint}</p>
       </div>
 
       {error && (

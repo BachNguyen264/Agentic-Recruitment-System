@@ -49,10 +49,10 @@ export function Logo({
         <LogoMark size={size} />
         <span className="font-heading text-[18px] font-bold leading-none tracking-tight">
           {wordmark}
-          {suffix && <span className="text-ink/45"> · {suffix}</span>}
+          {suffix && <span className="text-ink/65"> · {suffix}</span>}
         </span>
       </div>
-      {subtitle && <p className="mt-1.5 text-xs text-ink/50">{subtitle}</p>}
+      {subtitle && <p className="mt-1.5 text-xs text-ink/65">{subtitle}</p>}
     </div>
   );
 }

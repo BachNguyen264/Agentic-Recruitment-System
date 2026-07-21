@@ -32,7 +32,7 @@ function LoginForm() {
         <Logo size={30} />
 
         <h1 className="mt-6 text-[26px] sm:text-[30px]">Đăng nhập HR</h1>
-        <p className="mt-1.5 text-[13px] leading-relaxed text-ink/55">
+        <p className="mt-1.5 text-[13px] leading-relaxed text-ink/65">
           Khu vực quản trị tuyển dụng. Ứng viên nộp hồ sơ ở cổng công khai — không cần tài khoản.
         </p>
 
@@ -95,7 +95,7 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <Suspense
-      fallback={<div className="p-8 text-[13px] text-ink/50">Đang tải…</div>}
+      fallback={<div className="p-8 text-[13px] text-ink/65">Đang tải…</div>}
     >
       <LoginForm />
     </Suspense>

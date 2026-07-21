@@ -58,7 +58,7 @@ export default function ScreeningPage() {
   return (
     <main>
       {formQuery.isLoading && (
-        <p role="status" className="text-[13px] text-ink/50">
+        <p role="status" className="text-[13px] text-ink/65">
           Đang tải câu hỏi…
         </p>
       )}
@@ -76,7 +76,7 @@ export default function ScreeningPage() {
           <p className="font-heading text-[15px] font-bold">
             {String((formQuery.error as Error)?.message) || "Liên kết không hợp lệ."}
           </p>
-          <p className="mx-auto mt-1.5 max-w-[46ch] text-[13px] text-ink/55">
+          <p className="mx-auto mt-1.5 max-w-[46ch] text-[13px] text-ink/65">
             Nếu bạn cho rằng đây là nhầm lẫn, vui lòng trả lời email chúng tôi đã gửi.
           </p>
         </div>

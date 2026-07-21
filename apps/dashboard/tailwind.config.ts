@@ -1,7 +1,8 @@
 import type { Config } from "tailwindcss";
 
 // UI redesign — hệ token "Marine" từ bản thiết kế (claude.ai/design → handoff bundle).
-// Nền trắng lạnh + mực xanh navy + nhấn cobalt; chữ Sora (tiêu đề) + Manrope (thân).
+// Nền trắng lạnh + mực xanh navy + nhấn cobalt; chữ Be Vietnam Pro (tiêu đề) + Manrope (thân).
+// (Thiết kế gốc dùng Sora nhưng Sora không có subset tiếng Việt — xem app/layout.tsx.)
 // Giữ Tailwind THUẦN (CLAUDE.md: không thêm thư viện UI) — token khai báo ở đây, dùng qua utility.
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
@@ -39,7 +40,7 @@ const config: Config = {
         },
       },
       fontFamily: {
-        heading: ["var(--font-sora)", "system-ui", "sans-serif"],
+        heading: ["var(--font-heading)", "system-ui", "sans-serif"],
         sans: ["var(--font-manrope)", "system-ui", "sans-serif"],
       },
       keyframes: {

@@ -11,7 +11,7 @@ import { EMPLOYMENT_TYPE_OPTIONS, LEVEL_OPTIONS } from "@/lib/jobs";
 // khi submit để không gửi item rỗng (JobPostingCreate validate criterion non-empty).
 
 const INPUT =
-  "w-full min-h-9 rounded-lg border-2 border-divider bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink/40 hover:border-ink/40 focus-visible:border-accent focus-visible:outline-none";
+  "w-full min-h-9 rounded-lg border-2 border-ink/55 bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink/55 hover:border-ink/70 focus-visible:border-accent focus-visible:outline-none";
 const LABEL = "mb-1.5 block text-xs font-semibold text-ink/70";
 
 function clamp01(n: number): number {
@@ -182,7 +182,7 @@ export function JobForm({
               aria-label="Lương tối thiểu"
               className="w-40 rounded-lg border border-divider px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             />
-            <span className="text-ink/45">–</span>
+            <span className="text-ink/65">–</span>
             <input
               type="number"
               min={0}
@@ -215,7 +215,7 @@ export function JobForm({
           onChange={(html) => set("description", html)}
           ariaLabel="Mô tả công việc"
         />
-        <p className="text-xs text-ink/45">
+        <p className="text-xs text-ink/65">
           Dán được cả khối; định dạng bằng thanh công cụ (đậm/nghiêng/gạch chân/danh sách).
         </p>
       </div>
@@ -228,7 +228,7 @@ export function JobForm({
           onChange={(html) => set("requirements", html)}
           ariaLabel="Yêu cầu ứng viên"
         />
-        <p className="text-xs text-ink/45">Dán cả danh sách yêu cầu; định dạng tùy ý.</p>
+        <p className="text-xs text-ink/65">Dán cả danh sách yêu cầu; định dạng tùy ý.</p>
       </div>
 
       {/* Quyền lợi (editor định dạng) */}

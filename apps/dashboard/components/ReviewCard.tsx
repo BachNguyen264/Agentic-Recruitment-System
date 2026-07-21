@@ -44,7 +44,7 @@ export function ReviewCard({
           <h3 className="text-[19px]">
             {app.parsed_data?.full_name?.trim() || app.applicant_email.split("@")[0]}
           </h3>
-          <p className="mt-0.5 text-[13px] text-ink/50">
+          <p className="mt-0.5 text-[13px] text-ink/65">
             {app.applicant_email} · {jobTitle ?? (app.job_id ? `JD #${app.job_id}` : "Chưa gắn JD")}
           </p>
         </div>
@@ -95,7 +95,7 @@ export function ReviewCard({
             <span className="font-heading text-[30px] font-bold leading-none">
               {app.score != null ? app.score : "—"}
             </span>
-            <span className="text-[13px] text-ink/55">/ 100 điểm rubric</span>
+            <span className="text-[13px] text-ink/65">/ 100 điểm rubric</span>
           </div>
           {criteria.length > 0 && (
             <div className="mt-2.5 grid gap-x-4 gap-y-2 sm:grid-cols-2">

@@ -59,14 +59,14 @@ export function CVUpload({ onResult }: { onResult: (r: ParseCvResponse | null) =
         {mutation.isPending && (
           // role="status": chờ LLM mất vài giây, trình đọc màn hình phải được báo là đang chạy —
           // nhãn nút đã disabled thường không được đọc lại.
-          <span role="status" className="text-[13px] text-ink/55">
+          <span role="status" className="text-[13px] text-ink/65">
             Đang gọi mô hình để bóc tách, chờ vài giây…
           </span>
         )}
       </div>
 
       {idle && (
-        <p className="mt-4 text-[13px] text-ink/45">
+        <p className="mt-4 text-[13px] text-ink/65">
           Chưa có kết quả — chọn một CV rồi bấm “Phân tích CV”.
         </p>
       )}

@@ -53,9 +53,12 @@ export function Tag({
   );
 }
 
-/** Ô nhập — nền surface, viền 2px, bo 8px (khớp thiết kế). */
+/** Ô nhập — nền surface, viền 2px, bo 8px (khớp thiết kế). Viền `ink/55` (không phải `divider`
+ *  22%) để đạt ≥3:1 so với cả nền ô lẫn nền trang (WCAG 1.4.11 — ranh giới trường nhập phải nhìn
+ *  thấy); divider chỉ 1.58:1, gần như vô hình. hover đậm hơn base (ink/70). placeholder ink/55 là
+ *  chữ PHỤ (mọi ô đều có <label> riêng) nên chấp nhận < 4.5:1, nhưng vẫn tốt hơn hẳn ink/40 cũ. */
 export const inputClass =
-  "w-full min-h-9 rounded-lg border-2 border-divider bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink/40 hover:border-ink/40 focus-visible:border-accent focus-visible:outline-none";
+  "w-full min-h-9 rounded-lg border-2 border-ink/55 bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink/55 hover:border-ink/70 focus-visible:border-accent focus-visible:outline-none";
 
 export function Field({
   label,
@@ -79,7 +82,7 @@ export function Field({
         {required && <span className="text-accent"> *</span>}
       </label>
       {children}
-      {hint && <p className="mt-1.5 text-xs text-ink/45">{hint}</p>}
+      {hint && <p className="mt-1.5 text-xs text-ink/65">{hint}</p>}
     </div>
   );
 }
@@ -106,7 +109,7 @@ export function PageHeader({
         {actions}
       </div>
       {description && (
-        <p className="mt-2 max-w-[70ch] text-[13px] leading-relaxed text-ink/55">{description}</p>
+        <p className="mt-2 max-w-[70ch] text-[13px] leading-relaxed text-ink/65">{description}</p>
       )}
     </header>
   );
@@ -115,7 +118,7 @@ export function PageHeader({
 /** Trạng thái rỗng — viền đứt, thông điệp hướng hành động (không phải lời xin lỗi). */
 export function EmptyState({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border-2 border-dashed border-divider px-6 py-10 text-center text-[13px] text-ink/50">
+    <div className="rounded-xl border-2 border-dashed border-divider px-6 py-10 text-center text-[13px] text-ink/65">
       {children}
     </div>
   );

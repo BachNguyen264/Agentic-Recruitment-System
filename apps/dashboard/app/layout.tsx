@@ -14,7 +14,7 @@ import { Providers } from "./providers";
 const heading = Be_Vietnam_Pro({
   subsets: ["latin", "vietnamese"],
   weight: ["400", "600", "700", "800"],
-  variable: "--font-sora",
+  variable: "--font-heading", // đổi từ --font-sora: font thật là Be Vietnam Pro, không phải Sora
   display: "swap",
 });
 const manrope = Manrope({

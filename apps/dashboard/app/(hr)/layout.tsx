@@ -146,7 +146,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
   });
 
   if (isLoading) {
-    return <div className="p-8 text-sm text-ink/50">Đang kiểm tra phiên đăng nhập…</div>;
+    return <div className="p-8 text-sm text-ink/65">Đang kiểm tra phiên đăng nhập…</div>;
   }
 
   // Lỗi mạng (backend sập) — KHÁC với 401 (đã redirect). Cho thử lại, không kẹt màn trắng.
@@ -154,7 +154,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
     return (
       <div className="mx-auto max-w-md space-y-3 p-8 text-center">
         <p className="text-sm text-red-600">
-          Không kết nối được máy chủ. Backend đã chạy ở :8000 chưa?
+          Không kết nối được máy chủ. Vui lòng thử lại sau ít phút.
         </p>
         <button
           type="button"
@@ -183,8 +183,12 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-[236px] flex-none flex-col border-r-2 border-divider bg-canvas transition-transform duration-200 lg:static lg:translate-x-0 ${
-          navOpen ? "translate-x-0" : "-translate-x-full"
+        // `invisible` khi đóng (mobile) là BẮT BUỘC, không chỉ trang trí: `-translate-x-full` chỉ
+        // đẩy sidebar ra ngoài màn hình nhưng 6 link BÊN TRONG vẫn nhận focus bàn phím → người dùng
+        // Tab lạc vào vùng khuất. visibility:hidden gỡ chúng khỏi thứ tự tab. `lg:visible` khôi phục
+        // trên desktop (sidebar cố định luôn hiện).
+        className={`fixed inset-y-0 left-0 z-40 flex w-[236px] flex-none flex-col border-r-2 border-divider bg-canvas transition-transform duration-200 lg:static lg:visible lg:translate-x-0 ${
+          navOpen ? "translate-x-0" : "-translate-x-full invisible"
         }`}
       >
         <div className="px-4 pb-3 pt-4">
@@ -228,7 +232,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-semibold">{me.email.split("@")[0]}</p>
-              <p className="truncate text-xs text-ink/50">{me.email}</p>
+              <p className="truncate text-xs text-ink/65">{me.email}</p>
             </div>
             <button
               type="button"

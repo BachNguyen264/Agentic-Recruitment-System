@@ -70,7 +70,7 @@ export function ScoreBreakdown({
               <span className="font-heading text-[44px] font-bold leading-none">
                 {overall_score != null ? overall_score : "—"}
               </span>
-              <span className="text-[13px] text-ink/55">/ 100 · điểm tổng theo rubric</span>
+              <span className="text-[13px] text-ink/65">/ 100 · điểm tổng theo rubric</span>
             </div>
             {summary?.trim() && (
               <p className="mt-2.5 text-[13px] leading-relaxed text-ink/80">{summary}</p>
@@ -86,7 +86,7 @@ export function ScoreBreakdown({
                     <span className="text-[13px] font-semibold">
                       {c.criterion?.trim() || "(Tiêu chí không tên)"}
                     </span>
-                    <span className="text-[13px] text-ink/55">
+                    <span className="text-[13px] text-ink/65">
                       trọng số {pct(c.weight)} ·{" "}
                       <span className="font-heading font-bold text-ink">{c.score}/100</span>
                     </span>
@@ -105,13 +105,13 @@ export function ScoreBreakdown({
               ))}
             </ol>
           ) : (
-            <p className="mt-3 text-[13px] text-ink/50">
+            <p className="mt-3 text-[13px] text-ink/65">
               Chưa có breakdown theo tiêu chí (ứng viên có thể đang chờ chấm điểm).
             </p>
           )}
 
           {/* Tín hiệu phụ: độ tương đồng ngữ nghĩa — KHÔNG tính vào điểm (PRD §7.2). */}
-          <p className="mt-2.5 text-[13px] text-ink/55">
+          <p className="mt-2.5 text-[13px] text-ink/65">
             Độ tương đồng ngữ nghĩa:{" "}
             <span className="font-bold text-ink">
               {semantic_similarity != null ? semantic_similarity.toFixed(4) : "—"}

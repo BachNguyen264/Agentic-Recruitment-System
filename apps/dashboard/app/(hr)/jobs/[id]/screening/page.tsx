@@ -71,13 +71,13 @@ export default function ScreeningConfigPage({ params }: { params: { id: string }
         </Link>
         <p className="eyebrow mb-1.5">Bước 2/2 · Cấu hình sàng lọc</p>
         <h1 className="text-[26px] sm:text-[30px]">Cấu hình sàng lọc</h1>
-        <p className="mt-2 max-w-[66ch] text-[13px] leading-relaxed text-ink/55">
+        <p className="mt-2 max-w-[66ch] text-[13px] leading-relaxed text-ink/65">
           Rubric (bắt buộc để MỞ JD) + câu hỏi sàng lọc (tùy chọn). Chỉ HR thấy — không lộ cho ứng
           viên.
         </p>
       </div>
 
-      {isLoading && <p className="text-sm text-ink/55">Đang tải JD…</p>}
+      {isLoading && <p className="text-sm text-ink/65">Đang tải JD…</p>}
       {isError && (
         <p className="rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
           Không tải được JD ({String((error as Error)?.message)}).
@@ -89,7 +89,7 @@ export default function ScreeningConfigPage({ params }: { params: { id: string }
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-divider bg-canvas px-4 py-3">
             <div className="min-w-0">
               <p className="truncate font-heading text-[15px] font-bold">{job.title}</p>
-              <p className="text-xs text-ink/45">JD #{job.id}</p>
+              <p className="text-xs text-ink/65">JD #{job.id}</p>
             </div>
             <div className="flex items-center gap-3">
               <Tag tone={job.status === "OPEN" ? "ok" : job.status === "DRAFT" ? "warn" : "neutral"}>

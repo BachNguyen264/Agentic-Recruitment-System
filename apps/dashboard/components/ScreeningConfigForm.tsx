@@ -10,7 +10,7 @@ import { isValidRubric, isWeightBalanced, WEIGHT_TARGET, weightSum } from "@/lib
 // chưa hợp lệ (≥1 tiêu chí, tổng trọng số > 0 — khớp backend). "Lưu cấu hình" chỉ lưu, không mở.
 
 const INPUT =
-  "w-full min-h-9 rounded-lg border-2 border-divider bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink/40 hover:border-ink/40 focus-visible:border-accent focus-visible:outline-none";
+  "w-full min-h-9 rounded-lg border-2 border-ink/55 bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink/55 hover:border-ink/70 focus-visible:border-accent focus-visible:outline-none";
 const LABEL = "mb-1.5 block text-xs font-semibold text-ink/70";
 
 function clamp01(n: number): number {
@@ -44,7 +44,7 @@ function StringList({
             type="button"
             onClick={() => onChange(items.filter((_, j) => j !== i))}
             aria-label="Xóa dòng"
-            className="shrink-0 rounded-lg border border-divider px-2.5 py-2 text-sm text-ink/55 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="shrink-0 rounded-lg border border-divider px-2.5 py-2 text-sm text-ink/65 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             ✕
           </button>
@@ -149,7 +149,7 @@ export function ScreeningConfigForm({
           <label className={LABEL}>
             Rubric chấm điểm (HR tự nhập) <span className="text-red-500">*</span>
           </label>
-          <span className={`text-xs ${balanced ? "text-ink/45" : "text-amber-600"}`}>
+          <span className={`text-xs ${balanced ? "text-ink/65" : "text-amber-600"}`}>
             Tổng trọng số: <span className="font-semibold">{sum.toFixed(2)}</span>
             {!balanced && ` (nên ≈ ${WEIGHT_TARGET.toFixed(1)})`}
           </span>
@@ -218,7 +218,7 @@ export function ScreeningConfigForm({
                 type="button"
                 onClick={() => setRubric(rubric.filter((_, j) => j !== i))}
                 aria-label="Xóa tiêu chí"
-                className="shrink-0 rounded-lg border border-divider px-2.5 py-2 text-sm text-ink/55 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                className="shrink-0 rounded-lg border border-divider px-2.5 py-2 text-sm text-ink/65 hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               >
                 ✕
               </button>
@@ -232,7 +232,7 @@ export function ScreeningConfigForm({
             + Thêm tiêu chí
           </button>
         </div>
-        <p className="text-xs text-ink/45">
+        <p className="text-xs text-ink/65">
           Cần ≥1 tiêu chí + tổng trọng số &gt; 0 để MỞ JD. Tổng nên ≈ 1.0 (ranker tự chuẩn hóa).
         </p>
       </div>
@@ -246,7 +246,7 @@ export function ScreeningConfigForm({
           placeholder="vd: Mức lương kỳ vọng?"
           addLabel="Thêm câu hỏi"
         />
-        <p className="text-xs text-ink/45">Dùng cho vòng Screener (PRD §10).</p>
+        <p className="text-xs text-ink/65">Dùng cho vòng Screener (PRD §10).</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 border-t border-divider pt-4">
