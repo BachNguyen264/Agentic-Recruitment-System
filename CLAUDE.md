@@ -88,8 +88,19 @@ chối `*`/thiếu scheme/có path vì Starlette so chuỗi CHÍNH XÁC — sai 
 (`core/hardening.py`: body-size limit đọc-có-đếm + rate-limit cửa sổ trượt theo IP cho login/ghi công
 khai/health-sâu, `PROXY_TRUSTED_HOPS` + log chẩn đoán khoá quota); `.env.example` có CHECKLIST env prod.
 
+**Hardening tải (14) XONG:** `process_application` tách vòng đời session **ĐỌC → CHẠY → GHI** (trước đây
+một session giữ connection + TRANSACTION MỞ trọn cả hai lượt LLM); TOÀN BỘ thân hàm trong MỘT try (thao
+tác DB đầu tiên trước nằm NGOÀI → pool cạn là ném thẳng ra BackgroundTasks, hồ sơ mất im lặng);
+`_escalate_technical_error` mở session MỚI + KHÔNG BAO GIỜ raise; lưới đối soát
+`services/stuck_applications` (SUBMITTED/PARSING/RANKING quá `STUCK_APPLICATION_TIMEOUT_MINUTES`=30 →
+PENDING_REVIEW[error], KHÔNG auto-reject) đi chung sweep loop 08c. **Số đo thật (5 CV, tuần tự):**
+T=34.3s (parser 9.4s · ranker 24.7s ⇒ ranker chiếm 72%); connection giữ 0.68s = **2% của T** (trước:
+100%) ⇒ trần một đợt **28 → 678 hồ sơ**. Nút thắt kế tiếp: thread pool 14 luồng (parser gọi LLM ĐỒNG BỘ,
+~1.5 CV/s bền) rồi RAM (~11MB/CV 10MB đang bay). Công cụ: `scripts/loadtest_apply.py`.
+
 **NOT yet done:** analytics; observability; anti-prompt-injection; **runbook + verify live của 13**;
-UI redesign; learning loop.
+UI redesign; learning loop. Hardening tải còn nợ: semaphore chặn số pipeline song song, parser dùng
+`ainvoke` (bỏ thread pool), và **đường NHẬN CV vẫn giữ connection suốt lúc upload R2** (xem gotcha `refresh()`).
 
 `ENABLE_LLM=true` enables real parser+ranker; `false` keeps stubs (for `test_graph`).
 
@@ -172,6 +183,12 @@ UI redesign; learning loop.
   (browser cấm wildcard khi có cookie). Thêm endpoint công khai mới → cân nhắc cho vào `_bucket()` của
   `RateLimitMiddleware`, nhưng **CHỈ siết method có body**: siết cả GET đã từng làm ứng viên hết quota rồi mất
   luôn bài dự tuyển. Health check của nền tảng phải trỏ `/api/health/live` (KHÔNG phải `/api/health`).
+- **Load boundary (14):** TUYỆT ĐỐI không giữ session/connection qua I/O chậm (LLM, R2, email). Thêm đường
+  mới chạm DB rồi chờ mạng → tách ĐỌC/CHẠY/GHI như `process_application`. Pool chỉ 15 connection; giữ qua
+  một lượt LLM (T≈34s) là cạn pool ở ~28 hồ sơ đồng thời. Chỉ `IN_FLIGHT_STATUSES` (SUBMITTED/PARSING/
+  RANKING — hằng số ở `models/application.py`) được phép ghi đè: đó là các trạng thái CHƯA quyết và CHƯA
+  email gì. Handler lỗi VÀ sweep đối soát PHẢI dùng CHUNG hằng số này — hai lưới lệch định nghĩa chính là
+  cách sinh ra lớp lỗi cả hai đang chặn. Sweep loop 08c nay chạy HAI lưới (screener timeout + hồ sơ kẹt).
 - **Ranker:** score is ONLY the reasoned rubric (weights from the JD); cosine/embedding is a SIDE signal, NOT in
   the score, NO JD chunking. confidence/flags = DETERMINISTIC heuristic (don't ask the LLM to self-score).
 - **scheduler is the SOLE email-send point** — don't scatter sends.
@@ -186,6 +203,26 @@ UI redesign; learning loop.
 
 ## Gotchas encountered (read before repeating)
 
+- **"Commit xong là nhả connection" — SAI, vì `refresh()` MỞ LẠI transaction (14).** `audit_service.record(
+  commit=True)` kết thúc bằng `await session.refresh(entry)`, và `refresh` autobegin một transaction MỚI,
+  mượn lại connection và GIỮ tới lần commit/close kế tiếp. Đo thực nghiệm (pool event checkout/checkin):
+  `commit` + `refresh` rồi I/O 1s ⇒ giữ **1.00s**; `commit` trần rồi I/O 1s ⇒ giữ **0.00s**. Hai hệ quả
+  đã cắn thật: (a) `create_application` commit+refresh nên đường NHẬN CV giữ connection SUỐT lúc upload R2
+  (`routes/public.py` — CHƯA sửa); (b) session thoát khối `async with` khi còn transaction mở ⇒ teardown
+  bắn một ROLLBACK QUA MẠNG và ROLLBACK đó NÉM ĐƯỢC (xem gotcha kế). Muốn biết chỗ nào thật sự giữ
+  connection thì ĐO bằng `event.listens_for(engine.sync_engine, "checkout"/"checkin")` — đừng suy luận.
+- **Đóng session KHÔNG vô hại — đừng để nó hạ trạng thái hồ sơ (14).** Khi bọc `try` ra NGOÀI `async with`
+  (cần thiết, để thao tác DB ĐẦU TIÊN cũng được bắt), phần teardown cũng rơi vào tay handler lỗi. Adversarial
+  review bắt được: teardown ném → handler hạ hồ sơ đang `AWAITING_SCREENER` (magic-link ĐÃ gửi) về
+  PENDING_REVIEW[error] → ứng viên nộp câu trả lời nhận 409 ở `screening._load_valid` → **MẤT bài dự tuyển**,
+  mà guest KHÔNG có tài khoản để khiếu nại. Đối xứng ở `SCHEDULING` = "mời xong lại từ chối". Vì vậy mọi
+  đường ghi-đè-trạng-thái phải kiểm `status in IN_FLIGHT_STATUSES` (allowlist), KHÔNG dùng blocklist "trạng
+  thái cuối" — blocklist luôn thiếu đúng những trạng thái đã phát email ra ngoài.
+- **BackgroundTasks KHÔNG bắt lỗi và KHÔNG bền (14).** Exception thoát khỏi task = biến mất, trong khi 201 đã
+  trả cho ứng viên ⇒ hồ sơ nằm mãi ở SUBMITTED, `audit_log` TRỐNG, dashboard hiện "Vừa nộp" (trạng thái nói
+  dối tệ nhất: mất hồ sơ mà không ai biết). Mọi hàm chạy trong BackgroundTask phải bắt TOÀN BỘ thân, và
+  đường cứu hộ phải mở session MỚI (lỗi đưa ta tới đó thường LÀ lỗi của session cũ). Cứu hộ cũng hỏng →
+  log + nhường `stuck_applications` (lưới cuối, cũng là lưới cho ca process restart/OOM).
 - **Async node in pipeline:** ranker is `async` → `runner.run_sync` uses `asyncio.run(ainvoke)`; parser stays
   sync; mixed graph runs OK. New async node → remember this sync path.
 - **langchain-openai DROPS `temperature`** for reasoning models (gpt-5*): the reasoning branch passes
