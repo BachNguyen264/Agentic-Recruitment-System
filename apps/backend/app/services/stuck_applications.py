@@ -27,24 +27,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.models.application import Application, ApplicationStatus
+from app.models.application import IN_FLIGHT_STATUSES, Application, ApplicationStatus
 from app.services import audit_service
 
 logger = get_logger("app.services.stuck_applications")
 
 _STUCK_REASON = "Xử lý bị gián đoạn giữa chừng — cần HR xem lại (error)."
 
-# Trạng thái "ĐANG BAY": pipeline CHƯA ra quyết định và CHƯA có email nào gửi cho ứng viên, nên đưa
-# về hàng chờ HR là an toàn tuyệt đối. CỐ Ý bỏ ra ngoài:
-#   - SCHEDULING: nghĩa là "đã quyết mời, thư mời CÓ THỂ đã gửi". Kéo nó về hàng chờ HR là mở đúng
-#     đường cho "mời xong lại từ chối" — cái mà `background` bỏ công cô lập dispatch để tránh.
-#   - AWAITING_SCREENER: đã có deadline + sweep RIÊNG (`screening_timeout`). Hai lưới cùng đụng một
-#     hồ sơ thì chúng giẫm chân nhau (timeout resume graph vs đối soát ghi thẳng status).
-_STUCK_STATUSES = (
-    ApplicationStatus.SUBMITTED.value,
-    ApplicationStatus.PARSING.value,
-    ApplicationStatus.RANKING.value,
-)
+# CHỈ quét hồ sơ "đang bay" — pipeline CHƯA quyết và CHƯA email gì, nên đưa về hàng chờ HR là an
+# toàn tuyệt đối. Dùng CHUNG hằng số với `background` (models/application.py) vì đây là cùng MỘT
+# khái niệm: "trạng thái nào còn được phép ghi đè". Hai lưới lệch nhau là cách sinh ra chính lớp lỗi
+# mà cả hai đang cố chặn. Xem ghi chú ở IN_FLIGHT_STATUSES để biết vì sao SCHEDULING và
+# AWAITING_SCREENER bị loại (thư/magic-link CÓ THỂ đã phát ra ngoài; screener có sweep riêng).
+_STUCK_STATUSES = tuple(sorted(IN_FLIGHT_STATUSES))
 
 
 def _now() -> datetime:

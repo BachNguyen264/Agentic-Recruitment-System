@@ -143,6 +143,74 @@ async def test_escalate_never_raises_when_rescue_session_also_dies(monkeypatch) 
     await background.process_application(31)  # KHÔNG raise — đây chính là điều đang kiểm
 
 
+async def test_session_teardown_error_does_not_downgrade_awaiting_screener(monkeypatch) -> None:
+    """HỒI QUY (adversarial review): lỗi lúc ĐÓNG session ở giai đoạn GHI KHÔNG được hạ trạng thái.
+
+    Vì `try` nay bao cả `async with`, phần thoát khối cũng rơi vào handler lỗi. Mà thoát khối KHÔNG
+    vô hại: `audit_service.record(commit=True)` kết thúc bằng `refresh()` → mở lại transaction → lúc
+    đóng còn một ROLLBACK đi qua mạng, ném được. Nếu handler cứ hạ trạng thái thì hồ sơ đã
+    AWAITING_SCREENER (magic-link ĐÃ gửi) rơi về PENDING_REVIEW[error] → ứng viên nộp câu trả lời bị
+    409 (`screening._load_valid`) và MẤT bài dự tuyển — họ là guest, không có gì để khiếu nại.
+    """
+    from app.tasks import background
+
+    app_row = Application(id=35, applicant_email="me@e.com", job_id=None,
+                          status=ApplicationStatus.AWAITING_SCREENER.value)
+    session = _FakeSession({(Application, 35): app_row})
+
+    class _ExplodingTeardownCtx:
+        """Vào bình thường, nhưng THOÁT thì ném — mô phỏng ROLLBACK chết lúc đóng session."""
+
+        first = True
+
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *_a):
+            if type(self).first:
+                type(self).first = False
+                raise ConnectionResetError("Neon rớt kết nối giữa refresh và rollback lúc đóng")
+            return False
+
+    monkeypatch.setattr(background, "AsyncSessionLocal", _ExplodingTeardownCtx)
+    monkeypatch.setattr(
+        background, "run_with_trace",
+        lambda **_kw: _await_value(_clean_out(ApplicationStatus.PENDING_REVIEW.value)),
+    )
+
+    await background.process_application(35)  # KHÔNG raise ra ngoài
+
+    # Magic-link đã gửi → hồ sơ PHẢI ở nguyên AWAITING_SCREENER để ứng viên còn nộp được câu trả lời.
+    assert app_row.status == ApplicationStatus.AWAITING_SCREENER.value
+    assert app_row.escalation_reason != "Lỗi kỹ thuật khi xử lý pipeline (error)."
+
+
+async def test_scheduling_not_downgraded_by_technical_error(monkeypatch) -> None:
+    """Đối xứng: SCHEDULING = "đã quyết mời, thư mời CÓ THỂ đã gửi" → KHÔNG hạ về [error], nếu không
+    HR nhận thẻ lỗi rồi từ chối đúng người vừa được mời."""
+    from app.tasks import background
+
+    app_row = Application(id=36, applicant_email="me@e.com", job_id=None,
+                          status=ApplicationStatus.SCHEDULING.value)
+    session = _FakeSession({(Application, 36): app_row})
+    monkeypatch.setattr(background, "AsyncSessionLocal", lambda: _Ctx(session))
+
+    await background._escalate_technical_error(36, "Lỗi kỹ thuật khi xử lý pipeline (error).")
+
+    assert app_row.status == ApplicationStatus.SCHEDULING.value
+    assert ("system", "error") not in session.audits()
+
+
+async def test_in_flight_statuses_shared_by_both_nets() -> None:
+    """Hai lưới (handler lỗi của background + sweep đối soát) PHẢI dùng chung một định nghĩa
+    "trạng thái nào còn được ghi đè". Lệch nhau là cách sinh ra chính lớp lỗi cả hai đang chặn."""
+    from app.models.application import IN_FLIGHT_STATUSES
+    from app.services import stuck_applications
+
+    assert set(stuck_applications._STUCK_STATUSES) == set(IN_FLIGHT_STATUSES)
+    assert set(IN_FLIGHT_STATUSES) == {"SUBMITTED", "PARSING", "RANKING"}
+
+
 async def test_terminal_status_not_overwritten_by_late_pipeline(monkeypatch) -> None:
     """Hồ sơ đã REJECTED (thư từ chối ĐÃ gửi) mà kết quả pipeline về muộn → KHÔNG ghi đè.
     Ghi đè ở đây là "từ chối xong lại mời"."""

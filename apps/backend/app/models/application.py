@@ -36,6 +36,23 @@ class ApplicationStatus(str, enum.Enum):
     REJECTED = "REJECTED"
 
 
+# Trạng thái "ĐANG BAY" (PRD §13): pipeline CHƯA ra quyết định và CHƯA có email nào tới ứng viên.
+# Đây là TẬP DUY NHẤT mà xử-lý-lỗi/đối-soát được phép ghi đè. Mọi trạng thái sau đó đều đã "phát ra
+# ngoài" một thứ gì đó không rút lại được:
+#   REJECTED / INTERVIEW_SCHEDULED — thư từ chối/thư mời đã tới tay ứng viên.
+#   AWAITING_SCREENER             — magic-link ĐÃ gửi; hạ trạng thái là ứng viên nộp câu trả lời bị
+#                                   409 và mất bài dự tuyển (họ là guest, không có gì để khiếu nại).
+#   SCHEDULING                    — "đã quyết mời, thư mời CÓ THỂ đã gửi" (CLAUDE.md) → kéo về hàng
+#                                   chờ HR là mở đường cho "mời xong lại từ chối".
+IN_FLIGHT_STATUSES = frozenset(
+    {
+        ApplicationStatus.SUBMITTED.value,
+        ApplicationStatus.PARSING.value,
+        ApplicationStatus.RANKING.value,
+    }
+)
+
+
 class Application(Base, TimestampMixin):
     __tablename__ = "application"
 

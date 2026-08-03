@@ -14,18 +14,11 @@ from app.agents.runner import resume_with_trace, run_with_trace
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
-from app.models.application import Application, ApplicationStatus
+from app.models.application import IN_FLIGHT_STATUSES, Application, ApplicationStatus
 from app.models.job_posting import JobPosting
 from app.services import audit_service, job_service
 
 logger = get_logger("app.tasks.background")
-
-# Trạng thái CUỐI (PRD §13): thư mời/từ chối ĐÃ tới tay ứng viên. Không đường nào được ghi đè —
-# ghi đè nghĩa là "mời xong lại từ chối" / "từ chối xong lại mời" (CLAUDE.md, bất biến email-first).
-_TERMINAL_STATUSES = frozenset(
-    {ApplicationStatus.REJECTED.value, ApplicationStatus.INTERVIEW_SCHEDULED.value}
-)
-
 
 async def _escalate_technical_error(application_id: int, reason: str) -> None:
     """Đưa hồ sơ về PENDING_REVIEW[error] (PRD §13) bằng session MỚI. KHÔNG BAO GIỜ raise.
@@ -33,6 +26,13 @@ async def _escalate_technical_error(application_id: int, reason: str) -> None:
     Vì sao session MỚI: lỗi đưa ta tới đây thường LÀ lỗi của chính session cũ (pool timeout, kết nối
     Neon chết, transaction hỏng) — tái dùng nó thì thao tác cứu hộ chết theo. Session mới là lần thử
     trung thực duy nhất.
+
+    CHỈ hạ hồ sơ CÒN ĐANG BAY (`IN_FLIGHT_STATUSES`). Vì `try` nay bao cả `async with`, việc ĐÓNG
+    session cũng rơi vào tay handler này — và đóng session KHÔNG hề vô hại: `audit_service.record(
+    commit=True)` kết thúc bằng `refresh()`, thao tác này MỞ LẠI một transaction, nên lúc thoát khối
+    `async with` còn một ROLLBACK đi qua mạng và nó CÓ THỂ ném. Nếu lúc đó cứ hạ trạng thái thì:
+    AWAITING_SCREENER (magic-link ĐÃ gửi) → ứng viên nộp câu trả lời nhận 409, MẤT bài dự tuyển; hoặc
+    SCHEDULING (thư mời có thể đã gửi) → HR nhận thẻ [error] rồi từ chối người vừa được mời.
 
     Nếu ngay cả session mới cũng hỏng (pool cạn SẠCH) thì nuốt + `logger.exception`: hàm này chạy
     trong BackgroundTask, ném ra là biến mất không dấu vết. Khi đó hồ sơ còn kẹt ở SUBMITTED và lưới
@@ -43,11 +43,11 @@ async def _escalate_technical_error(application_id: int, reason: str) -> None:
             application = await session.get(Application, application_id)
             if application is None:
                 return
-            if application.status in _TERMINAL_STATUSES:
-                # Quyết định đã phát email ra ngoài → lỗi kỹ thuật sau đó KHÔNG được kéo ngược về
-                # hàng chờ HR (HR sẽ quyết lần hai trên một hồ sơ đã có thư).
+            if application.status not in IN_FLIGHT_STATUSES:
+                # Hồ sơ đã rời vạch "chưa quyết" — thứ gì đó đã phát ra ngoài (email/magic-link) hoặc
+                # đã có lưới riêng lo. Lỗi kỹ thuật sau thời điểm ấy KHÔNG được kéo ngược trạng thái.
                 logger.warning(
-                    "BG: app=%s đang ở trạng thái cuối %s — KHÔNG hạ về PENDING_REVIEW[error]",
+                    "BG: app=%s đang ở %s (không còn đang bay) — KHÔNG hạ về PENDING_REVIEW[error]",
                     application_id, application.status,
                 )
                 return
@@ -131,12 +131,12 @@ async def process_application(application_id: int, *, force_review: bool = False
                     application_id,
                 )
                 return
-            if application.status in _TERMINAL_STATUSES:
-                # Thư mời/từ chối ĐÃ phát ra ngoài trong lúc pipeline còn chạy (vd pipeline treo rất
-                # lâu → sweep đối soát đẩy về HR → HR quyết). Ghi đè ở đây = "từ chối xong lại mời".
-                # Kết quả pipeline đến muộn thì BỎ, giữ nguyên quyết định đã tới tay ứng viên.
+            if application.status not in IN_FLIGHT_STATUSES:
+                # Hồ sơ đã rời vạch "chưa quyết" trong lúc pipeline còn chạy (vd pipeline treo rất
+                # lâu → sweep đối soát đẩy về HR → HR quyết, thư đã gửi). Ghi đè ở đây = "từ chối
+                # xong lại mời". Kết quả pipeline đến muộn thì BỎ, giữ quyết định đã tới ứng viên.
                 logger.warning(
-                    "BG: application_id=%s đã ở trạng thái cuối %s — BỎ kết quả pipeline đến muộn",
+                    "BG: application_id=%s đang ở %s (không còn đang bay) — BỎ kết quả đến muộn",
                     application_id, application.status,
                 )
                 return
