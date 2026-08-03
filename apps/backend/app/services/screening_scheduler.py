@@ -15,7 +15,7 @@ from typing import Protocol
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
-from app.services import screening_timeout
+from app.services import screening_timeout, stuck_applications
 
 logger = get_logger("app.services.screening_scheduler")
 
@@ -29,9 +29,9 @@ class ScreeningTimeoutScheduler(Protocol):
 
 
 class InProcessScheduler:
-    """Sweep loop trong tiến trình: mỗi `interval_seconds` gọi `sweep_once` (quét Postgres). Task bền
-    trong event loop CHÍNH (lifespan) → await graph resume + AsyncPostgresSaver tự nhiên (KHÔNG
-    asyncio.run per-item — bẫy 08a). Một vòng lỗi KHÔNG giết loop."""
+    """Sweep loop trong tiến trình: mỗi `interval_seconds` chạy các vòng quét Postgres (deadline
+    Screener + đối soát hồ sơ kẹt). Task bền trong event loop CHÍNH (lifespan) → await graph resume +
+    AsyncPostgresSaver tự nhiên (KHÔNG asyncio.run per-item — bẫy 08a). Một vòng lỗi KHÔNG giết loop."""
 
     def __init__(self, interval_seconds: int) -> None:
         self._interval = max(1, interval_seconds)
@@ -64,6 +64,11 @@ class InProcessScheduler:
             try:
                 await asyncio.sleep(self._interval)
                 await screening_timeout.sweep_once(AsyncSessionLocal)
+                # Lưới đối soát hồ sơ KẸT giữa pipeline (hardening tải). Đi chung vòng quét vì cùng
+                # nhịp + cùng cơ chế; nghiệp vụ nằm ở module RIÊNG (deadline screener và pipeline bị
+                # gián đoạn là hai chuyện khác nhau). Một vòng lỗi ở sweep trên chỉ hoãn lưới này tới
+                # vòng sau — cả hai đều idempotent nên hoãn là vô hại.
+                await stuck_applications.sweep_stuck_once(AsyncSessionLocal)
             except asyncio.CancelledError:
                 raise  # dừng sạch khi stop()
             except Exception:  # noqa: BLE001 — một vòng lỗi KHÔNG giết loop (sweep vòng sau)
