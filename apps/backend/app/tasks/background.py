@@ -20,6 +20,49 @@ from app.services import audit_service, job_service
 
 logger = get_logger("app.tasks.background")
 
+# Trạng thái CUỐI (PRD §13): thư mời/từ chối ĐÃ tới tay ứng viên. Không đường nào được ghi đè —
+# ghi đè nghĩa là "mời xong lại từ chối" / "từ chối xong lại mời" (CLAUDE.md, bất biến email-first).
+_TERMINAL_STATUSES = frozenset(
+    {ApplicationStatus.REJECTED.value, ApplicationStatus.INTERVIEW_SCHEDULED.value}
+)
+
+
+async def _escalate_technical_error(application_id: int, reason: str) -> None:
+    """Đưa hồ sơ về PENDING_REVIEW[error] (PRD §13) bằng session MỚI. KHÔNG BAO GIỜ raise.
+
+    Vì sao session MỚI: lỗi đưa ta tới đây thường LÀ lỗi của chính session cũ (pool timeout, kết nối
+    Neon chết, transaction hỏng) — tái dùng nó thì thao tác cứu hộ chết theo. Session mới là lần thử
+    trung thực duy nhất.
+
+    Nếu ngay cả session mới cũng hỏng (pool cạn SẠCH) thì nuốt + `logger.exception`: hàm này chạy
+    trong BackgroundTask, ném ra là biến mất không dấu vết. Khi đó hồ sơ còn kẹt ở SUBMITTED và lưới
+    cuối là sweep đối soát (`stuck_applications`) — đó là lý do lưới ấy tồn tại.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            application = await session.get(Application, application_id)
+            if application is None:
+                return
+            if application.status in _TERMINAL_STATUSES:
+                # Quyết định đã phát email ra ngoài → lỗi kỹ thuật sau đó KHÔNG được kéo ngược về
+                # hàng chờ HR (HR sẽ quyết lần hai trên một hồ sơ đã có thư).
+                logger.warning(
+                    "BG: app=%s đang ở trạng thái cuối %s — KHÔNG hạ về PENDING_REVIEW[error]",
+                    application_id, application.status,
+                )
+                return
+            application.status = ApplicationStatus.PENDING_REVIEW.value
+            application.escalation_reason = reason
+            await audit_service.record(
+                session, application_id=application_id, node="system",
+                action="error", escalation_reason="technical_error", commit=True,
+            )
+    except Exception:  # noqa: BLE001 — lưới cuối: KHÔNG để lỗi thoát khỏi BackgroundTask không dấu vết
+        logger.exception(
+            "BG: KHÔNG ghi nổi PENDING_REVIEW[error] cho app=%s — hồ sơ còn kẹt, chờ sweep đối soát",
+            application_id,
+        )
+
 
 def _parsed_summary(parsed: dict | None) -> dict:
     """Tóm tắt parsed_data cho audit detail (PRD §16) — không nhồi cả CV vào log."""
@@ -35,36 +78,72 @@ def _parsed_summary(parsed: dict | None) -> dict:
 
 
 async def process_application(application_id: int, *, force_review: bool = False) -> None:
-    """Mỗi CV một pipeline độc lập (FR-PIPE-1). Ghi audit mọi bước (FR-PIPE-4)."""
+    """Mỗi CV một pipeline độc lập (FR-PIPE-1). Ghi audit mọi bước (FR-PIPE-4).
+
+    VÒNG ĐỜI SESSION (hardening tải): ĐỌC (session ngắn) → CHẠY pipeline KHÔNG giữ connection →
+    GHI (session MỚI). Trước đây MỘT session mở suốt từ `session.get` tới `commit`, tức giữ một
+    connection Neon + một TRANSACTION MỞ trọn cả lượt gọi parser LLM lẫn ranker LLM (hàng chục giây).
+    Pool chỉ có `pool_size + max_overflow` connection ⇒ vài chục CV nộp cùng lúc là cạn pool và các
+    pipeline sau chết vì `QueuePool ... timed out`. Nay connection chỉ bị giữ vài mili-giây ở hai đầu.
+
+    TOÀN BỘ thân hàm nằm trong MỘT try — thao tác DB ĐẦU TIÊN cũng phải được bắt. Trước đây nó nằm
+    NGOÀI try nên pool cạn ngay tại đó ném thẳng ra ngoài BackgroundTasks: Starlette KHÔNG bắt,
+    response 201 thì đã trả cho ứng viên, hồ sơ nằm mãi ở SUBMITTED với audit_log TRỐNG — mất im lặng.
+    """
     logger.info("BG: bắt đầu xử lý application_id=%s", application_id)
-    async with AsyncSessionLocal() as session:
-        application = await session.get(Application, application_id)
-        if application is None:
-            logger.warning("BG: application_id=%s không tồn tại — bỏ qua", application_id)
-            return
-
-        try:
-            await audit_service.record(
-                session, application_id=application_id, node="system",
-                action="received", detail={"source": "background_task"}, commit=False,
-            )
-
+    try:
+        # ── 1) ĐỌC: lấy MỌI thứ pipeline cần rồi TRẢ connection ngay. Chụp ra biến cục bộ thay vì
+        #    giữ ORM object qua ranh giới session (idiom sẵn có của file: "dữ liệu tách khỏi session").
+        async with AsyncSessionLocal() as session:
+            application = await session.get(Application, application_id)
+            if application is None:
+                logger.warning("BG: application_id=%s không tồn tại — bỏ qua", application_id)
+                return
+            applicant_email = application.applicant_email
+            cv_file_ref = application.cv_file_ref
             # JD cho ranker (nếu application gắn job_id + JD tồn tại).
             jd = None
-            job = None
+            job_title = "vị trí ứng tuyển"
+            screener_questions: list = []
             if application.job_id is not None:
                 job = await session.get(JobPosting, application.job_id)
                 if job is not None:
                     jd = job_service.jd_dict(job)
+                    job_title = job.title
+                    screener_questions = list(job.screener_questions or [])
 
-            out = await run_with_trace(
-                force_review=force_review,
-                applicant_email=application.applicant_email,
-                application_id=application_id,
-                cv_path=application.cv_file_ref,  # parser đọc CV thật từ đây
-                jd=jd,                             # ranker đọc JD thật từ đây
+        # ── 2) CHẠY pipeline — phần TỐN GIÂY (parser LLM + ranker LLM). KHÔNG giữ connection nào ──
+        out = await run_with_trace(
+            force_review=force_review,
+            applicant_email=applicant_email,
+            application_id=application_id,
+            cv_path=cv_file_ref,  # parser đọc CV thật từ đây
+            jd=jd,                # ranker đọc JD thật từ đây
+        )
+        final = out["final"]
+
+        # ── 3) GHI: session MỚI, đọc LẠI hồ sơ (nguồn chân lý hiện tại) rồi ghi kết quả ──
+        async with AsyncSessionLocal() as session:
+            application = await session.get(Application, application_id)
+            if application is None:  # bị xóa trong lúc chạy (vd reset_demo_data) — KHÔNG gửi email
+                logger.warning(
+                    "BG: application_id=%s biến mất trong lúc chạy pipeline — bỏ ghi kết quả",
+                    application_id,
+                )
+                return
+            if application.status in _TERMINAL_STATUSES:
+                # Thư mời/từ chối ĐÃ phát ra ngoài trong lúc pipeline còn chạy (vd pipeline treo rất
+                # lâu → sweep đối soát đẩy về HR → HR quyết). Ghi đè ở đây = "từ chối xong lại mời".
+                # Kết quả pipeline đến muộn thì BỎ, giữ nguyên quyết định đã tới tay ứng viên.
+                logger.warning(
+                    "BG: application_id=%s đã ở trạng thái cuối %s — BỎ kết quả pipeline đến muộn",
+                    application_id, application.status,
+                )
+                return
+            await audit_service.record(
+                session, application_id=application_id, node="system",
+                action="received", detail={"source": "background_task"}, commit=False,
             )
-            final = out["final"]
 
             # Ghi audit cho từng node (parser + ranker đã THẬT; screener/scheduler vẫn stub).
             for step in out["trace"]:
@@ -136,7 +215,7 @@ async def process_application(application_id: int, *, force_review: bool = False
             if auto_reject:
                 reject_email = application.applicant_email
                 reject_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
-                reject_title = job.title if job is not None else "vị trí ứng tuyển"
+                reject_title = job_title
 
             # JD-2b: ca BỎ-QUA-screener (JD không câu hỏi) + JD auto_invite BẬT → route_after_screener rẽ
             # scheduler NGAY ở lần chạy đầu (branch="auto_invite", KHÔNG suspend). Gom dữ liệu email mời vào
@@ -146,7 +225,7 @@ async def process_application(application_id: int, *, force_review: bool = False
             if auto_invite:
                 invite_email_to = application.applicant_email
                 invite_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
-                invite_title = job.title if job is not None else "vị trí ứng tuyển"
+                invite_title = job_title
 
             # Screener (08b): dừng ở screener → TẠO screening_session (token + hạn + ảnh chụp câu hỏi)
             # trong CÙNG commit với AWAITING_SCREENER (nguyên tử). Gom dữ liệu email vào locals để gửi
@@ -154,14 +233,13 @@ async def process_application(application_id: int, *, force_review: bool = False
             if suspended:
                 from app.services import screening  # import trễ: tránh vòng import screening↔background
 
-                questions = list(getattr(job, "screener_questions", None) or []) if job else []
-                screening_row = screening.create_session(session, application_id, questions)
+                screening_row = screening.create_session(session, application_id, screener_questions)
                 # Denormalize mốc screener lên application cho HR hiển thị (CÙNG commit — nguyên tử).
                 screening.mark_screener_sent(application, screening_row)
                 screener_token = screening_row.token
                 screener_email_to = application.applicant_email
                 screener_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
-                screener_title = job.title if job is not None else "vị trí ứng tuyển"
+                screener_title = job_title
 
             await session.commit()
             logger.info(
@@ -236,17 +314,11 @@ async def process_application(application_id: int, *, force_review: bool = False
                         "BG: notify_screener lỗi SAU khi AWAITING_SCREENER đã commit app=%s",
                         application_id,
                     )
-        except Exception:  # noqa: BLE001 — lỗi kỹ thuật -> PENDING_REVIEW[error] (PRD §13)
-            logger.exception("BG: lỗi xử lý application_id=%s", application_id)
-            await session.rollback()
-            application = await session.get(Application, application_id)
-            if application is not None:
-                application.status = ApplicationStatus.PENDING_REVIEW.value
-                application.escalation_reason = "Lỗi kỹ thuật khi xử lý pipeline (error)."
-                await audit_service.record(
-                    session, application_id=application_id, node="system",
-                    action="error", escalation_reason="technical_error", commit=True,
-                )
+    except Exception:  # noqa: BLE001 — lỗi kỹ thuật -> PENDING_REVIEW[error] (PRD §13)
+        logger.exception("BG: lỗi xử lý application_id=%s", application_id)
+        await _escalate_technical_error(
+            application_id, "Lỗi kỹ thuật khi xử lý pipeline (error)."
+        )
 
 
 async def resume_screener(
