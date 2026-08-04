@@ -28,8 +28,8 @@ from __future__ import annotations
 import secrets
 from datetime import datetime, time, timedelta, timezone
 
-from sqlalchemy import and_, or_, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import and_, or_, select, text, update
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
@@ -37,6 +37,10 @@ from app.models.booking import BookingSession, BookingStatus, InterviewBooking
 from app.services.booking_config import BookingConfig, load_booking_config
 
 logger = get_logger("app.services.booking")
+
+# Không gian khoá tư vấn Postgres (pg_advisory_xact_lock nhận 2 int4). Số tuỳ ý nhưng phải
+# CỐ ĐỊNH và riêng cho đặt lịch, để không đụng khoá của thành phần khác dùng chung cơ chế.
+_ADVISORY_LOCK_NS = 0x0B00C1
 
 __all__ = [
     "AlreadyBooked",
@@ -46,6 +50,8 @@ __all__ = [
     "SlotTaken",
     "TokenExpired",
     "TokenNotFound",
+    "active_session",
+    "cancel_sessions",
     "confirm_booking",
     "create_booking_session",
     "generate_slots",
@@ -189,11 +195,14 @@ async def _occupied(
             ),
         ),
     )
-    taken: set[datetime] = set()
+    taken: set[datetime] = {
+        _as_utc(s, "start_at trong DB") for s in (await session.execute(stmt)).scalars().all()
+    }
+    # Đếm theo MỐC GIỜ DUY NHẤT, không theo số hàng: hai hàng cùng `start_at` (hai người cùng cân
+    # nhắc một khung giờ — hợp lệ theo §10b.5) chỉ chiếm MỘT chỗ trong ngày. Đếm theo hàng làm
+    # `max_per_day` bị thổi phồng và đóng sạch những ngày gần nhất với MỌI ứng viên khác.
     per_day: dict[object, int] = {}
-    for start_at in (await session.execute(stmt)).scalars().all():
-        start_utc = _as_utc(start_at, "start_at trong DB")
-        taken.add(start_utc)
+    for start_utc in taken:
         local_day = start_utc.astimezone(cfg.tz).date()
         per_day[local_day] = per_day.get(local_day, 0) + 1
     return taken, per_day
@@ -277,7 +286,19 @@ async def generate_slots(
     cfg = cfg or load_booking_config()
     now = _as_utc(now, "now") if now is not None else _now()
 
-    # ── 0) Đã chốt lịch rồi thì KHÔNG phát thêm slot ─────────────────────────────────────
+    # ── 0) KHOÁ theo application: "đọc rồi mới ghi" ở đây là TOCTOU thật, đã đo được ─────
+    # Hai lượt GET chồng nhau trên CÙNG token đều thấy "chưa có hold nào" rồi cùng chèn: 2 lượt →
+    # 10 hàng, 8 lượt → 40 hàng (adversarial review đo trên Postgres thật). Bất biến "bấm lại trả
+    # slot cũ" chỉ đúng khi tuần tự — mà ứng viên bấm F5 hai lần hoặc trình duyệt gửi lại request
+    # là đủ để phá. Khoá tư vấn theo application_id: rẻ, tự nhả khi transaction kết thúc, và không
+    # chặn các application khác. (Hai application KHÁC NHAU vẫn được cùng giữ một mốc giờ — đó là
+    # thiết kế "HELD = khuyến nghị"; partial unique index xử lý ở bước chốt.)
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:ns, :app_id)"),
+        {"ns": _ADVISORY_LOCK_NS, "app_id": application_id},
+    )
+
+    # ── 1) Đã chốt lịch rồi thì KHÔNG phát thêm slot ─────────────────────────────────────
     booked = (
         await session.execute(
             select(InterviewBooking)
@@ -290,6 +311,7 @@ async def generate_slots(
         )
     ).scalar_one_or_none()
     if booked is not None:
+        await session.commit()  # nhả khoá tư vấn trước khi ném
         raise AlreadyBooked("Hồ sơ này đã đặt lịch phỏng vấn.", booked)
 
     # ── 1) BẤM LẠI: đang giữ chỗ còn hạn → trả ĐÚNG các slot đó (bất biến chống rò slot) ──
@@ -314,6 +336,7 @@ async def generate_slots(
             application_id,
             len(existing),
         )
+        await session.commit()  # nhả khoá tư vấn (và transaction) trước khi trả về
         return existing
 
     # ── 2) Sinh mới ──────────────────────────────────────────────────────────────────────
@@ -324,6 +347,7 @@ async def generate_slots(
         logger.warning(
             "booking: app=%s KHÔNG còn khung giờ trống trong %d ngày tới", application_id, cfg.window_days
         )
+        await session.commit()
         return []
 
     hold_until = now + timedelta(minutes=cfg.hold_minutes)
@@ -394,7 +418,11 @@ async def confirm_booking(
         raise BookingNotFound("Khung giờ không hợp lệ.")
 
     if row.status == BookingStatus.BOOKED.value:
-        return row  # idempotent
+        # Idempotent — NHƯNG phải đóng transaction trước khi trả về: `SELECT … FOR UPDATE` ở trên
+        # đang giữ khoá hàng + một connection của pool, và caller sẽ đi gọi Resend ngay sau đây.
+        # Đo được 1.29s giữ connection xuyên suốt lượt gửi mail ở đường bấm-lại (Load boundary cấm).
+        await session.commit()
+        return row
     if row.status != BookingStatus.HELD.value:
         raise HoldExpired("Khung giờ này không còn được giữ. Xin tải lại và chọn giờ khác.")
     if row.hold_expires_at is None or _as_utc(row.hold_expires_at, "hold_expires_at") <= now:
@@ -409,7 +437,11 @@ async def confirm_booking(
     row.hold_expires_at = None
     try:
         await session.commit()
-    except IntegrityError as exc:
+    except DBAPIError as exc:
+        # IntegrityError = thua partial unique index (ai đó vừa BOOKED mốc giờ này).
+        # DBAPIError khác = deadlock/serialization: hai tab của CÙNG ứng viên chốt hai booking_id
+        # khác nhau khoá chéo nhau qua release_holds (đã tái hiện được). Cả hai đều là "thử lại đi",
+        # nên trả CHUNG 409 — để lọt ra ngoài thì route ném 500 và ứng viên thấy màn lỗi thô.
         # Rollback trả lại NGUYÊN TRẠNG, kể cả các chỗ giữ anh em vừa nhả — ứng viên thua race vẫn
         # còn đủ lựa chọn khác để chọn lại ngay.
         await session.rollback()
@@ -516,3 +548,47 @@ async def latest_booking(
         .limit(1)
     )
     return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def active_session(
+    session: AsyncSession, application_id: int, *, now: datetime | None = None
+) -> BookingSession | None:
+    """Liên kết đặt lịch CÒN SỐNG của một hồ sơ (chưa huỷ, chưa hết hạn), nếu có.
+
+    Dùng để KHÔNG phát token thứ hai khi lời mời được gửi lại (HR bấm duyệt ở hai tab, hoặc thử lại
+    một request chậm). Hai token sống song song nghĩa là hai email với hai liên kết khác nhau —
+    ứng viên không biết cái nào thật, và ta có một token mồ côi không ai theo dõi.
+    """
+    at = _as_utc(now, "now") if now is not None else _now()
+    stmt = (
+        select(BookingSession)
+        .where(
+            BookingSession.application_id == application_id,
+            BookingSession.cancelled_at.is_(None),
+            BookingSession.expires_at > at,
+        )
+        .order_by(BookingSession.created_at.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def cancel_sessions(
+    session: AsyncSession, application_id: int, *, now: datetime | None = None
+) -> int:
+    """Huỷ mọi liên kết đặt lịch còn sống của một hồ sơ. Trả số phiên đã huỷ. **KHÔNG commit.**
+
+    Gọi khi hồ sơ rẽ sang hướng KHÔNG còn phỏng vấn nữa (HR từ chối). Bỏ bước này thì ứng viên vừa
+    nhận thư từ chối vẫn mở được link cũ và tự đặt lịch — `confirm_and_notify` sẽ ghi đè `REJECTED`
+    thành `INTERVIEW_SCHEDULED` và họ xuất hiện trên lịch của HR.
+    """
+    at = _as_utc(now, "now") if now is not None else _now()
+    stmt = (
+        update(BookingSession)
+        .where(
+            BookingSession.application_id == application_id,
+            BookingSession.cancelled_at.is_(None),
+        )
+        .values(cancelled_at=at)
+    )
+    return (await session.execute(stmt)).rowcount or 0

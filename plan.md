@@ -1,13 +1,12 @@
-# SLICE SCH-1 — Nền đặt lịch: model + sinh slot + giữ chỗ + xác nhận + seam lịch · plan one-shot
+# SLICE SCH-2 — Nối đặt lịch vào luồng: thư mời + link · trang chọn giờ · xác nhận + .ics · plan one-shot
 
-> **Bản chất:** plan ONE-SHOT. Xong + nghiệm thu thì bỏ. Nguồn chân lý: **`PRD.md` §10b** (FR-BOOK-1..5), §16.
-> **Mục tiêu:** dựng **tầng nghiệp vụ** cho đặt lịch: bảng dữ liệu, cấu hình khả dụng, **sinh slot lười**,
-> **giữ chỗ (HELD) 10 phút**, **xác nhận (HELD→BOOKED) chống race**, và **seam `CalendarProvider`** (mặc định
-> `.ics`). Tuân thủ `CLAUDE.md`.
+> **Bản chất:** plan ONE-SHOT. Nguồn chân lý: **`PRD.md` §10b, §12.4 (FR-BOOK-1..2), §13**.
+> **Mục tiêu:** biến nền SCH-1 thành luồng chạy thật: quyết định **mời** → thư mời **kèm link đặt lịch** →
+> `AWAITING_BOOKING`; ứng viên mở link → **5 slot** (sinh lười) → chọn → `INTERVIEW_SCHEDULED` + email xác
+> nhận kèm `.ics`. Tuân thủ `CLAUDE.md` / `docs/AI_GUIDE.md`.
 >
-> **⚠️ Ranh giới:** SCH-1 **KHÔNG đụng pipeline/graph/scheduler_node**, **KHÔNG có UI**, **KHÔNG gửi email**.
-> Nối vào pipeline + trang công khai = **SCH-2**. Nhắc/hết hạn/hủy + HR quản lý = **SCH-3**.
-> Lát này là _thư viện nghiệp vụ_ — test độc lập được, chưa ai gọi tới.
+> **⚠️ LÁT NHẠY CẢM** — chạm `scheduler_node` + trạng thái cuối + email thật. **KHÔNG thêm `interrupt()`**
+> (đặt lịch nằm NGOÀI graph — B2). Giữ nguyên bất biến 08d. Nhắc/hết hạn/hủy/HR-dời-lịch = **SCH-3**.
 
 ---
 
@@ -15,112 +14,111 @@
 
 **In scope:**
 
-- Model `InterviewBooking` + `BookingSession` (PRD §16) + migration (**partial unique index** chống trùng).
-- **Cấu hình khả dụng toàn cục** qua env (§10b.7) + múi giờ `Asia/Ho_Chi_Minh`.
-- Service: `generate_slots(application_id)` (sinh lười + giữ chỗ), `confirm_booking(...)` (HELD→BOOKED, chống race), `release_holds(...)`.
-- Seam `CalendarProvider` (`create_event`/`cancel_event`) + `IcsProvider` mặc định (sinh `.ics`).
-- Test đầy đủ tầng service (gồm test race thật).
+- `scheduler_node` (nhánh **MỜI**): tạo `BookingSession` (token, TTL 72h) → gửi **thư mời + link đặt lịch** → status **`AWAITING_BOOKING`**.
+- Endpoint công khai: `GET /api/public/booking/{token}` (→ `generate_slots`) · `POST /api/public/booking/{token}/confirm` (→ `confirm_booking`, thua race → **409**).
+- Trang công khai `/booking/{token}`: 5 slot (giờ VN), **đồng hồ đếm ngược hold**, chọn → xác nhận; 409 → tự làm mới danh sách; **`AlreadyBooked` → hiện "bạn đã đặt lúc X"** (KHÔNG render danh sách chọn).
+- Email **xác nhận lịch** kèm `.ics` (qua `CalendarProvider` của SCH-1) → `INTERVIEW_SCHEDULED`.
+- `AWAITING_BOOKING` vào rổ "đang xử lý" của dashboard + nhãn HR.
 
-**Out of scope (KHÔNG làm — SCH-2/SCH-3):**
-
-- KHÔNG sửa `scheduler_node`/graph/status pipeline · KHÔNG endpoint công khai · KHÔNG trang chọn giờ · KHÔNG gửi email (SCH-2).
-- KHÔNG nhắc/hết hạn/`booking_no_response`/hủy/HR dời lịch (SCH-3).
-- KHÔNG Google Calendar (chỉ _chừa seam_; §17).
+**Out of scope (SCH-3):** nhắc trước PV · link hết hạn → `booking_no_response` · hủy · HR dời/hủy lịch.
+**KHÔNG:** thêm interrupt/đổi định tuyến graph · đụng ranker/parser/screener/gate logic · Google Calendar.
 
 ---
 
 ## 2. Prerequisites
 
-- Hardening (nhả connection) đã xong. Sweep loop 08c có sẵn (SCH-3 dùng).
-- **Env mới** (đề xuất, Claude Code chốt tên): `BOOKING_TIMEZONE=Asia/Ho_Chi_Minh` · `BOOKING_WORK_DAYS=1-5`
-  · `BOOKING_WORK_START=08:00` · `BOOKING_WORK_END=17:30` · `BOOKING_LUNCH=12:00-13:30`
-  · `BOOKING_DURATION_MINUTES=60` · `BOOKING_BUFFER_MINUTES=15` · `BOOKING_LEAD_TIME_HOURS=24`
-  · `BOOKING_MAX_PER_DAY=4` · `BOOKING_WINDOW_DAYS=14` · `BOOKING_SLOTS_OFFERED=5` · `BOOKING_HOLD_MINUTES=10`
-  · `BOOKING_LINK_TTL_HOURS=72`. Cập nhật `.env.example`.
+- SCH-1 xong (`generate_slots`/`confirm_booking`/`SlotTaken`/`AlreadyBooked`/`IcsProvider`).
+- Nhánh **TỪ CHỐI** của scheduler **giữ nguyên** (→ `REJECTED`). Chỉ nhánh MỜI đổi.
 
 ## 3. Việc cần làm
 
-### 3.1 Model + migration
+### 3.1 `scheduler_node` — nhánh MỜI · `app/agents/nodes/scheduler.py`
 
-- `InterviewBooking`: id · application_id (FK) · start_at · end_at · status (`HELD`/`BOOKED`/`CANCELLED`) · hold_expires_at (nullable) · created_at.
-- `BookingSession`: id · application_id (FK) · token (urlsafe, **KHÔNG one-time**) · expires_at · reminded_at · booked_at · cancelled_at.
-- **Migration hand-written** (add table; **include_object guard** — đừng drop bảng checkpoint):
-  **partial unique index** `UNIQUE (start_at) WHERE status = 'BOOKED'` → chặn đặt trùng ở tầng DB.
-- Thời gian lưu **timestamptz (UTC)**; sinh/hiển thị theo `Asia/Ho_Chi_Minh`.
+- Tạo `BookingSession` (token urlsafe crypto-random như 08b, `expires_at = now + BOOKING_LINK_TTL_HOURS`).
+- Soạn **thư mời có link** `{FRONTEND_BASE_URL}/booking/{token}` (nêu rõ hạn 72h) → gửi qua đường email hiện có (`notify_decision` vẫn là **điểm gửi email DUY NHẤT**).
+- **THỨ TỰ BẤT BIẾN (08d):** email gửi THÀNH CÔNG rồi mới đặt `AWAITING_BOOKING`. Dispatch **CÔ LẬP** khỏi error handler (đừng để lỗi kỹ thuật sau đó reset trạng thái — lớp "trạng thái nói dối").
+- Áp cho **CẢ HAI** đường tới quyết định mời: gate `auto_invite` và HR duyệt ở `/review`.
+- `INTERVIEW_SCHEDULED` **KHÔNG còn** đặt ở đây (chuyển sang lúc xác nhận lịch — §3.3).
 
-### 3.2 Cấu hình khả dụng · settings
+### 3.2 Endpoint công khai · `app/api/public.py`
 
-- Đọc env §2 vào Settings (validate: work_start < work_end; lunch nằm trong giờ làm; duration/buffer > 0).
+- `GET /api/public/booking/{token}`: token hợp lệ + chưa hết hạn → `generate_slots` → trả **projection AN TOÀN**: tiêu đề JD + tên ứng viên + danh sách slot (id, giờ bắt đầu/kết thúc) + `hold_expires_at`. **TUYỆT ĐỐI KHÔNG** rubric/điểm/gate/parsed_data/trạng thái nội bộ (kỷ luật 08b).
+  - `AlreadyBooked` → **200** với payload `{already_booked: true, start_at}` (KHÔNG phải lỗi — để UI hiện thông báo).
+  - Token sai → 404; hết hạn → 410 (thông báo êm).
+- `POST /api/public/booking/{token}/confirm` body `{booking_id}`: → `confirm_booking` → gửi email xác nhận + `.ics` → đặt `INTERVIEW_SCHEDULED` → trả thông tin lịch.
+  - `SlotTaken` → **409** (+ danh sách slot mới để UI hiển thị ngay).
+  - Hold hết hạn → **409/410** kèm thông báo "phiên giữ chỗ đã hết, mời chọn lại".
+- Rate-limit công khai: theo kỷ luật hardening — **không** để một IP khóa cả hệ (đây là trang ứng viên thật).
 
-### 3.3 Sinh slot LƯỜI + giữ chỗ · `booking_service.generate_slots()`
+### 3.3 Thứ tự ghi khi xác nhận (QUYẾT ĐỊNH THIẾT KẾ — đọc kỹ)
 
-1. **Nếu application này đã có HELD chưa hết hạn → TRẢ VỀ ĐÚNG các slot đó** (KHÔNG giữ thêm).
-   ⚠️ Bắt buộc: nếu không, mỗi lần bấm lại link = giữ thêm 5 slot → N lần bấm khóa 5N slot.
-2. Sinh slot ứng viên trong cửa sổ `BOOKING_WINDOW_DAYS`: theo ngày làm việc + giờ làm, **trừ nghỉ trưa**,
-   bước = duration + buffer, **bỏ slot sớm hơn `LEAD_TIME_HOURS`**.
-3. **Loại trừ** slot đã `BOOKED` **hoặc** (`HELD` và `hold_expires_at > now()`), và ngày đã đủ `MAX_PER_DAY`.
-4. **Chọn 5 slot trộn** (§10b.4): 2–3 slot **sớm nhất** + 2–3 slot **rải ngày/buổi khác** (sáng lẫn chiều).
-5. Ghi 5 dòng `HELD` với `hold_expires_at = now + BOOKING_HOLD_MINUTES`. Trả danh sách.
+1. `confirm_booking` (transaction, DB) — **trước tiên**, vì đây là thứ _thắng race_, phải bền và tức thì.
+2. Gửi email xác nhận + `.ics`.
+3. Đặt `INTERVIEW_SCHEDULED` + audit.
 
-- Ít hơn 5 slot khả dụng → trả hết những gì có (không lỗi). Không còn slot nào → trả rỗng (SCH-2 xử UI/HR).
+**Nếu bước 2 lỗi:** booking VẪN giữ (slot đã là sự thật) → vẫn đặt `INTERVIEW_SCHEDULED`, nhưng **ghi audit +
+cờ để HR biết cần báo lại thủ công**. Khác 08d một cách có chủ đích: ở 08d email là _kênh thông báo duy nhất_
+nên "chưa gửi = chưa mời"; ở đây **ứng viên tự bấm và thấy màn xác nhận trên web** — họ ĐÃ biết. Email chỉ là
+biên nhận. Rollback booking chỉ vì email lỗi sẽ _tệ hơn_ (mất slot họ vừa chọn).
+→ Nếu Claude Code thấy lập luận này sai, **DỪNG và nêu ý kiến** trước khi làm.
 
-### 3.4 Xác nhận · `booking_service.confirm_booking(application_id, booking_id)`
+### 3.4 Frontend · trang `/booking/[token]`
 
-- **Transaction**: khóa dòng (`SELECT … FOR UPDATE`) → kiểm còn `HELD` + chưa hết hạn + đúng application →
-  lật `BOOKED` (xóa `hold_expires_at`) → **nhả các HELD anh em** của application đó → commit.
-- **Vi phạm partial unique index** (ai đó vừa BOOKED slot này) → bắt `IntegrityError` → trả lỗi rõ để SCH-2 dịch thành **409**.
-- HELD đã hết hạn → lỗi "hold hết hạn, xin chọn lại".
-- **KHÔNG cần cron dọn hold** (truy vấn đã lọc theo `hold_expires_at`).
+- Route **công khai** (ngoài `(hr)` group), không auth. **Code-split** — không kéo bundle HR (bài học JD-1).
+- Hiện: tiêu đề JD · 5 slot định dạng giờ VN rõ ràng (vd "09:15 · Thứ Năm 06/08/2026") · **đồng hồ đếm ngược** thời gian giữ chỗ (quyết định SCH-1: không gia hạn) · nút chọn + xác nhận.
+- Hết hold giữa chừng → thông báo rõ + nút "Tải danh sách mới" (không đổ lỗi người dùng).
+- 409 → thông báo "giờ này vừa có người đặt" + **tự hiện danh sách mới**.
+- `already_booked` → màn "Bạn đã đặt lịch lúc X" (KHÔNG render danh sách chọn).
+- Hết slot khả dụng → thông báo lịch tạm đầy, HR sẽ liên hệ (không để trang trắng).
 
-### 3.5 Seam `CalendarProvider` + `IcsProvider`
+### 3.5 Dashboard HR
 
-- Interface: `create_event(booking) -> EventRef|bytes`, `cancel_event(ref)`. Chọn qua env (`CALENDAR_PROVIDER=ics`).
-- `IcsProvider`: sinh VEVENT hợp lệ (RFC 5545) — **ưu tiên 0-dependency** (tự sinh ~20 dòng) như `html_to_text` của JD-1; nếu cần lib nhẹ thì Claude Code cân nhắc + báo. Đúng múi giờ, có UID + DTSTAMP.
-- Chưa gọi ở đâu (SCH-2 đính vào email).
+- `AWAITING_BOOKING` vào rổ **"đang xử lý"** (PRD §13) + nhãn tiếng Việt rõ ("Chờ ứng viên chọn lịch").
+- Chi tiết ứng viên: hiện lịch đã đặt (nếu có) — chỉ đọc (dời/hủy = SCH-3).
 
 ### 3.6 Test
 
-- Sinh slot: tôn trọng giờ làm/nghỉ trưa/lead-time/max-per-day/cửa sổ; loại slot BOOKED và HELD-chưa-hết-hạn; **HELD hết hạn thì slot quay lại khả dụng**.
-- **Bấm lại trong lúc còn hold → TRẢ ĐÚNG 5 slot cũ, KHÔNG giữ thêm** (chống rò slot).
-- Trộn slot: không phải 5 slot dồn một buổi khi còn ngày khác trống.
-- Xác nhận: HELD→BOOKED + nhả anh em; hold hết hạn → lỗi; **race thật** (2 transaction đồng thời cùng slot → đúng 1 thắng, 1 nhận IntegrityError).
-- `.ics` sinh ra parse được, đúng giờ theo `Asia/Ho_Chi_Minh`.
+- `scheduler_node` nhánh mời → tạo session + gửi email (mock) → `AWAITING_BOOKING`; **email lỗi → KHÔNG đặt AWAITING_BOOKING** (bất biến 08d). Nhánh từ chối **không hồi quy** (→ `REJECTED`).
+- `GET` projection: **không có** rubric/điểm/gate/parsed_data trong payload (test khẳng định vắng mặt).
+- `POST` confirm → BOOKED + email + `INTERVIEW_SCHEDULED`; `SlotTaken` → 409; `AlreadyBooked` → 200 payload đúng; token sai → 404; hết hạn → 410.
+- Không hồi quy: parse→rank→screener→gate như cũ (chỉ _đuôi_ nhánh mời đổi).
 
-## 4. Verify (chạy thật)
+## 4. Verify (chạy thật — LLM + email thật, dùng email của bạn)
 
-1. `make dev-backend` (restart) — migration chạy sạch; **kiểm bảng checkpoint LangGraph còn nguyên**.
-2. Script/REPL nhỏ: tạo application giả → `generate_slots()` → in 5 slot (kiểm đúng giờ làm, có trộn ngày/buổi) → gọi lại lần 2 → **ra đúng 5 slot cũ**.
-3. `confirm_booking()` một slot → DB: 1 dòng BOOKED, 4 HELD kia đã nhả. Gọi `generate_slots()` cho application khác → **slot vừa BOOKED không xuất hiện**.
-4. Thử insert thẳng DB một BOOKED trùng `start_at` → **DB từ chối** (partial unique index hoạt động).
-5. Sinh `.ics` → mở bằng ứng dụng lịch (hoặc parse) → đúng ngày/giờ/độ dài.
-6. `make test` xanh. Pipeline **không hồi quy** (SCH-1 chưa ai gọi tới — nộp thử 1 CV vẫn chạy như cũ).
+1. Restart backend + dashboard. JD có rubric, **gate auto-mời BẬT**, screener rỗng (đi thẳng) → nộp CV tốt.
+2. **Nhận thư mời có link đặt lịch** → trạng thái `AWAITING_BOOKING` (dashboard hiện "Chờ ứng viên chọn lịch").
+3. Mở link → thấy **5 slot** giờ VN + đồng hồ đếm ngược. **Mở lại link** (tab khác) → **đúng 5 slot cũ** (không phát thêm).
+4. Chọn 1 slot → xác nhận → **email xác nhận kèm `.ics`** (mở được bằng ứng dụng lịch, đúng giờ) → `INTERVIEW_SCHEDULED`.
+5. **Mở lại link sau khi đã đặt** → hiện "Bạn đã đặt lịch lúc X", KHÔNG hiện danh sách chọn.
+6. **Race thật:** hai trình duyệt (2 ứng viên khác nhau) cùng mở, cùng chọn slot trùng → một thành công, một nhận **409 + danh sách mới**, không ai thấy màn lỗi thô.
+7. Đường HR: một ứng viên khác → `/review` → **Duyệt** → cũng ra thư mời + link (không chỉ gate mới có).
+8. Ẩn danh gọi API HR → 401 (ranh giới còn nguyên). `make test` xanh; `pnpm build` PASS.
 
 ## 5. Definition of Done
 
-- [ ] `InterviewBooking` + `BookingSession` + migration (**partial unique index BOOKED**, include_object guard, checkpoint tables nguyên).
-- [ ] Cấu hình khả dụng toàn cục qua env + `.env.example`; thời gian UTC trong DB, sinh/hiển thị `Asia/Ho_Chi_Minh`.
-- [ ] `generate_slots` sinh **lười** + giữ chỗ 10 phút + **bấm lại trả slot cũ** + trộn 5 slot; loại trừ BOOKED/HELD-còn-hạn/quá-max-ngày/dưới-lead-time.
-- [ ] `confirm_booking` transaction HELD→BOOKED + nhả anh em + bắt IntegrityError (cho SCH-2 dịch 409); hold hết hạn → lỗi rõ.
-- [ ] Seam `CalendarProvider` + `IcsProvider` (`.ics` hợp lệ, đúng múi giờ), chọn qua env.
-- [ ] **KHÔNG đụng pipeline/graph/scheduler_node/UI/email**; `make test` xanh (gồm test race thật).
+- [ ] Nhánh mời: tạo `BookingSession` + thư mời có link → `AWAITING_BOOKING`, **chỉ sau khi email gửi thành công**; dispatch cô lập khỏi error handler; áp cho cả gate lẫn HR-duyệt.
+- [ ] Endpoint công khai GET/POST đúng mã lỗi (404/410/409) + **projection an toàn** (không lộ rubric/điểm/gate).
+- [ ] Xác nhận → BOOKED → email + `.ics` → `INTERVIEW_SCHEDULED` (thứ tự §3.3).
+- [ ] Trang `/booking/[token]`: 5 slot giờ VN · đếm ngược · 409 tự làm mới · `already_booked` · hết-slot; code-split khỏi bundle HR.
+- [ ] `AWAITING_BOOKING` trong rổ "đang xử lý" + nhãn HR; chi tiết hiện lịch đã đặt (chỉ đọc).
+- [ ] **KHÔNG thêm interrupt/đổi định tuyến graph**; nhánh từ chối không hồi quy; `make test` xanh; `pnpm build` PASS.
 
-## 6. Gotchas & quy ước (theo CLAUDE.md)
+## 6. Gotchas & quy ước
 
-- **Bấm lại link phải trả slot cũ** — nếu không, N lần bấm khóa 5N slot (rò slot). Đây là bug dễ lọt nhất của lát này.
-- **Múi giờ:** lưu timestamptz UTC, sinh/so sánh theo `Asia/Ho_Chi_Minh`. **KHÔNG dùng datetime naive** ở bất kỳ đâu.
-- **Partial unique index** là `CREATE UNIQUE INDEX … WHERE status='BOOKED'` — Alembic autogenerate hay bỏ sót/viết sai → **hand-write**; include_object guard.
-- **Bẫy `refresh()` (bài học vừa rồi):** `commit=True` kèm `refresh()` **mở lại transaction** → giữ connection qua I/O. Đường confirm là transaction-nặng: commit xong **đừng refresh** nếu không cần.
-- Hold hết hạn xử lý **bằng truy vấn lọc**, không cron. `CANCELLED` không chiếm slot (chỉ BOOKED/HELD-còn-hạn mới chiếm).
-- Chạy impact analysis trước khi sửa models/migration (**GitNexus — nhớ chạy `npx gitnexus analyze` nếu index chưa có**; không thì grep).
-- Commit nhỏ (vd `feat(booking): model + migration partial unique index`, `feat(booking): cấu hình khả dụng + sinh slot lười`, `feat(booking): giữ chỗ + xác nhận chống race`, `feat(booking): seam CalendarProvider + IcsProvider`, `test(booking): slot/hold/race/ics`).
-- Nghiệp vụ chưa rõ → **PRD.md §10b**. Vướng → DỪNG, hỏi.
-- Kết thúc: in tóm tắt + lệnh verify + checklist DoD.
+- **Bất biến 08d:** đổi trạng thái CHỈ SAU khi email gửi thành công; dispatch **cô lập** khỏi technical-error handler (lớp lỗi "trạng thái nói dối" đã bị bắt ở 03b/08d/JD-2b).
+- **`AlreadyBooked` KHÔNG phải lỗi** — là một _trạng thái UI_ (200 + payload). Nếu coi là lỗi, ứng viên thấy màn vỡ khi chỉ mở lại link.
+- **Projection công khai**: chỉ tiêu đề JD + tên + slot. Test phải khẳng định _sự vắng mặt_ của rubric/điểm/gate (kỷ luật 08b).
+- **Không gia hạn hold** (quyết định SCH-1) → UI **phải** có đếm ngược, nếu không người dùng bị bất ngờ.
+- Múi giờ hiển thị: luôn `Asia/Ho_Chi_Minh`, ghi rõ thứ + ngày. **Không** để người dùng tự đoán múi giờ.
+- Token đặt lịch **KHÔNG one-time** (khác screener 08b) nhưng **có hạn**; đừng vô tình copy logic one-time.
+- Code-split trang công khai (đừng kéo bundle HR vào trang ứng viên — bài học JD-1).
+- Chạy `npx gitnexus analyze` rồi impact analysis trước khi sửa scheduler. **Adversarial review** (chạm scheduler + email thật + trạng thái cuối).
+- Commit nhỏ (vd `feat(booking): scheduler gửi link đặt lịch → AWAITING_BOOKING`, `feat(api): endpoint booking công khai`, `feat(ui): trang chọn giờ`, `feat(booking): email xác nhận + ics`, `test(booking): luồng + projection + race`).
+- Nghiệp vụ chưa rõ → **PRD.md §10b**. Vướng (nhất là §3.3) → **DỪNG, hỏi**.
 
 ## 7. Sau lát này
 
-- **SCH-2** (lát dọc, làm hệ thống chạy được): `scheduler_node` gửi **thư mời + link đặt lịch** → `AWAITING_BOOKING`
-  (KHÔNG thêm interrupt — đặt lịch ngoài graph); endpoint công khai `GET /api/public/booking/{token}` (gọi
-  `generate_slots`) + `POST …/confirm` (409 khi thua race); trang `/booking/{token}`; email xác nhận kèm `.ics`.
-  ⚠️ Giữ bất biến 08d: **chỉ đổi trạng thái SAU khi email đã gửi**; dispatch cô lập khỏi error handler.
-- **SCH-3** (hoàn thiện): nhắc trước PV 24h · link hết hạn → nhắc 1 lần → `PENDING_REVIEW[booking_no_response]`
-  (**KHÔNG auto-reject**) qua sweep 08c · link hủy → nhả slot + báo HR · HR xem/dời/hủy lịch trên dashboard.
+**SCH-3:** nhắc trước PV 24h · link hết hạn → nhắc 1 lần → `PENDING_REVIEW[booking_no_response]` (**KHÔNG
+auto-reject**, dùng sweep 08c) · link hủy → nhả slot + báo HR · HR xem/dời/hủy lịch. Rồi: **đợt scale**
+(semaphore · parser `ainvoke` · rate-limit theo IP+email · nợ giữ-connection lúc upload R2) → **tinh gọn PWA**
+→ **đóng băng** → **báo cáo**.

@@ -29,6 +29,22 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class _EmptyResult:
+    """Kết quả rỗng cho `session.execute` trong mock: SCH-2 tra "đã có link đặt lịch còn sống chưa"
+    (active_session) và huỷ link khi từ chối (cancel_sessions). Mặc định: chưa có, không huỷ gì."""
+
+    rowcount = 0
+
+    def scalar_one_or_none(self):  # noqa: ANN201
+        return None
+
+    def scalars(self):  # noqa: ANN201
+        return self
+
+    def all(self) -> list:
+        return []
+
+
 class FakeSession:
     """AsyncSession tối thiểu (mock) — đủ cho add/get/commit của tầng flow."""
 
@@ -45,6 +61,9 @@ class FakeSession:
 
     async def flush(self) -> None:
         pass
+
+    async def execute(self, *_a, **_kw):  # noqa: ANN201
+        return _EmptyResult()
 
     async def commit(self) -> None:
         self.commits += 1

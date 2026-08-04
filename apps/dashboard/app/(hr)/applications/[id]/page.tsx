@@ -126,8 +126,11 @@ export default function ApplicationDetailPage() {
             )}
           </div>
 
-          {/* Lý do cần HR xem xét (PRD §11) — chỉ báo HÀNH ĐỘNG: CHỈ hiện khi còn chờ quyết. */}
-          {app.status === "PENDING_REVIEW" && app.escalation_reason?.trim() && (
+          {/* Lý do cần HR xem xét (PRD §11) — chỉ báo HÀNH ĐỘNG. Hiện khi còn chờ quyết, VÀ khi đã
+              hẹn phỏng vấn nhưng có cờ (SCH-2: thư xác nhận gửi hỏng → HR phải gọi ứng viên thủ
+              công). Bỏ vế thứ hai thì cái cờ đó không có ai đọc — ứng viên có lịch mà không ai báo. */}
+          {(app.status === "PENDING_REVIEW" || app.status === "INTERVIEW_SCHEDULED") &&
+            app.escalation_reason?.trim() && (
             <div className="mt-4 rounded-xl border-2 border-accent bg-accent-100 px-4 py-3">
               <p className="flex items-center gap-2 font-heading text-[13px] font-bold text-accent-800">
                 <svg
@@ -144,11 +147,11 @@ export default function ApplicationDetailPage() {
                   <path d="M12 9v4" />
                   <path d="M12 17h.01" />
                 </svg>
-                Cần HR xem xét
+                {app.status === "INTERVIEW_SCHEDULED" ? "Cần HR xử lý thủ công" : "Cần HR xem xét"}
               </p>
               <p className="mt-1.5 text-[13px] text-accent-800">{app.escalation_reason}</p>
             </div>
-          )}
+            )}
 
           {/* Lịch phỏng vấn ứng viên đã TỰ CHỌN (SCH-2 · PRD §10b) — CHỈ ĐỌC ở lát này; dời/huỷ
               là SCH-3. Đặt trên cùng vì với một hồ sơ đã hẹn thì đây là thông tin HR cần nhất. */}

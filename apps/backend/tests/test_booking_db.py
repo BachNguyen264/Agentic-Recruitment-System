@@ -23,8 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
-from app.models.application import Application
-from app.models.booking import BookingStatus, InterviewBooking
+from app.models.application import Application, ApplicationStatus
+from app.models.booking import BookingSession, BookingStatus, InterviewBooking
 from app.models.job_posting import JobPosting
 from app.services import booking_flow, booking_service
 from app.services.booking_service import (
@@ -76,7 +76,17 @@ async def apps(Session) -> list[int]:  # noqa: N803
         job = JobPosting(title=f"[{_MARK}] Backend Engineer", status="OPEN")
         s.add(job)
         await s.flush()
-        rows = [Application(job_id=job.id, applicant_email=f"{_MARK}+{i}@example.com") for i in range(3)]
+        # AWAITING_BOOKING = trạng thái THẬT của một hồ sơ đang cầm link đặt lịch (thư mời đã gửi).
+        # Để mặc định SUBMITTED thì `confirm_and_notify` từ chối đúng theo thiết kế, nhưng test lại
+        # đang đo chuyện khác.
+        rows = [
+            Application(
+                job_id=job.id,
+                applicant_email=f"{_MARK}+{i}@example.com",
+                status=ApplicationStatus.AWAITING_BOOKING.value,
+            )
+            for i in range(3)
+        ]
         s.add_all(rows)
         await s.flush()
         ids = [r.id for r in rows]
@@ -508,3 +518,132 @@ async def test_race_loser_hold_is_cancelled_so_refresh_offers_new_times(  # noqa
         refreshed = await generate_slots(s, loser)
         assert contested.start_at not in {b.start_at for b in refreshed}
         assert len(refreshed) == len(loser_slots) - 1  # 4 chỗ giữ kia còn nguyên
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# Hồi quy cho các lỗi adversarial review tìm ra (đo được trên Postgres thật)
+# ══════════════════════════════════════════════════════════════════════════════════════════
+
+
+async def test_concurrent_page_loads_do_not_multiply_holds(Session, apps: list[int]) -> None:  # noqa: N803
+    """TOCTOU: 8 lượt GET chồng nhau trên CÙNG token phải cho ĐÚNG một bộ chỗ giữ.
+
+    Trước khi có khoá tư vấn: 2 lượt → 10 hàng, 8 lượt → 40 hàng, và vì `max_per_day` đếm theo HÀNG
+    nên những ngày gần nhất bị đóng với MỌI ứng viên khác. Bất biến "bấm lại trả slot cũ" chỉ đúng
+    khi tuần tự; ứng viên bấm F5 hai lần là đủ phá."""
+    app_id = apps[0]
+
+    async def load():
+        async with Session() as s:
+            return [b.id for b in await generate_slots(s, app_id)]
+
+    results = await asyncio.gather(*(load() for _ in range(8)))
+
+    assert all(r == results[0] for r in results), "mọi lượt tải phải thấy CÙNG một bộ slot"
+    async with Session() as s:
+        assert await _count(s, app_id) == len(results[0]), "KHÔNG được sinh thêm hàng giữ chỗ nào"
+        cfg = make_cfg()
+        per_day: dict[object, int] = {}
+        for row in await _held(s, app_id):
+            day = row.start_at.astimezone(cfg.tz).date()
+            per_day[day] = per_day.get(day, 0) + 1
+        assert max(per_day.values()) <= cfg.max_per_day
+
+
+async def test_reconfirm_does_not_resend_email(Session, apps: list[int], monkeypatch) -> None:  # noqa: N803
+    """Bấm xác nhận lần hai (tải lại/hai tab) KHÔNG được gửi thêm biên nhận.
+
+    Email là kênh DUY NHẤT của hệ thống tới ứng viên; đốt quota Resend bằng thư trùng là làm câm cả
+    pipeline (thư mời, thư từ chối, magic-link sàng lọc)."""
+    sent: list[int] = []
+
+    async def fake_confirmed(_s, **kw):  # noqa: ANN001
+        sent.append(kw["booking"].id)
+        return {"email_sent": True}
+
+    monkeypatch.setattr(booking_flow.scheduler, "notify_booking_confirmed", fake_confirmed)
+
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, apps[0])
+        token = row.token
+        await s.commit()
+        view = await booking_flow.booking_view(s, token)
+        chosen = view["slots"][0]
+
+        first = await booking_flow.confirm_and_notify(s, token, chosen.id)
+        second = await booking_flow.confirm_and_notify(s, token, chosen.id)
+
+    assert len(sent) == 1, f"gửi {len(sent)} thư xác nhận cho một lượt đặt"
+    assert second["start_at"] == first["start_at"] and second["email_sent"] is True
+
+
+async def test_rejected_application_cannot_book_with_old_link(Session, apps: list[int]) -> None:  # noqa: N803
+    """HR từ chối → link đặt lịch cũ phải CHẾT.
+
+    Nếu không: ứng viên vừa nhận thư từ chối vẫn mở được link, tự đặt giờ, và `confirm_and_notify`
+    ghi đè REJECTED thành INTERVIEW_SCHEDULED — một token cũ lật ngược quyết định của con người."""
+    app_id = apps[0]
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, app_id)
+        token = row.token
+        await s.commit()
+
+        assert await booking_service.cancel_sessions(s, app_id) == 1
+        await s.commit()
+
+        with pytest.raises(booking_service.TokenExpired):
+            await booking_service.load_valid_session(s, token)
+
+
+async def test_confirm_refuses_when_application_no_longer_bookable(Session, apps: list[int]) -> None:  # noqa: N803
+    """Hồ sơ đã quay về tay HR (PENDING_REVIEW) → token cũ không được ghi INTERVIEW_SCHEDULED."""
+    app_id = apps[0]
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, app_id)
+        token = row.token
+        await s.commit()
+        view = await booking_flow.booking_view(s, token)
+        chosen = view["slots"][0]
+
+        app_row = await s.get(Application, app_id)
+        app_row.status = ApplicationStatus.PENDING_REVIEW.value
+        await s.commit()
+
+        with pytest.raises(booking_service.TokenExpired):
+            await booking_flow.confirm_and_notify(s, token, chosen.id)
+
+    async with Session() as s:
+        assert (await s.get(Application, app_id)).status == ApplicationStatus.PENDING_REVIEW.value
+
+
+async def test_invite_reuses_live_session_instead_of_minting_second_token(  # noqa: N803
+    Session, apps: list[int], monkeypatch
+) -> None:
+    """Gửi lại lời mời (HR bấm duyệt ở hai tab) phải DÙNG LẠI link còn sống.
+
+    Hai token sống song song = hai email hai link khác nhau; ứng viên không biết cái nào thật, và ta
+    có một token mồ côi không ai theo dõi."""
+    urls: list[str] = []
+
+    async def fake_notify(_s, mode, **kw):  # noqa: ANN001
+        urls.append(kw["booking_url"])
+        return {"mode": mode, "email_sent": True}
+
+    monkeypatch.setattr(booking_flow.scheduler, "notify_decision", fake_notify)
+
+    async with Session() as s:
+        app_row = await s.get(Application, apps[0])
+        for _ in range(2):
+            await booking_flow.dispatch_booking_invite(
+                s, app_row, applicant_email="a@e.com", candidate_name="A",
+                job_title="Backend", audit_node="human_review",
+            )
+        assert urls[0] == urls[1]
+        n = (
+            await s.execute(
+                select(func.count())
+                .select_from(BookingSession)
+                .where(BookingSession.application_id == apps[0])
+            )
+        ).scalar_one()
+        assert n == 1, "chỉ được có MỘT phiên đặt lịch"

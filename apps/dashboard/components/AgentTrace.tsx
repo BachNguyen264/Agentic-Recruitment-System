@@ -131,7 +131,11 @@ function deriveNodes(app: ApplicationDetail) {
   if (s === "INTERVIEW_SCHEDULED") {
     scheduler = "done";
     // SCH-2: tới được đây nghĩa là ứng viên đã TỰ CHỌN giờ (không phải HR chốt hộ) — PRD §10b.
-    schedulerNote = "Đã gửi thư mời; ứng viên đã chọn giờ và nhận thư xác nhận kèm lịch.";
+    // KHÔNG khẳng định họ đã nhận thư xác nhận: booking_flow gắn escalation_reason đúng khi gửi
+    // hỏng, và nói bừa "đã nhận" ở đây khiến HR bỏ qua ca cần gọi tay.
+    schedulerNote = app.escalation_reason?.trim()
+      ? "Ứng viên đã chọn giờ, nhưng thư xác nhận CHƯA gửi được — cần báo thủ công."
+      : "Đã gửi thư mời; ứng viên đã chọn giờ và nhận thư xác nhận kèm lịch.";
   } else if (s === "AWAITING_BOOKING") {
     // Thư mời + link ĐÃ tới tay ứng viên. Để rơi vào nhánh mặc định "chờ quyết định" là nói dối:
     // quyết định xong lâu rồi, quả bóng đang ở sân ứng viên và HR không phải làm gì cả.

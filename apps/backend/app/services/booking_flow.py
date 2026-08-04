@@ -37,6 +37,17 @@ _EMAIL_FAILED_FLAG = (
     "Đã đặt lịch phỏng vấn nhưng GỬI THƯ XÁC NHẬN THẤT BẠI — cần báo ứng viên thủ công."
 )
 
+# Trạng thái mà một liên kết đặt lịch còn được phép ghi kết quả lên. Cố ý KHÔNG có `PENDING_REVIEW`
+# và `REJECTED`: hồ sơ đã quay về tay HR (hoặc đã bị từ chối) thì token cũ không được lật ngược
+# quyết định của con người. `INTERVIEW_SCHEDULED` có mặt để lần bấm lặp vẫn êm.
+_BOOKABLE_STATUSES = frozenset(
+    {
+        ApplicationStatus.SCHEDULING.value,
+        ApplicationStatus.AWAITING_BOOKING.value,
+        ApplicationStatus.INTERVIEW_SCHEDULED.value,
+    }
+)
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -85,7 +96,16 @@ async def dispatch_booking_invite(
 
     `audit_node`: "gate" (tự động) hoặc "human_review" (HR duyệt) — để đọc audit biết đường nào tới.
     """
-    session_row = booking_service.create_booking_session(session, application.id)
+    # Đã có liên kết còn sống thì DÙNG LẠI, đừng phát token thứ hai: HR bấm duyệt ở hai tab (hàng
+    # chờ tự làm mới mỗi 5s) hoặc thử lại một request chậm là ra hai email với hai link khác nhau —
+    # ứng viên không biết cái nào thật, và ta có một token mồ côi không ai theo dõi.
+    session_row = await booking_service.active_session(session, application.id)
+    if session_row is None:
+        session_row = booking_service.create_booking_session(session, application.id)
+        # COMMIT trước khi thư bay đi. `add()` mới chỉ nằm trong bộ nhớ; nếu gửi xong mới ghi mà
+        # tiến trình chết ở giữa (BackgroundTasks KHÔNG bền) thì ứng viên cầm một liên kết trỏ vào
+        # token không tồn tại → 404 ngay sau khi vừa được mời phỏng vấn.
+        await session.commit()
     url = _booking_url(session_row.token)
 
     result = await scheduler.notify_decision(
@@ -184,7 +204,28 @@ async def confirm_and_notify(session: AsyncSession, token: str, booking_id: int)
     candidate_name = _candidate_name(app_row)
     job_title = await _job_title(session, app_row)
 
+    # Hồ sơ đã rẽ sang hướng KHÔNG còn phỏng vấn (HR từ chối, hoặc SCH-3 hạ vì hết hạn) thì token cũ
+    # KHÔNG được phép lật ngược quyết định đó. `load_valid_session` cố ý không kiểm trạng thái (để
+    # người đã đặt xong vẫn mở lại link được), nên chốt chặn nằm ở đây.
+    if app_row.status not in _BOOKABLE_STATUSES:
+        raise booking_service.TokenExpired(
+            "Liên kết này không còn hiệu lực. Bộ phận Tuyển dụng sẽ liên hệ với bạn."
+        )
+
+    already_settled = session_row.booked_at is not None
     booking = await booking_service.confirm_booking(session, application_id, booking_id)
+
+    # Giá trị nguyên thuỷ, lấy TRƯỚC mọi thao tác có thể hỏng. Nếu commit cuối thất bại, SQLAlchemy
+    # đánh dấu HẾT THẢY object trong session là expired; đọc `booking.id` lúc đó sẽ nạp lười trên
+    # một session đang cần rollback và ném `PendingRollbackError` — tức chính khối `except` sinh ra
+    # để "không bao giờ ném sau khi đã chốt" lại là thứ ném ra ngoài (adversarial review tái hiện).
+    booked_id, start_at, end_at = booking.id, booking.start_at, booking.end_at
+
+    if already_settled:
+        # Bấm xác nhận lần hai (tải lại trang, mạng chớp, hai tab). Biên nhận đã gửi rồi — gửi thêm
+        # là spam ứng viên và đốt quota Resend, kênh DUY NHẤT của cả hệ thống.
+        logger.info("booking_flow: app=%s xác nhận lặp — bỏ qua gửi lại thư", application_id)
+        return {"job_title": job_title, "start_at": start_at, "end_at": end_at, "email_sent": True}
 
     email_sent = False
     try:
@@ -205,19 +246,25 @@ async def confirm_and_notify(session: AsyncSession, token: str, booking_id: int)
         await audit_service.record(
             session, application_id=application_id, node="scheduler", action="booking_confirmed",
             escalation_reason=None if email_sent else "booking_email_failed",
-            detail={"booking_id": booking.id, "start_at": booking.start_at.isoformat(),
+            detail={"booking_id": booked_id, "start_at": start_at.isoformat(),
                     "email_sent": email_sent},
             commit=True,
         )
     except Exception:  # noqa: BLE001 — hàng BOOKED là sự thật rồi; đừng ném vào mặt người vừa đặt
+        # KHÔNG chạm vào object ORM nào ở đây (xem ghi chú `booked_id` bên trên). Rollback để session
+        # còn dùng được cho phần dọn dẹp của dependency; nếu chính nó hỏng thì cũng nuốt nốt.
         logger.exception(
             "booking_flow: ghi INTERVIEW_SCHEDULED lỗi app=%s — booking=%s VẪN là BOOKED",
-            application_id, booking.id,
+            application_id, booked_id,
         )
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001
+            logger.exception("booking_flow: rollback cũng lỗi app=%s", application_id)
 
     return {
         "job_title": job_title,
-        "start_at": booking.start_at,
-        "end_at": booking.end_at,
+        "start_at": start_at,
+        "end_at": end_at,
         "email_sent": email_sent,
     }

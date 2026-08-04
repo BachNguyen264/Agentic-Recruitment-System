@@ -15,7 +15,7 @@ from app.agents.nodes import scheduler
 from app.core.config import settings
 from app.models.application import Application, ApplicationStatus
 from app.models.job_posting import JobPosting
-from app.services import audit_service, booking_flow
+from app.services import audit_service, booking_flow, booking_service
 
 Recommendation = Literal["invite", "consider_reject", "review_carefully"]
 ReviewDecision = Literal["approve", "reject"]
@@ -81,6 +81,10 @@ async def review_decision(
     # Nhánh TỪ CHỐI — GIỮ NGUYÊN như 03b: quyết định lưu trước, email sau. Email lỗi KHÔNG làm sập
     # (notify_decision nuốt lỗi + audit email_failed), quyết định/trạng thái vẫn giữ.
     app_row.status = ApplicationStatus.REJECTED.value
+    # SCH-2: huỷ mọi liên kết đặt lịch còn sống TRONG CÙNG transaction. Nếu không, một ứng viên đã
+    # từng được mời rồi bị HR từ chối vẫn mở được link cũ, tự đặt lịch, và xuất hiện trên lịch phỏng
+    # vấn của HR — quyết định của con người bị một token cũ lật ngược.
+    await booking_service.cancel_sessions(session, application_id)
     await session.commit()
     await scheduler.notify_decision(
         session, mode, application_id=application_id, applicant_email=applicant_email,

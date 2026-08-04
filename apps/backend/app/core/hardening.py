@@ -26,13 +26,14 @@ logger = get_logger("app.hardening")
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 
 # Đường công khai có tác dụng phụ (tạo hồ sơ / nộp câu trả lời) — đây mới là thứ cần siết.
-_PUBLIC_WRITE_PREFIXES = (
-    "/api/public/applications",
-    "/api/public/screening",
-    # SCH-2: POST chốt khung giờ. CHỈ method có body — siết cả GET sẽ đốt quota của ứng viên đang
-    # xem danh sách giờ rồi chặn đúng lượt bấm xác nhận (xem ghi chú "chỉ siết method có body").
-    "/api/public/booking",
-)
+_PUBLIC_WRITE_PREFIXES = ("/api/public/applications", "/api/public/screening")
+
+# SCH-2: POST chốt khung giờ có XÔ RIÊNG, không chung quota với nộp CV/sàng lọc. Lý do: mỗi lần
+# thua race (409) tiêu một lượt, và UI mời thử lại ngay — dùng chung xô thì vài người nộp CV từ
+# CÙNG một IP văn phòng/CGNAT là đủ khoá mất lượt xác nhận lịch của đồng nghiệp. Mất buổi phỏng
+# vấn vì cơ chế chống spam là cái giá KHÔNG chấp nhận được (đối xứng ghi chú ở GET screening).
+# Vẫn CHỈ siết method có body: siết GET là đốt quota của người đang xem danh sách giờ.
+_BOOKING_WRITE_PREFIX = "/api/public/booking"
 
 
 class BodySizeLimitMiddleware:
@@ -196,6 +197,8 @@ class RateLimitMiddleware:
         self.client_ip_header = client_ip_header.strip().lower()
         self._login = RateLimiter(login_max, login_window_seconds)
         self._public = RateLimiter(public_max, public_window_seconds)
+        # Cùng hạn mức nhưng ĐỘC LẬP — xem ghi chú ở _BOOKING_WRITE_PREFIX.
+        self._booking = RateLimiter(public_max, public_window_seconds)
         self._logged_probe = False
 
     def _bucket(self, path: str, method: str) -> tuple[str, RateLimiter] | None:
@@ -203,6 +206,8 @@ class RateLimitMiddleware:
             return "login", self._login
         if path == "/api/health":  # SO SÁNH ĐÚNG BẰNG: không được trùm lên /api/health/live.
             return "health", self._public
+        if method in _BODY_METHODS and path.startswith(_BOOKING_WRITE_PREFIX):
+            return "booking", self._booking
         if method in _BODY_METHODS and path.startswith(_PUBLIC_WRITE_PREFIXES):
             return "public", self._public
         return None
