@@ -8,6 +8,10 @@ An toàn: tên lấy từ CV (không tin cậy) → ESCAPE HTML trước khi nh�
 from __future__ import annotations
 
 import html as _html
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from app.core.config import settings
 
 
 def _esc(value: str | None, *, fallback: str) -> str:
@@ -28,10 +32,39 @@ def _wrap(body: str) -> str:
     )
 
 
-def invite_email(candidate_name: str | None, job_title: str | None) -> tuple[str, str]:
-    """Thư mời phỏng vấn — chúc mừng, nêu vị trí, nói sẽ liên hệ sắp lịch. Trả (subject, html)."""
+_WEEKDAYS_VI = {
+    1: "Thứ Hai", 2: "Thứ Ba", 3: "Thứ Tư", 4: "Thứ Năm",
+    5: "Thứ Sáu", 6: "Thứ Bảy", 7: "Chủ Nhật",
+}
+
+
+def format_vn_datetime(value: datetime) -> str:
+    """Mốc thời gian → chuỗi tiếng Việt theo `Asia/Ho_Chi_Minh`: "09:15, Thứ Năm 06/08/2026".
+
+    LUÔN quy về giờ Việt Nam và LUÔN ghi rõ thứ: DB lưu UTC, còn ứng viên đọc email trên điện thoại
+    ở múi giờ bất kỳ. Bỏ thứ đi thì "06/08" dễ bị đọc nhầm ngày/tháng và người ta lỡ buổi phỏng vấn.
+    """
+    local = value.astimezone(ZoneInfo(settings.booking_timezone))
+    return f"{local:%H:%M}, {_WEEKDAYS_VI[local.isoweekday()]} {local:%d/%m/%Y}"
+
+
+def invite_email(
+    candidate_name: str | None,
+    job_title: str | None,
+    *,
+    booking_url: str,
+    deadline_text: str,
+) -> tuple[str, str]:
+    """Thư mời phỏng vấn KÈM LINK TỰ ĐẶT LỊCH (SCH-2 · PRD §10b.1, FR-BOOK-1). Trả (subject, html).
+
+    Hệ thống KHÔNG chốt hộ giờ — ứng viên tự chọn (§10b). Vì thế thư mời phải mang theo link; câu
+    "sẽ liên hệ sắp lịch" của bản cũ nay là sai sự thật vì sẽ chẳng có ai liên hệ nữa.
+    `booking_url` do hệ thống dựng (FRONTEND_BASE_URL + token) — vẫn escape quote vì nằm trong href.
+    """
     name = _esc(candidate_name, fallback="Ứng viên")
     title = _esc(job_title, fallback="vị trí ứng tuyển")
+    href = _html.escape(booking_url, quote=True)
+    deadline = _esc(deadline_text, fallback="thời gian quy định")
     subject = _subject_safe(
         f"Thư mời phỏng vấn — vị trí {job_title}" if job_title else "Thư mời phỏng vấn",
         fallback="Thư mời phỏng vấn",
@@ -40,8 +73,43 @@ def invite_email(candidate_name: str | None, job_title: str | None) -> tuple[str
         f"<p>Kính gửi {name},</p>"
         f"<p>Chúc mừng bạn! Sau khi xem xét hồ sơ, chúng tôi trân trọng mời bạn tham gia phỏng vấn "
         f"cho vị trí <strong>{title}</strong>.</p>"
-        "<p>Bộ phận Tuyển dụng sẽ liên hệ với bạn trong thời gian sớm nhất để sắp xếp lịch phỏng "
-        "vấn cụ thể. Mong sớm được trao đổi cùng bạn.</p>"
+        f"<p>Bạn vui lòng <strong>tự chọn khung giờ phù hợp nhất</strong> với mình qua liên kết dưới "
+        f"đây, trong vòng <strong>{deadline}</strong>:</p>"
+        f'<p><a href="{href}">Chọn giờ phỏng vấn</a></p>'
+        "<p>Nếu nút không bấm được, hãy sao chép liên kết này vào trình duyệt:</p>"
+        f'<p style="word-break:break-all;color:#475569">{href}</p>'
+        "<p>Mong sớm được trao đổi cùng bạn.</p>"
+    )
+    return subject, html
+
+
+def booking_confirmed_email(
+    candidate_name: str | None,
+    job_title: str | None,
+    *,
+    start_at: datetime,
+    end_at: datetime,
+) -> tuple[str, str]:
+    """Thư XÁC NHẬN lịch phỏng vấn sau khi ứng viên chọn giờ (PRD §10b.1, §12.4 FR-NOTI-1).
+
+    Tệp `.ics` được đính kèm ở tầng gọi (scheduler) — thư vẫn phải ghi RÕ ngày giờ bằng chữ, vì
+    không phải ứng viên nào cũng mở được tệp đính kèm trên điện thoại.
+    """
+    name = _esc(candidate_name, fallback="Ứng viên")
+    title = _esc(job_title, fallback="vị trí ứng tuyển")
+    when = _esc(format_vn_datetime(start_at), fallback="")
+    minutes = max(1, round((end_at - start_at).total_seconds() / 60))
+    subject = _subject_safe(
+        f"Xác nhận lịch phỏng vấn — vị trí {job_title}" if job_title else "Xác nhận lịch phỏng vấn",
+        fallback="Xác nhận lịch phỏng vấn",
+    )
+    html = _wrap(
+        f"<p>Kính gửi {name},</p>"
+        f"<p>Chúng tôi xác nhận buổi phỏng vấn cho vị trí <strong>{title}</strong> đã được đặt vào:</p>"
+        f'<p style="font-size:16px;font-weight:bold;color:#0f172a">{when} (giờ Việt Nam)</p>'
+        f"<p>Thời lượng dự kiến: {minutes} phút. Chúng tôi có đính kèm tệp lịch "
+        "(<code>.ics</code>) để bạn thêm vào ứng dụng lịch của mình.</p>"
+        "<p>Nếu bạn cần thay đổi, vui lòng phản hồi email này để chúng tôi hỗ trợ.</p>"
     )
     return subject, html
 

@@ -15,8 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.state import RecruitmentState
 from app.core.logging import get_logger
 from app.models.application import ApplicationStatus
+from app.models.booking import InterviewBooking
 from app.services import audit_service, email_service
+from app.services.calendar import get_calendar_provider
 from app.services.email_templates import (
+    booking_confirmed_email,
     invite_email,
     rejection_email,
     screener_email,
@@ -34,14 +37,29 @@ async def notify_decision(
     applicant_email: str,
     candidate_name: str,
     job_title: str,
+    booking_url: str | None = None,
+    deadline_text: str = "",
 ) -> dict:
     """Điểm phát email DUY NHẤT tới ứng viên (PRD §7.4). Gửi thư MỜI/TỪ CHỐI THẬT qua Resend.
 
     Template CỐ ĐỊNH (không LLM). Lỗi gửi → log + audit ``email_failed``, KHÔNG raise: quyết định HR
-    (đã commit ở review 03b) VẪN giữ. Calendar hoãn (lát sau). Đừng gọi send_email ở node khác.
+    (đã commit ở review 03b) VẪN giữ. Đừng gọi send_email ở node khác.
+
+    SCH-2: thư mời BẮT BUỘC kèm ``booking_url`` (ứng viên tự chọn giờ — PRD §10b). Thiếu link là lỗi
+    LẬP TRÌNH nên nổ ngay: nếu để nó âm thầm gửi thư mời không link, ứng viên nhận lời mời rồi không
+    có đường nào đặt lịch và nằm chờ mãi ở ``AWAITING_BOOKING`` — hỏng câm, đúng lớp lỗi tệ nhất.
     """
-    builder = invite_email if mode == "invite" else rejection_email
-    subject, html = builder(candidate_name, job_title)
+    if mode == "invite":
+        if not booking_url:
+            raise ValueError(
+                "notify_decision('invite') phải kèm booking_url — thư mời KHÔNG có link đặt lịch "
+                "sẽ để ứng viên mắc kẹt (PRD §10b.1)."
+            )
+        subject, html = invite_email(
+            candidate_name, job_title, booking_url=booking_url, deadline_text=deadline_text
+        )
+    else:
+        subject, html = rejection_email(candidate_name, job_title)
 
     try:
         await email_service.send_email(to=applicant_email, subject=subject, html=html)
@@ -104,6 +122,65 @@ async def notify_screener(
         detail={"mode": mode, "to": applicant_email}, commit=True,
     )
     return {"mode": mode, "email_sent": True}
+
+
+async def notify_booking_confirmed(
+    session: AsyncSession,
+    *,
+    application_id: int,
+    applicant_email: str,
+    candidate_name: str,
+    job_title: str,
+    booking: InterviewBooking,
+) -> dict:
+    """Thư XÁC NHẬN lịch phỏng vấn + đính kèm `.ics` (SCH-2 · PRD §10b.1, §12.4 FR-NOTI-1).
+
+    Điểm phát email DUY NHẤT, như hai hàm trên. Tệp `.ics` đi qua seam `CalendarProvider` (SCH-1) —
+    đổi sang Google Calendar sau này KHÔNG phải sửa chỗ này.
+
+    Lỗi gửi (hoặc lỗi sinh `.ics`) → audit `email_failed` + trả `email_sent=False`, **KHÔNG raise**:
+    khác 08d một cách CÓ CHỦ Ý — ở đây khung giờ đã BOOKED trong DB và ứng viên vừa thấy màn xác
+    nhận trên web, nên thư chỉ là biên nhận. Huỷ lịch chỉ vì gửi thư hỏng mới là cái sai lớn.
+    """
+    subject, html = booking_confirmed_email(
+        candidate_name, job_title, start_at=booking.start_at, end_at=booking.end_at
+    )
+    try:
+        event = await get_calendar_provider().create_event(
+            booking,
+            summary=f"Phỏng vấn — {job_title}",
+            description=f"Buổi phỏng vấn vị trí {job_title}.",
+        )
+        attachments = (
+            [("phong-van.ics", event.ics, "text/calendar; charset=utf-8")] if event.ics else None
+        )
+        await email_service.send_email(
+            to=applicant_email, subject=subject, html=html, attachments=attachments
+        )
+    except Exception as exc:  # noqa: BLE001 — nuốt có kiểm soát: lịch ĐÃ chốt, thư chỉ là biên nhận
+        logger.warning(
+            "[scheduler] app=%s: GỬI EMAIL xác nhận lịch THẤT BẠI tới %s: %s",
+            application_id, applicant_email, exc,
+        )
+        await audit_service.record(
+            session, application_id=application_id, node="scheduler", action="email_failed",
+            detail={"mode": "booking_confirmed", "to": applicant_email, "error": str(exc)},
+            commit=True,
+        )
+        return {"mode": "booking_confirmed", "email_sent": False, "error": str(exc)}
+
+    logger.info(
+        "[scheduler] app=%s: đã gửi thư xác nhận lịch (%s) tới %s",
+        application_id, booking.start_at.isoformat(), applicant_email,
+    )
+    await audit_service.record(
+        session, application_id=application_id, node="scheduler",
+        action="email_sent:booking_confirmed",
+        detail={"to": applicant_email, "start_at": booking.start_at.isoformat(),
+                "calendar_ref": event.ref},
+        commit=True,
+    )
+    return {"mode": "booking_confirmed", "email_sent": True, "calendar_ref": event.ref}
 
 
 def scheduler_node(state: RecruitmentState) -> dict:
