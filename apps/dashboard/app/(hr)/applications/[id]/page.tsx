@@ -13,6 +13,19 @@ import { BackArrow, btn, Tag } from "@/components/ui";
 import { downloadCv, getApplication, getJob } from "@/lib/api";
 import { statusLabel, statusTone, toBreakdown } from "@/lib/applications";
 
+// Lịch phỏng vấn LUÔN hiển thị theo giờ Việt Nam kèm THỨ — HR và ứng viên phải đọc ra CÙNG một
+// mốc; để trình duyệt tự dùng múi giờ của máy là mở đường cho hai bên hiểu khác nhau.
+function formatInterview(iso: string): string {
+  const at = new Date(iso);
+  const time = new Intl.DateTimeFormat("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(at);
+  const date = new Intl.DateTimeFormat("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh", weekday: "long", day: "2-digit", month: "2-digit", year: "numeric",
+  }).format(at);
+  return `${time} · ${date}`;
+}
+
 function initialsOf(email: string): string {
   const name = email.split("@")[0] ?? "";
   const parts = name.split(/[._-]+/).filter(Boolean);
@@ -134,6 +147,34 @@ export default function ApplicationDetailPage() {
                 Cần HR xem xét
               </p>
               <p className="mt-1.5 text-[13px] text-accent-800">{app.escalation_reason}</p>
+            </div>
+          )}
+
+          {/* Lịch phỏng vấn ứng viên đã TỰ CHỌN (SCH-2 · PRD §10b) — CHỈ ĐỌC ở lát này; dời/huỷ
+              là SCH-3. Đặt trên cùng vì với một hồ sơ đã hẹn thì đây là thông tin HR cần nhất. */}
+          {app.interview && (
+            <div className="mt-4 rounded-xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3">
+              <p className="flex items-center gap-2 font-heading text-[13px] font-bold text-emerald-900">
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4 shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M8 2v4" />
+                  <path d="M16 2v4" />
+                  <rect width="18" height="18" x="3" y="4" rx="2" />
+                  <path d="M3 10h18" />
+                </svg>
+                Lịch phỏng vấn đã chốt
+              </p>
+              <p className="mt-1.5 text-[13px] text-emerald-900">
+                {formatInterview(app.interview.start_at)} (giờ Việt Nam) — ứng viên tự chọn.
+              </p>
             </div>
           )}
 

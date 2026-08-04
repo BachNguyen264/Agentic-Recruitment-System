@@ -500,3 +500,19 @@ async def load_valid_session(
 def mark_session_booked(row: BookingSession, *, now: datetime | None = None) -> None:
     """Đánh dấu phiên đã chốt được giờ. KHÔNG phải cờ one-time — chỉ để SCH-3 khỏi nhắc phiên này."""
     row.booked_at = _as_utc(now, "now") if now is not None else _now()
+
+
+async def latest_booking(
+    session: AsyncSession, application_id: int
+) -> InterviewBooking | None:
+    """Lịch phỏng vấn ĐÃ chốt của một hồ sơ — cho HR xem ở trang chi tiết (CHỈ ĐỌC; dời/huỷ = SCH-3)."""
+    stmt = (
+        select(InterviewBooking)
+        .where(
+            InterviewBooking.application_id == application_id,
+            InterviewBooking.status == BookingStatus.BOOKED.value,
+        )
+        .order_by(InterviewBooking.start_at.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()

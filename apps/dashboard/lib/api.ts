@@ -12,6 +12,8 @@ import type {
   RubricSuggestResult,
   ScreenerForm,
   ScreenerSubmitResult,
+  BookingView,
+  BookingConfirmResult,
 } from "@ars/shared-types";
 
 // Base URL backend.
@@ -283,4 +285,46 @@ export async function parseCv(file: File): Promise<ParseCvResponse> {
   }
   if (!res.ok) throw new Error(`HTTP ${res.status} khi phân tích CV`);
   return (await res.json()) as ParseCvResponse;
+}
+
+// ── Đặt lịch phỏng vấn (công khai, SCH-2 · PRD §10b) ──────────────────────────
+// Lỗi mang theo HTTP status vì trang chọn giờ phải PHÂN BIỆT được: 409 = thua race
+// (làm mới danh sách rồi mời chọn lại) vs 404/410 = link hỏng/hết hạn (hiện thông báo).
+export class BookingApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "BookingApiError";
+    this.status = status;
+  }
+}
+
+async function bookingFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { credentials: CREDENTIALS, ...init });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new BookingApiError(body?.detail ?? `HTTP ${res.status}`, res.status);
+  }
+  return (await res.json()) as T;
+}
+
+// Mở link đặt lịch: backend sinh slot LƯỜI ngay lúc này + giữ chỗ 10 phút. Mở lại → ĐÚNG slot cũ.
+export async function getBooking(token: string): Promise<BookingView> {
+  return bookingFetch<BookingView>(`/api/public/booking/${encodeURIComponent(token)}`);
+}
+
+// Chốt một khung giờ. 409 = giờ vừa bị người khác đặt HOẶC chỗ giữ đã hết hạn → tải lại danh sách.
+export async function confirmBooking(
+  token: string,
+  bookingId: number,
+): Promise<BookingConfirmResult> {
+  return bookingFetch<BookingConfirmResult>(
+    `/api/public/booking/${encodeURIComponent(token)}/confirm`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ booking_id: bookingId }),
+    },
+  );
 }

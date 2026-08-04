@@ -98,8 +98,17 @@ export interface ApplicationDetail extends ApplicationListItem {
   escalation_reason: string | null;
   recommendation: Recommendation;
   screener_answers: ScreenerAnswer[]; // [] khi chưa/không sàng lọc (08b)
+  // Lịch phỏng vấn ứng viên đã tự chọn (SCH-2 · PRD §10b). null = chưa chọn. HR chỉ ĐỌC ở lát này
+  // (dời/huỷ = SCH-3).
+  interview: BookedInterview | null;
   // Có file CV gốc để tải không (slice 06). Bytes lấy qua GET /api/applications/{id}/cv (require_hr).
   has_cv: boolean;
+}
+
+// Khung giờ phỏng vấn đã chốt — khớp BookedInterview (backend).
+export interface BookedInterview {
+  start_at: string;
+  end_at: string;
 }
 
 // human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.
@@ -291,4 +300,35 @@ export interface ParseCvResponse {
   confidence: number;
   uncertainty_flags: string[];
   escalation_reason: string | null;
+}
+
+// ── Đặt lịch phỏng vấn — trang công khai /booking/[token] (SCH-2 · PRD §10b) ──
+// Khớp PublicBookingRead/BookingConfirmResponse (backend). Projection AN TOÀN: chỉ tiêu đề JD +
+// tên + khung giờ. KHÔNG điểm/rubric/gate/trạng thái — ứng viên là khách (PRD §5).
+
+export interface BookingSlot {
+  booking_id: number;
+  start_at: string; // ISO có múi giờ — hiển thị LUÔN quy về Asia/Ho_Chi_Minh
+  end_at: string;
+}
+
+export interface BookingView {
+  job_title: string;
+  candidate_name: string;
+  // Đã chốt lịch → hiện "bạn đã đặt lúc X", KHÔNG render danh sách chọn. Đây là TRẠNG THÁI bình
+  // thường (token không one-time nên mở lại link là chuyện thường), không phải lỗi.
+  already_booked: boolean;
+  booked_start_at: string | null;
+  booked_end_at: string | null;
+  slots: BookingSlot[];
+  // Hạn giữ chỗ chung cả lượt — UI đếm ngược theo mốc này (hold KHÔNG được gia hạn khi tải lại).
+  hold_expires_at: string | null;
+}
+
+export interface BookingConfirmResult {
+  job_title: string;
+  start_at: string;
+  end_at: string;
+  // Để UI nói THẬT thay vì hứa một email có thể chưa gửi được.
+  email_sent: boolean;
 }

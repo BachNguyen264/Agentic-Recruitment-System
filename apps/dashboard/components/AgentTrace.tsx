@@ -54,7 +54,10 @@ function deriveNodes(app: ApplicationDetail) {
   const flags = app.uncertainty_flags ?? [];
   const s = app.status;
   const decided = s === "INTERVIEW_SCHEDULED" || s === "REJECTED";
-  const pastRanker = app.score != null || flags.includes("rank_failed") || decided;
+  // SCH-2: AWAITING_BOOKING = ĐÃ quyết mời + ĐÃ gửi thư, chỉ còn chờ ứng viên chọn giờ. Xếp chung
+  // với "đã quyết" cho các bước TRƯỚC scheduler, nếu không trace sẽ vẽ ranker/screener như đang chờ.
+  const invited = s === "AWAITING_BOOKING";
+  const pastRanker = app.score != null || flags.includes("rank_failed") || decided || invited;
   const answers = app.screener_answers ?? [];
 
   // parser
@@ -103,7 +106,7 @@ function deriveNodes(app: ApplicationDetail) {
       s === "REMINDED"
         ? "Đã gửi nhắc — đang chờ ứng viên trả lời trước hạn."
         : "Đã gửi câu hỏi qua email — đang chờ ứng viên trả lời.";
-  } else if (pastRanker && (decided || s === "PENDING_REVIEW")) {
+  } else if (pastRanker && (decided || invited || s === "PENDING_REVIEW")) {
     screener = "skipped";
     // KHÔNG khẳng định mù "JD không có câu hỏi": hồ sơ DƯỚI NGƯỠNG bị route_after_ranker đưa thẳng
     // sang human_review/auto-reject, KHÔNG BAO GIỜ tới screener — nói "bỏ qua vì JD không có câu hỏi"
@@ -127,7 +130,13 @@ function deriveNodes(app: ApplicationDetail) {
   let schedulerNote = "Chờ quyết định (tự động hoặc HR).";
   if (s === "INTERVIEW_SCHEDULED") {
     scheduler = "done";
-    schedulerNote = "Đã gửi thư mời phỏng vấn.";
+    // SCH-2: tới được đây nghĩa là ứng viên đã TỰ CHỌN giờ (không phải HR chốt hộ) — PRD §10b.
+    schedulerNote = "Đã gửi thư mời; ứng viên đã chọn giờ và nhận thư xác nhận kèm lịch.";
+  } else if (s === "AWAITING_BOOKING") {
+    // Thư mời + link ĐÃ tới tay ứng viên. Để rơi vào nhánh mặc định "chờ quyết định" là nói dối:
+    // quyết định xong lâu rồi, quả bóng đang ở sân ứng viên và HR không phải làm gì cả.
+    scheduler = "waiting";
+    schedulerNote = "Đã gửi thư mời kèm link đặt lịch — đang chờ ứng viên chọn giờ.";
   } else if (s === "REJECTED") {
     scheduler = "done";
     schedulerNote = "Đã gửi thư từ chối.";

@@ -38,6 +38,8 @@ const STATUS_LABEL: Record<ApplicationStatus, string> = {
   AWAITING_SCREENER: "Chờ trả lời sàng lọc",
   REMINDED: "Đã nhắc",
   SCHEDULING: "Đang đặt lịch",
+  // SCH-2: thư mời + link ĐÃ gửi — quả bóng đang ở sân ứng viên, HR không phải làm gì.
+  AWAITING_BOOKING: "Chờ ứng viên chọn lịch",
   PENDING_REVIEW: "Chờ HR duyệt",
   INTERVIEW_SCHEDULED: "Đã hẹn phỏng vấn",
   REJECTED: "Đã từ chối",

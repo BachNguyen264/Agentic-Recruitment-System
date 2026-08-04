@@ -12,6 +12,8 @@ import { getApplications, getJobs } from "@/lib/api";
 // Trạng thái đang chạy trong pipeline (chưa tới điểm dừng người/kết thúc) — PRD §13.
 const IN_FLIGHT: ApplicationStatus[] = [
   "SUBMITTED", "PARSING", "RANKING", "SCREENING", "AWAITING_SCREENER", "REMINDED", "SCHEDULING",
+  // SCH-2: thư mời + link đã gửi, đang chờ ứng viên tự chọn giờ — vẫn là "đang chạy", chưa kết thúc.
+  "AWAITING_BOOKING",
 ];
 
 // Nút pipeline cố định (PRD §5 trụ cột 1): parser → ranker → screener → scheduler.
@@ -45,7 +47,7 @@ const NODES: { key: string; label: string; caption: string; statuses: Applicatio
   },
   {
     key: "scheduler", label: "scheduler", caption: "Điểm gửi thư DUY NHẤT",
-    statuses: ["SCHEDULING"],
+    statuses: ["SCHEDULING", "AWAITING_BOOKING"],
     icon: (
       <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
         <path d="M8 2v4" /><path d="M16 2v4" /><rect width="18" height="18" x="3" y="4" rx="2" /><path d="M3 10h18" />
@@ -57,7 +59,7 @@ const NODES: { key: string; label: string; caption: string; statuses: Applicatio
 const STATUS_LABEL: Record<string, string> = {
   SUBMITTED: "Vừa nộp", PARSING: "Đang bóc tách", RANKING: "Đang chấm điểm",
   SCREENING: "Đang sàng lọc", AWAITING_SCREENER: "Chờ ứng viên trả lời",
-  REMINDED: "Đã nhắc", SCHEDULING: "Đang gửi thư",
+  REMINDED: "Đã nhắc", SCHEDULING: "Đang gửi thư", AWAITING_BOOKING: "Chờ chọn lịch",
   PENDING_REVIEW: "Chờ HR duyệt", INTERVIEW_SCHEDULED: "Đã hẹn PV", REJECTED: "Đã từ chối",
 };
 

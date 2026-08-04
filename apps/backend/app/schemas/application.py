@@ -36,6 +36,15 @@ class PublicSubmitResponse(BaseModel):
     message: str = "Đã nhận hồ sơ. Chúng tôi sẽ liên hệ với bạn qua email."
 
 
+class BookedInterview(BaseModel):
+    """Khung giờ phỏng vấn ứng viên đã tự chọn (SCH-2). Chỉ mốc thời gian — HR không cần id nội bộ."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    start_at: datetime
+    end_at: datetime
+
+
 class ApplicationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -60,6 +69,9 @@ class ApplicationRead(BaseModel):
     # Câu trả lời sàng lọc [{question, answer}] — hiện cho HR (PRD §7.3, §11). Rỗng nếu chưa/không
     # sàng lọc. CHỈ populate ở endpoint chi tiết (list để rỗng, tránh N+1).
     screener_answers: list = Field(default_factory=list)
+    # Lịch phỏng vấn ĐÃ chốt (SCH-2 · PRD §10b) — None nếu ứng viên chưa chọn giờ. CHỈ populate ở
+    # endpoint chi tiết (như screener_answers, tránh N+1 ở danh sách). HR chỉ ĐỌC ở lát này.
+    interview: BookedInterview | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -13,8 +13,13 @@ from pydantic import ValidationError
 
 from app.api.deps import DBSession
 from app.core.logging import get_logger
-from app.schemas.application import ApplicationCreate, ApplicationRead, ReviewRequest
-from app.services import application_service, screening
+from app.schemas.application import (
+    ApplicationCreate,
+    ApplicationRead,
+    BookedInterview,
+    ReviewRequest,
+)
+from app.services import application_service, booking_service, screening
 from app.services import review as review_service
 from app.services.storage import (
     StorageError,
@@ -84,9 +89,15 @@ async def get_application(application_id: int, session: DBSession) -> Applicatio
     app_row = await application_service.get_application(session, application_id)
     if app_row is None:
         raise HTTPException(status_code=404, detail="Application không tồn tại")
-    # Chi tiết: kèm câu trả lời sàng lọc (nếu có) cho HR (PRD §7.3, §11).
+    # Chi tiết: kèm câu trả lời sàng lọc + lịch phỏng vấn đã chốt (nếu có) cho HR (PRD §7.3, §10b, §11).
     answers = await screening.latest_answers(session, application_id)
-    return ApplicationRead.model_validate(app_row).model_copy(update={"screener_answers": answers})
+    booking = await booking_service.latest_booking(session, application_id)
+    return ApplicationRead.model_validate(app_row).model_copy(
+        update={
+            "screener_answers": answers,
+            "interview": BookedInterview.model_validate(booking) if booking else None,
+        }
+    )
 
 
 @router.get(
