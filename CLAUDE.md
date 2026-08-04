@@ -80,8 +80,10 @@ qua interface: `cv_reader.extract_text(data, name)` làm việc trên BYTES, `pa
 `GET /api/applications/{id}/cv` STREAM qua `storage.get()` trong router HR (`require_hr` → chưa login 401);
 bucket R2 **PRIVATE**, KHÔNG public URL (NFR-4). `reset_demo_data` xóa file qua storage (sau commit DB).
 
-**Deploy (13) — CODE-PREP XONG, chưa lên mạng.** Repo sẵn sàng deploy; phần tạo service Render/Vercel +
-đặt env do NGƯỜI DÙNG làm (runbook), sau đó verify live cùng nhau. Đã có: **CORS từ env**
+**Deploy (13) — ✅ ĐÃ LIVE** (Render Docker sau Cloudflare + Vercel + Neon/Upstash/Qdrant/R2; cross-domain
+cookie `SameSite=None; Secure` + CORS allowlist chạy thật). **4 sự cố prod đã vá** — chi tiết +
+cách verify ở `docs/deploy-live-issues.md` (ĐỌC TRƯỚC khi đụng checkpointer / rate-limit / config deploy).
+Code-prep đã có: **CORS từ env**
 (`CORS_ORIGINS` CSV → allowlist cụ thể + `allow_credentials`; rỗng = dev fallback regex localhost; từ
 chối `*`/thiếu scheme/có path vì Starlette so chuỗi CHÍNH XÁC — sai kiểu nào cũng ra cùng triệu chứng
 "login 200 nhưng mất phiên"); **bind từ env** (`HOST`/`PORT`, reload CHỈ khi `app_env=local`);
@@ -186,10 +188,27 @@ deploy + nguyên nhân gốc + fix + verify (Neon autosuspend giết pool checkp
 Cloudflare, v.v.). Gặp lỗi tương tự hoặc trước khi đụng checkpointer/rate-limit/config deploy → đọc đó
 trước. Problem MỚI sau fix → ghi vào docs đó, ĐỪNG nhồi vào CLAUDE.md (file này nạp mỗi session, giữ gọn).
 
+## GitNexus — đọc CÁI NÀY trước khối tự sinh bên dưới
+
+Khối dưới marker do công cụ TỰ SINH (ghi đè mỗi lần index lại) nên **không sửa được ở đó** — hai đính
+chính bắt buộc, đã kiểm chứng ngày 2026-08-04:
+
+1. **LUÔN truyền `repo: "Agentic-Recruitment-System"`.** Máy này index NHIỀU repo (còn `aov-bundle`), và
+   khi đó `impact`/`context` **thiếu `repo` sẽ trả `"Target not found"`** — nghe như "symbol không tồn
+   tại", thực ra là "bạn chưa nói repo nào". Đã mất một phiên vì tưởng index hỏng rồi bỏ sang `grep`.
+   (`query` thì báo lỗi rõ ràng; `impact`/`context` thì không.)
+2. **`impact` KHÔNG thấy hàm chỉ được đăng ký runtime.** `process_application` ra `impactedCount: 0`
+   dù có 2 chỗ `background_tasks.add_task(process_application, …)` — đó là tham chiếu, không phải cạnh
+   gọi tĩnh. Với hàm chạy qua BackgroundTasks/handler đăng ký động, **`impact` báo LOW không có nghĩa
+   là an toàn** — grep thêm cho chắc.
+
+`detect_changes()` cũng cần `repo`; thiếu nó nó trả "No changes detected" **dù đang có file sửa** — một
+kết quả XANH GIẢ, đúng thứ nguy hiểm nhất ngay trước lúc commit.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Agentic-Recruitment-System** (2136 symbols, 3662 relationships, 75 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Agentic-Recruitment-System** (2524 symbols, 4491 relationships, 88 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

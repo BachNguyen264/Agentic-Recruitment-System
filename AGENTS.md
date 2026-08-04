@@ -35,7 +35,7 @@
 - Projection JD công khai **KHÔNG được lộ** `rubric` / `gate_config` / `screener_questions`.
 - Đọc/ghi CV **chỉ qua** seam `services/storage`; `cv_file_ref` là KEY, không phải path, không trả ra client.
 - Router HR mới → **nhớ áp `require_hr`**. `/api/public/*`, `/api/auth/login|logout`, health giữ MỞ.
-- **Không giữ session/connection DB qua I/O chậm** (LLM, R2, email) — xem "Load boundary" + gotcha ở CLAUDE.md.
+- **Không giữ session/connection DB qua I/O chậm** (LLM, R2, email) — xem *Load boundary* ở `docs/AI_GUIDE.md`.
 - Không tự tạo trạng thái "nói dối": chỉ đặt trạng thái CUỐI sau khi email đã thật sự gửi.
 
 ## Bốn nguyên tắc làm việc
@@ -45,10 +45,20 @@
 3. **Sửa đúng chỗ cần sửa** — đừng "cải thiện" code xung quanh. Thấy code chết thì BÁO, đừng xoá.
 4. **Có tiêu chí thành công rồi lặp tới khi kiểm chứng được** — mỗi lát cần Verify thật + review độc lập.
 
+## GitNexus — đính chính cho khối tự sinh bên dưới
+
+Khối dưới marker bị ghi đè mỗi lần index lại, nên hai điều này ghi ở đây (đã kiểm chứng 2026-08-04):
+
+- **LUÔN truyền `repo: "Agentic-Recruitment-System"`** cho `impact`/`context`/`detect_changes`/`query`.
+  Máy này index nhiều repo; thiếu `repo` thì `impact`/`context` trả `"Target not found"` và
+  `detect_changes` trả `"No changes detected"` **dù đang có file sửa** — xanh giả ngay trước lúc commit.
+- **`impact` bỏ sót hàm chỉ được đăng ký runtime** (vd `background_tasks.add_task(fn, …)`): báo LOW
+  không có nghĩa là an toàn. Grep thêm khi đụng loại hàm đó.
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Agentic-Recruitment-System** (2136 symbols, 3662 relationships, 75 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Agentic-Recruitment-System** (2524 symbols, 4491 relationships, 88 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
