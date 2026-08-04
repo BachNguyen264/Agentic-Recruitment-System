@@ -107,6 +107,31 @@ class Settings(BaseSettings):
     # hồ sơ đang chạy khoẻ mạnh. float để verify đặt ngưỡng nhỏ; <= 0 = TẮT lưới.
     stuck_application_timeout_minutes: float = 30.0
 
+    # ── Đặt lịch phỏng vấn (SCH-1 — PRD §10b.7, FR-BOOK-5) ───────────
+    # Khả dụng là TOÀN CỤC (không theo từng JD) — đúng mô hình single-tenant. Đọc/validate qua
+    # `services/booking_config.load_booking_config()`; nghiệp vụ KHÔNG đọc thẳng mấy biến này.
+    booking_timezone: str = "Asia/Ho_Chi_Minh"
+    # Ngày làm việc theo ISO weekday (1=Thứ Hai … 7=Chủ Nhật). Nhận "1-5", "1,3,5", "1-5,7".
+    booking_work_days: str = "1-5"
+    booking_work_start: str = "08:00"
+    booking_work_end: str = "17:30"
+    # Nghỉ trưa "HH:MM-HH:MM"; để RỖNG = không nghỉ trưa.
+    booking_lunch: str = "12:00-13:30"
+    booking_duration_minutes: int = 60
+    booking_buffer_minutes: int = 15
+    # KHÔNG mời giờ sớm hơn ngần này kể từ lúc ứng viên bấm link (ứng viên cần thời gian thu xếp).
+    booking_lead_time_hours: float = 24
+    booking_max_per_day: int = 4
+    booking_window_days: int = 14
+    booking_slots_offered: int = 5
+    # Hai đồng hồ KHÁC NHAU (PRD §10b.3): HOLD = giữ chỗ trong MỘT phiên chọn; LINK_TTL = ứng viên
+    # có bao lâu để BẮT ĐẦU đặt lịch. float để verify đặt ngưỡng nhỏ (như screener_deadline_hours).
+    booking_hold_minutes: float = 10
+    booking_link_ttl_hours: float = 72
+    # Seam lịch ngoài (PRD §10b.8): `ics` = đính kèm .ics vào email (không cần OAuth).
+    # Chừa đường cho `google` (PRD §17) mà KHÔNG phải sửa nghiệp vụ.
+    calendar_provider: str = "ics"
+
     # ── Screener magic-link (08b — PRD §7.3, §10, §12.2) ─────────────
     # Gốc URL frontend công khai để dựng magic-link trong email Screener:
     # {frontend_base_url}/screening/{token}. Dev: dashboard Next chạy :3000. Đổi khi deploy.

@@ -27,6 +27,12 @@ dependencies = [
     "pyjwt>=2.9,<3",
     "bcrypt>=5,<6",
     "boto3>=1.35,<2",
+    # Dữ liệu múi giờ IANA cho `zoneinfo` (SCH-1 đặt lịch — BOOKING_TIMEZONE=Asia/Ho_Chi_Minh).
+    # `zoneinfo` đọc múi giờ của HỆ ĐIỀU HÀNH trước, và ảnh Docker `python:3.12-slim-bookworm` không
+    # bảo đảm có /usr/share/zoneinfo. Thiếu nó thì ZoneInfo(...) ném ZoneInfoNotFoundError — nghĩa là
+    # tính năng đặt lịch chết hẳn trên prod trong khi máy dev (macOS/Linux có sẵn tzdata) vẫn xanh.
+    # Gói này thuần dữ liệu, ~350KB, và `zoneinfo` tự dùng làm nguồn dự phòng: không phải sửa code.
+    "tzdata>=2024.1",
 ]
 
 [dependency-groups]
