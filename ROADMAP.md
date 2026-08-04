@@ -252,6 +252,17 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   `AWAITING_BOOKING` → sinh slot LƯỜI khi ứng viên click → giữ 5 slot 10 phút → chọn 1 → INTERVIEW_SCHEDULED
   + `.ics` → nhắc trước 24h. ⚠️ `AWAITING_BOOKING` = thư mời ĐÃ gửi ⇒ **TUYỆT ĐỐI không cho vào
   `IN_FLIGHT_STATUSES`/tầm quét sweep** (xem *Load boundary* ở `docs/AI_GUIDE.md` — tái sinh lỗi mất hồ sơ).
+  - [x] **SCH-1 nền booking** (tầng nghiệp vụ thuần, CHƯA ai gọi tới): `InterviewBooking`+`BookingSession`
+    + migration viết tay **partial unique index** `UNIQUE(start_at) WHERE status='BOOKED'` (checkpoint
+    LangGraph nguyên, `alembic check` sạch) · 14 env `BOOKING_*` qua `BookingConfig` có validate ·
+    `generate_slots` sinh lười + giữ 10 phút + **bấm lại trả ĐÚNG slot cũ** + trộn sáng/chiều nhiều ngày ·
+    `confirm_booking` HELD→BOOKED chống race · seam `CalendarProvider`+`IcsProvider` (0-dependency).
+    51 test (36 trong `make test`, 15 gated `RUN_BOOKING_IT=1` gồm **race thật 2 transaction**).
+  - [ ] **SCH-2 lát dọc:** `scheduler_node` gửi thư mời + link → `AWAITING_BOOKING`; endpoint công khai
+    `GET/POST /api/public/booking/{token}` (409 khi thua race); trang `/booking/{token}`; email xác nhận
+    kèm `.ics`. ⚠️ Giữ bất biến 08d: chỉ đổi trạng thái SAU khi email đã gửi; dispatch cô lập khỏi error handler.
+  - [ ] **SCH-3 hoàn thiện:** nhắc trước PV 24h · link hết hạn → nhắc 1 lần → `PENDING_REVIEW[booking_no_response]`
+    (**KHÔNG auto-reject**) qua sweep 08c · link hủy → nhả slot + báo HR · HR xem/dời/hủy lịch trên dashboard.
 - [ ] Dọn: **đổi mật khẩu admin prod**
 - [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)

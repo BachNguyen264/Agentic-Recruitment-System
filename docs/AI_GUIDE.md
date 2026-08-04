@@ -21,8 +21,15 @@
 - Screener REAL (08a–08d complete: suspend/resume + magic-link + timeout/nhắc/trả lời trễ + gate auto-mời). Cả
   HAI gate (§9) đã xây: auto-reject (03c) + auto-mời (08d). HR auth (09) DONE: một vai HR-admin, seed từ env,
   KHÔNG đăng ký/quên/reset/RBAC/OAuth; ứng viên GUEST vĩnh viễn (KHÔNG account). Object storage (06) DONE.
-  Deploy (13) ĐÃ LIVE. NOT yet built: analytics, observability, anti-injection, UI redesign, learning loop,
-  **pull scheduling (PRD §10b)** — keep stub + TODO pointing to PRD; don't build outside the current slice.
+  Deploy (13) ĐÃ LIVE. NOT yet built: analytics, observability, anti-injection, UI redesign, learning loop
+  — keep stub + TODO pointing to PRD; don't build outside the current slice.
+- **Booking boundary (SCH-1, PRD §10b):** tầng nghiệp vụ đặt lịch ĐÃ CÓ nhưng **chưa nối vào đâu cả** —
+  `booking_service` + `BookingConfig` + seam `CalendarProvider`. Nối vào `scheduler_node`/endpoint công
+  khai/trang chọn giờ/email = **SCH-2**; nhắc/hết hạn/hủy/HR dời lịch = **SCH-3**. Mọi thao tác trên khung
+  giờ đi QUA `booking_service` (đừng truy vấn thẳng `interview_booking` ở nơi khác) — chỗ-đã-chiếm là
+  `BOOKED` **hoặc** `HELD` còn hạn, và chốt chặn cuối là **partial unique index** `UNIQUE(start_at) WHERE
+  status='BOOKED'`. Đặt lịch nằm NGOÀI graph: **KHÔNG thêm `interrupt()`** cho nó. Khả dụng là TOÀN CỤC
+  (env `BOOKING_*`), không theo từng JD. `AWAITING_BOOKING` = thư mời ĐÃ gửi ⇒ xem *Load boundary*.
 - **Storage boundary (06):** nghiệp vụ TUYỆT ĐỐI không mở path CV — chỉ qua `services/storage`
   (`get_storage().save/get/delete`). Thêm chỗ đọc/ghi CV mới → đi qua seam, nếu không sẽ vỡ khi
   `STORAGE_BACKEND=r2`. `cv_file_ref` là KEY (opaque), KHÔNG trả ra client (dùng `has_cv` + endpoint tải).
@@ -158,4 +165,24 @@
   trước `WORKDIR` (WORKDIR tự tạo thư mục nhưng thuộc root → uv không ghi nổi `.venv`).
 - **Dữ liệu CŨ trước 06:** `cv_file_ref` là path tuyệt đối Windows → `validate_key` từ chối (đúng ý đồ,
   chặn traversal). Không migrate (data dev); reset_demo_data báo "dọn thủ công", endpoint tải trả 502 rõ ràng.
+- **Giữ chỗ mà không kiểm "đã giữ chưa" = RÒ SLOT (SCH-1).** `generate_slots` sinh LƯỜI mỗi lần ứng viên mở
+  link; nếu không trả lại đúng các hold CÒN HẠN của chính application đó thì mỗi lần tải trang giữ thêm 5
+  khung giờ — N lần bấm F5 khoá 5N khung, lịch công ty cạn sạch và **không có lỗi nào bật ra**. Cũng KHÔNG
+  gia hạn hold theo mỗi lần tải (biến hold 10 phút thành hold vô hạn). Thêm đường sinh/giữ slot mới → truy
+  vấn hold-còn-hạn phải nằm ở dòng ĐẦU.
+- **Thứ tự thao tác quyết định chỗ `IntegrityError` bật ra (SCH-1).** Trong `confirm_booking`, câu
+  `UPDATE` nhả các hold anh em sẽ **autoflush** mọi thay đổi ORM đang treo. Lật `status=BOOKED` TRƯỚC rồi
+  mới `UPDATE` ⇒ unique violation của race bật ra ngay giữa hàm thay vì ở `commit()` — ngoài khối `try`
+  đang bắt nó. Nhả anh em TRƯỚC, lật trạng thái SAU, để chỉ có MỘT điểm ném lỗi.
+- **`datetime` naive ở tầng đặt lịch lệch đúng 7 tiếng mà KHÔNG ném lỗi (SCH-1).** Python coi naive là giờ
+  hệ thống nên so sánh vẫn chạy, chỉ có slot hiện ra sai buổi. DB lưu `timestamptz` UTC, sinh/so sánh theo
+  `Asia/Ho_Chi_Minh`; `booking_service._as_utc` chặn naive tại cửa — đừng gỡ. Đếm `max_per_day` phải quét
+  từ **đầu ngày địa phương**, không từ `now`: buổi sáng nay đã diễn ra vẫn chiếm hạn mức của hôm nay.
+- **`zoneinfo` đọc tzdata của HỆ ĐIỀU HÀNH — ảnh Docker slim có thể không có (SCH-1).** Thiếu thì
+  `ZoneInfo("Asia/Ho_Chi_Minh")` ném `ZoneInfoNotFoundError`: chết hẳn trên prod trong khi máy dev xanh.
+  Đã ghim gói `tzdata` (thuần dữ liệu, zoneinfo tự dùng làm nguồn dự phòng) — đừng gỡ khi dọn dependency.
+- **Test async chạm DB THẬT: đừng dùng `AsyncSessionLocal` toàn cục (SCH-1).** pytest-asyncio cấp mỗi test
+  một event loop MỚI, còn pool của engine toàn cục giữ connection asyncpg gắn với loop của test TRƯỚC →
+  test thứ hai nổ `Future attached to a different loop` (test đầu vẫn xanh, nên trông như lỗi ngẫu nhiên).
+  Dùng engine RIÊNG mỗi test + `NullPool` (xem `tests/test_booking_db.py`).
 

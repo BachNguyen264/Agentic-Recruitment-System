@@ -102,6 +102,17 @@ T=34.3s (parser 9.4s · ranker 24.7s ⇒ ranker chiếm 72%); connection giữ 0
 100%) ⇒ trần một đợt **28 → 678 hồ sơ**. Nút thắt kế tiếp: thread pool 14 luồng (parser gọi LLM ĐỒNG BỘ,
 ~1.5 CV/s bền) rồi RAM (~11MB/CV 10MB đang bay). Công cụ: `scripts/loadtest_apply.py`.
 
+**Đặt lịch — ứng viên tự chọn giờ (SCH-1 XONG, PRD §10b):** tầng nghiệp vụ THUẦN, **chưa ai gọi tới**.
+`InterviewBooking`/`BookingSession` + migration viết tay **partial unique index** `UNIQUE(start_at) WHERE
+status='BOOKED'` (chốt chặn cuối chống đặt trùng; HELD chỉ là khuyến nghị nên hai người cùng HELD một giờ
+là HỢP LỆ); khả dụng TOÀN CỤC qua 14 env `BOOKING_*` → `services/booking_config.BookingConfig` (có validate);
+`booking_service.generate_slots` sinh **lười** + giữ 10 phút + **bấm lại trả ĐÚNG slot cũ** + trộn sáng/chiều
+nhiều ngày, `confirm_booking` HELD→BOOKED chống race (`IntegrityError` → `SlotTaken` để SCH-2 dịch 409),
+`release_holds`; seam `services/calendar` (`CalendarProvider` + `IcsProvider` 0-dependency, giờ UTC trong
+`.ics`). Test: 36 trong `make test` + 15 gated `RUN_BOOKING_IT=1` (**race thật 2 transaction**).
+**Còn lại:** SCH-2 (nối `scheduler_node` + endpoint công khai + trang chọn giờ + email kèm `.ics`),
+SCH-3 (nhắc/hết hạn/hủy/HR dời lịch). Ranh giới + bẫy → `docs/AI_GUIDE.md` *Booking boundary*.
+
 **NOT yet done:** analytics; observability; anti-prompt-injection; **runbook + verify live của 13**;
 UI redesign; learning loop. Hardening tải còn nợ: semaphore chặn số pipeline song song, parser dùng
 `ainvoke` (bỏ thread pool), và **đường NHẬN CV vẫn giữ connection suốt lúc upload R2** (xem gotcha `refresh()`).
@@ -208,7 +219,7 @@ kết quả XANH GIẢ, đúng thứ nguy hiểm nhất ngay trước lúc commi
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Agentic-Recruitment-System** (2524 symbols, 4491 relationships, 88 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Agentic-Recruitment-System** (2526 symbols, 4493 relationships, 88 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
