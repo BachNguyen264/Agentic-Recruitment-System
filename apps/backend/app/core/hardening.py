@@ -26,7 +26,13 @@ logger = get_logger("app.hardening")
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 
 # Đường công khai có tác dụng phụ (tạo hồ sơ / nộp câu trả lời) — đây mới là thứ cần siết.
-_PUBLIC_WRITE_PREFIXES = ("/api/public/applications", "/api/public/screening")
+_PUBLIC_WRITE_PREFIXES = (
+    "/api/public/applications",
+    "/api/public/screening",
+    # SCH-2: POST chốt khung giờ. CHỈ method có body — siết cả GET sẽ đốt quota của ứng viên đang
+    # xem danh sách giờ rồi chặn đúng lượt bấm xác nhận (xem ghi chú "chỉ siết method có body").
+    "/api/public/booking",
+)
 
 
 class BodySizeLimitMiddleware:
