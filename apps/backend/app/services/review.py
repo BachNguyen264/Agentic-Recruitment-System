@@ -15,7 +15,7 @@ from app.agents.nodes import scheduler
 from app.core.config import settings
 from app.models.application import Application, ApplicationStatus
 from app.models.job_posting import JobPosting
-from app.services import audit_service
+from app.services import audit_service, booking_flow
 
 Recommendation = Literal["invite", "consider_reject", "review_carefully"]
 ReviewDecision = Literal["approve", "reject"]
@@ -51,11 +51,6 @@ async def review_decision(
         )
 
     mode: Literal["invite", "reject"] = "invite" if decision == "approve" else "reject"
-    app_row.status = (
-        ApplicationStatus.INTERVIEW_SCHEDULED.value
-        if decision == "approve"
-        else ApplicationStatus.REJECTED.value
-    )
 
     # Gom dữ liệu email TRƯỚC commit (sau commit thuộc tính có thể expire → tránh lazy-load).
     applicant_email = app_row.applicant_email
@@ -69,10 +64,24 @@ async def review_decision(
         session, application_id=application_id, node="human_review", action=decision,
         detail={"note": note, "decided_by": "hr", "mode": mode}, commit=False,
     )
-    await session.commit()
 
-    # Delegate SAU khi quyết định đã lưu — scheduler gửi email THẬT (PRD §7.4). Email lỗi KHÔNG
-    # làm sập: notify_decision nuốt lỗi + audit email_failed, quyết định/trạng thái vẫn giữ.
+    if decision == "approve":
+        # SCH-2: HR duyệt KHÔNG còn ra thẳng INTERVIEW_SCHEDULED — ứng viên phải tự chọn giờ trước
+        # (PRD §10b). Trạng thái GIỮ NGUYÊN PENDING_REVIEW cho tới khi thư mời gửi được: nếu tiến
+        # trình chết giữa chừng, ca vẫn nằm trong hàng chờ để HR bấm lại. Đặt một trạng thái trung
+        # gian ở đây sẽ làm ca biến mất khỏi hàng chờ mà chẳng ai gửi thư.
+        await session.commit()
+        await booking_flow.dispatch_booking_invite(
+            session, app_row, applicant_email=applicant_email, candidate_name=candidate_name,
+            job_title=job_title, audit_node="human_review",
+        )
+        await session.refresh(app_row)
+        return app_row
+
+    # Nhánh TỪ CHỐI — GIỮ NGUYÊN như 03b: quyết định lưu trước, email sau. Email lỗi KHÔNG làm sập
+    # (notify_decision nuốt lỗi + audit email_failed), quyết định/trạng thái vẫn giữ.
+    app_row.status = ApplicationStatus.REJECTED.value
+    await session.commit()
     await scheduler.notify_decision(
         session, mode, application_id=application_id, applicant_email=applicant_email,
         candidate_name=candidate_name, job_title=job_title,
