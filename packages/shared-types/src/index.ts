@@ -29,6 +29,8 @@ export type ApplicationStatus =
   | "AWAITING_SCREENER"
   | "REMINDED"
   | "SCHEDULING"
+  // SCH-2: thư mời + link đặt lịch đã gửi, chờ ứng viên tự chọn giờ (PRD §10b).
+  | "AWAITING_BOOKING"
   | "PENDING_REVIEW"
   | "INTERVIEW_SCHEDULED"
   | "REJECTED";

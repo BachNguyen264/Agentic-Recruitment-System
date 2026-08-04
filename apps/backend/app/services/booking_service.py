@@ -25,6 +25,7 @@ CHƯA nạp — đọc chúng sẽ bắn thêm một truy vấn (mở lại tran
 
 from __future__ import annotations
 
+import secrets
 from datetime import datetime, time, timedelta, timezone
 
 from sqlalchemy import and_, or_, select, update
@@ -32,7 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.models.booking import BookingStatus, InterviewBooking
+from app.models.booking import BookingSession, BookingStatus, InterviewBooking
 from app.services.booking_config import BookingConfig, load_booking_config
 
 logger = get_logger("app.services.booking")
@@ -43,8 +44,13 @@ __all__ = [
     "BookingNotFound",
     "HoldExpired",
     "SlotTaken",
+    "TokenExpired",
+    "TokenNotFound",
     "confirm_booking",
+    "create_booking_session",
     "generate_slots",
+    "load_valid_session",
+    "mark_session_booked",
     "release_holds",
 ]
 
@@ -81,6 +87,14 @@ class AlreadyBooked(BookingError):
     def __init__(self, message: str, booking: InterviewBooking) -> None:
         super().__init__(message)
         self.booking = booking
+
+
+class TokenNotFound(BookingError):
+    status_code = 404
+
+
+class TokenExpired(BookingError):
+    status_code = 410
 
 
 def _now() -> datetime:
@@ -400,6 +414,22 @@ async def confirm_booking(
         # còn đủ lựa chọn khác để chọn lại ngay.
         await session.rollback()
         logger.info("booking: app=%s thua race ở booking=%s (%s)", application_id, booking_id, exc.orig)
+        # Chỗ giữ VỪA THUA đã vô giá trị (người khác đang BOOKED đúng mốc giờ đó) — huỷ ngay. Nếu
+        # để nguyên, lần "làm mới danh sách" kế tiếp sẽ trả về CHÍNH khung giờ vừa thua (nhánh
+        # bấm-lại trả các hold còn hạn) và ứng viên bấm mãi cũng chỉ nhận thêm 409.
+        try:
+            await session.execute(
+                update(InterviewBooking)
+                .where(
+                    InterviewBooking.id == booking_id,
+                    InterviewBooking.status == BookingStatus.HELD.value,
+                )
+                .values(status=BookingStatus.CANCELLED.value, hold_expires_at=None)
+            )
+            await session.commit()
+        except Exception:  # noqa: BLE001 — dọn dẹp phụ trợ: hỏng thì hold cũng tự hết hạn sau 10 phút
+            await session.rollback()
+            logger.warning("booking: không huỷ được chỗ giữ thua race booking=%s", booking_id)
         raise SlotTaken("Giờ này vừa có người đặt mất. Xin chọn một khung giờ khác.") from exc
 
     logger.info(
@@ -410,3 +440,63 @@ async def confirm_booking(
         released,
     )
     return row
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# Phiên đặt lịch (SCH-2) — LIÊN KẾT gửi cho ứng viên
+# ══════════════════════════════════════════════════════════════════════════════════════════
+
+_TOKEN_BYTES = 32  # secrets.token_urlsafe(32) → ~43 ký tự url-safe (như screener 08b)
+
+
+def create_booking_session(
+    session: AsyncSession, application_id: int, *, now: datetime | None = None
+) -> BookingSession:
+    """Tạo phiên đặt lịch: token crypto-random + hạn `BOOKING_LINK_TTL_HOURS`. **KHÔNG commit.**
+
+    Token gán sẵn ở Python nên caller dựng được link NGAY (trước flush) để bỏ vào thư mời — giống
+    `screening.create_session`. Caller commit CÙNG lúc đổi trạng thái sang `AWAITING_BOOKING`.
+    """
+    at = _as_utc(now, "now") if now is not None else _now()
+    row = BookingSession(
+        application_id=application_id,
+        token=secrets.token_urlsafe(_TOKEN_BYTES),
+        expires_at=at + timedelta(hours=load_booking_config().link_ttl_hours),
+    )
+    session.add(row)
+    return row
+
+
+async def load_valid_session(
+    session: AsyncSession, token: str, *, now: datetime | None = None
+) -> BookingSession:
+    """Tra + validate token đặt lịch. Token sai → 404; huỷ/hết hạn → 410.
+
+    **KHÔNG one-time** (khác magic-link screener — PRD §10b.3): mở lại bao nhiêu lần cũng được, vì
+    mỗi lần mở là sinh danh sách slot TƯƠI nên link không bao giờ ôi. Đừng copy nhánh `used_at` của
+    `screening._load_valid` vào đây.
+
+    Cũng **KHÔNG** ràng buộc `application.status == AWAITING_BOOKING`: sau khi chốt lịch, trạng thái
+    thành `INTERVIEW_SCHEDULED` mà link vẫn phải mở được để hiện "bạn đã đặt lúc X" (`generate_slots`
+    tự ném `AlreadyBooked`). Ràng buộc trạng thái ở đây sẽ làm ứng viên vừa đặt xong bấm lại thấy lỗi.
+    """
+    at = _as_utc(now, "now") if now is not None else _now()
+    row = (
+        await session.execute(select(BookingSession).where(BookingSession.token == token))
+    ).scalar_one_or_none()
+    if row is None:
+        raise TokenNotFound("Liên kết không hợp lệ.")
+    if row.cancelled_at is not None:
+        raise TokenExpired("Liên kết đặt lịch đã bị huỷ. Bộ phận Tuyển dụng sẽ liên hệ với bạn.")
+    # Đã đặt xong thì BỎ QUA hạn: hạn 72h là để BẮT ĐẦU đặt lịch (§10b.3), không phải để xem lại
+    # lịch đã chốt. Hết hạn mà chưa đặt mới là hết cơ hội.
+    if row.booked_at is None and _as_utc(row.expires_at, "expires_at") <= at:
+        raise TokenExpired(
+            "Liên kết đặt lịch đã hết hạn. Bộ phận Tuyển dụng sẽ liên hệ lại với bạn."
+        )
+    return row
+
+
+def mark_session_booked(row: BookingSession, *, now: datetime | None = None) -> None:
+    """Đánh dấu phiên đã chốt được giờ. KHÔNG phải cờ one-time — chỉ để SCH-3 khỏi nhắc phiên này."""
+    row.booked_at = _as_utc(now, "now") if now is not None else _now()
