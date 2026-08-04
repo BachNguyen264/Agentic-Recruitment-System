@@ -101,6 +101,11 @@ class Settings(BaseSettings):
     # Chu kỳ quét deadline (08c, in-process sweep — PRD §10 FR-SCR-3/4). Giây để verify đặt nhỏ
     # (vd 20). Sweep chạy như asyncio task ở lifespan (KHÔNG Redis polling — CLAUDE.md).
     screener_sweep_interval_seconds: int = 600
+    # Đối soát hồ sơ KẸT giữa pipeline (services/stuck_applications). Hồ sơ còn ở SUBMITTED/PARSING/
+    # RANKING quá ngần này phút mà không được đụng tới → PENDING_REVIEW[error] cho HR (KHÔNG auto-reject).
+    # Phải LỚN HƠN NHIỀU thời gian chạy pipeline thật (parser+ranker, đơn vị chục giây) để không cướp
+    # hồ sơ đang chạy khoẻ mạnh. float để verify đặt ngưỡng nhỏ; <= 0 = TẮT lưới.
+    stuck_application_timeout_minutes: float = 30.0
 
     # ── Screener magic-link (08b — PRD §7.3, §10, §12.2) ─────────────
     # Gốc URL frontend công khai để dựng magic-link trong email Screener:

@@ -3,7 +3,7 @@
 > **Tài liệu này là NGUỒN CHÂN LÝ của hệ thống.** Mọi quyết định triển khai phải đối chiếu với PRD này.
 > Khi code và PRD mâu thuẫn → PRD đúng (hoặc cập nhật PRD trước rồi mới sửa code).
 >
-> Phiên bản: 1.1 · Phạm vi: đồ án tốt nghiệp (proof-of-concept hoàn chỉnh).
+> Phiên bản: 1.2 · Phạm vi: đồ án tốt nghiệp (proof-of-concept hoàn chỉnh).
 
 ---
 
@@ -89,7 +89,7 @@ pipeline đa tác tử bất đồng bộ.
    `human_review`. "Không chắc thì hỏi HR" là hành vi đúng, không phải thất bại.
 4. **Cải thiện dần bán tự động có người duyệt.** Hệ thống phát hiện mẫu case lạ từ audit*log → *đề xuất\_
    chỉnh rubric/JD/prompt → HR duyệt mới áp dụng. Agent KHÔNG tự đổi control flow. (Hiện thực đầu tiên:
-   *AI gợi ý rubric từ JD* — AI đề xuất, HR duyệt/chỉnh; xem FR-HR-RUBRIC-1.)
+   _AI gợi ý rubric từ JD_ — AI đề xuất, HR duyệt/chỉnh; xem FR-HR-RUBRIC-1.)
 
 > Đánh đổi cốt lõi: quyền tự trị ở tầng điều phối ĐỔI LẤY độ tin cậy/khả năng kiểm soát + chi phí thấp.
 
@@ -140,8 +140,11 @@ pipeline đa tác tử bất đồng bộ.
 ### 7.4 Scheduler
 
 - **Đầu vào:** quyết định "mời" hoặc "từ chối" (từ gate tự động hoặc từ HR duyệt).
-- **Việc:** nếu mời → gửi thư mời phỏng vấn + tạo sự kiện Google Calendar + nhắc lịch. Nếu từ chối → gửi thư
-  từ chối. Là **điểm thực thi DUY NHẤT** cho mọi hành động gửi-email-tới-ứng-viên.
+- **Việc:** nếu mời → gửi **thư mời kèm link tự đặt lịch** (xem §10b) → `AWAITING_BOOKING`. Nếu từ chối → gửi
+  thư từ chối. Là **điểm thực thi DUY NHẤT** cho mọi hành động gửi-email-tới-ứng-viên (mời, từ chối, xác nhận
+  lịch, nhắc lịch).
+- **KHÔNG tự chốt giờ** (không "push scheduling"): ứng viên chọn giờ (§10b). Lý do: đặt hộ giờ là hành động
+  một chiều — ứng viên có thể bận/đã có việc/không đọc mail → slot bị khóa vô ích và tăng no-show.
 - **Tool tự trị (phase sau):** chọn gửi email / tạo lịch / cả hai.
 
 ---
@@ -181,16 +184,18 @@ pipeline đa tác tử bất đồng bộ.
 
 ### 8.5 Kết thúc
 
-9. Email báo kết quả cho ứng viên (mời/từ chối). Trạng thái cuối: `INTERVIEW_SCHEDULED` hoặc `REJECTED`.
+9. Email báo kết quả cho ứng viên. **Từ chối** → `REJECTED` (cuối). **Mời** → thư mời kèm **link tự đặt lịch**
+   → `AWAITING_BOOKING`; ứng viên chọn giờ (§10b) → `INTERVIEW_SCHEDULED` (cuối) + email xác nhận kèm `.ics`.
+10. Nhắc trước buổi phỏng vấn (mặc định 24h) để giảm no-show.
 
 ---
 
 ## 9. Hai Gate cấu hình
 
-| Gate             | Vị trí                          | BẬT (ON)                  | TẮT (OFF — mặc định an toàn)                |
-| ---------------- | ------------------------------- | ------------------------- | ------------------------------------------- |
-| **auto-từ-chối** | sau Ranker, ca rank thấp        | tự từ chối + gửi email    | mọi ca từ chối → human_review               |
-| **auto-mời**     | sau Screener, trước gửi thư mời | tự gửi thư mời + đặt lịch | mọi thư mời → human_review (HR duyệt trước) |
+| Gate             | Vị trí                          | BẬT (ON)                                     | TẮT (OFF — mặc định an toàn)                |
+| ---------------- | ------------------------------- | -------------------------------------------- | ------------------------------------------- |
+| **auto-từ-chối** | sau Ranker, ca rank thấp        | tự từ chối + gửi email                       | mọi ca từ chối → human_review               |
+| **auto-mời**     | sau Screener, trước gửi thư mời | tự gửi thư mời + **link tự đặt lịch** (§10b) | mọi thư mời → human_review (HR duyệt trước) |
 
 - **FR-GATE-1:** Gate là cấu hình của HR, lưu trong DB; có thể đặt mức toàn hệ thống hoặc theo từng JD.
 - **FR-GATE-2 (BẤT BIẾN):** Gate CHỈ can thiệp ca agent **tự tin**. Ca bất định/thiếu tự tin (`parse_failed`,
@@ -220,6 +225,77 @@ dậy theo sự kiện hoặc theo hạn.
 
 ---
 
+## 10b. Đặt lịch phỏng vấn — ứng viên tự chọn (pull scheduling)
+
+> **Nguyên tắc:** hệ thống KHÔNG chốt hộ giờ. Ứng viên chủ động chọn → linh hoạt hơn, giảm no-show, và HR
+> không phải xác nhận lại. Đây là phản hồi chủ động **lần 2** của ứng viên (lần 1 = Screener) — tín hiệu
+> thực sự quan tâm vị trí.
+
+### 10b.1 Luồng
+
+1. Có quyết định **mời** (gate auto-mời hoặc HR duyệt) → Scheduler gửi **thư mời + link đặt lịch**
+   (token riêng, KHÁC token screener) → status `AWAITING_BOOKING`.
+2. Ứng viên mở link → **lúc này mới sinh slot** (lazy) từ trạng thái lịch **hiện tại** → hiện **5 khung giờ**
+   → **giữ chỗ (HELD)** 5 slot đó trong **10 phút**.
+3. Ứng viên chọn 1 slot → xác nhận → `INTERVIEW_SCHEDULED` + email xác nhận kèm **`.ics`**; 4 slot còn lại
+   nhả ngay.
+4. Nhắc trước buổi phỏng vấn **24h** (email + `.ics`).
+
+### 10b.2 Vì sao sinh slot LƯỜI (khi click), không phải khi gửi mail
+
+Nếu giữ chỗ ngay lúc gửi mail, slot bị khóa cho người **có thể không bao giờ mở mail** → lãng phí lịch trống
+của người thực sự muốn phỏng vấn. Sinh lười ⇒ chỉ tiêu tài nguyên cho người **thực sự có ý định đặt lịch**.
+Hệ quả phụ (quan trọng): **link không bao giờ ôi** — mỗi lần mở là danh sách tươi → **không cần "link thứ hai"**
+kiểu resend-OTP, chỉ cần MỘT link.
+
+### 10b.3 Hai đồng hồ (đừng nhầm)
+
+| Đồng hồ            | Thời hạn (env)                   | Ý nghĩa                                     |
+| ------------------ | -------------------------------- | ------------------------------------------- |
+| **Link đặt lịch**  | 72h (`BOOKING_LINK_TTL_HOURS`)   | Ứng viên có bao lâu để **bắt đầu** đặt lịch |
+| **Giữ chỗ (HELD)** | 10 phút (`BOOKING_HOLD_MINUTES`) | Slot bị giữ trong **một phiên** chọn        |
+
+Hold ngắn KHÔNG trừng phạt ứng viên: hết hold chỉ cần tải lại → danh sách mới ngay (nhờ sinh lười).
+Token đặt lịch **KHÔNG one-time** (khác screener): mở lại được nhiều lần tới khi đặt xong hoặc link hết hạn.
+
+### 10b.4 Chọn slot đề xuất
+
+- **5 slot**, trộn: 2–3 slot **sớm nhất** + 2–3 slot **rải ngày/buổi khác** (sáng lẫn chiều).
+- Lý do chính: cho ứng viên **lựa chọn thật** (5 slot cùng một buổi sáng thì người bận sáng đó vô dụng).
+  Lý do phụ: phân tán tự nhiên, giảm tranh chấp.
+
+### 10b.5 Chống đặt trùng (race condition)
+
+- **HELD = khuyến nghị · BOOKED = thẩm quyền.**
+- Sinh danh sách **loại trừ** slot `BOOKED` **hoặc** (`HELD` và chưa hết hạn) ⇒ hai ứng viên mở cùng lúc
+  **thấy danh sách khác nhau** ⇒ xung đột gần như biến mất ngay từ khâu sinh.
+- Xác nhận = transaction lật `HELD → BOOKED`, chặn cuối bằng **unique constraint trên `start_at`**
+  (chỉ áp cho `BOOKED`) — single-tenant, mỗi mốc giờ chỉ một buổi.
+- Thua race → **409** + tự làm mới danh sách ("giờ này vừa có người đặt, mời chọn giờ khác").
+- **KHÔNG cần cron dọn hold**: truy vấn đã lọc theo `hold_expires_at > now()`.
+
+### 10b.6 Không phản hồi / hủy / đổi
+
+- Link hết hạn (72h) mà chưa đặt → **nhắc một lần** ở `BOOKING_REMINDER_HOURS`, hết hạn → `PENDING_REVIEW`
+  gắn cờ `booking_no_response` (**KHÔNG auto-reject** — im lặng ≠ từ chối, đối xứng FR-SCR-3). Dùng sweep
+  loop sẵn có (§10).
+- **Hủy/đổi (mức tối thiểu):** email xác nhận kèm **link hủy**; ứng viên hủy → slot nhả + HR được báo +
+  về `PENDING_REVIEW`. HR **dời/hủy** được booking từ dashboard.
+
+### 10b.7 Cấu hình khả dụng (toàn cục)
+
+Giờ làm việc, nghỉ trưa, độ dài buổi PV, đệm giữa hai buổi, lead-time tối thiểu (không đặt sớm hơn N giờ),
+số buổi tối đa/ngày, cửa sổ đặt lịch (mặc định 14 ngày tới). **Toàn hệ thống** (không theo từng JD) — phù hợp
+single-tenant. Múi giờ chốt tường minh **Asia/Ho_Chi_Minh**.
+
+### 10b.8 Seam tích hợp lịch ngoài
+
+Tạo sự kiện lịch đi qua seam `CalendarProvider` (`create_event/cancel_event`). Mặc định `IcsProvider`
+(đính kèm `.ics` vào email — không cần OAuth). **Chừa đường** cho `GoogleCalendarProvider` (§17) mà không
+phải sửa nghiệp vụ.
+
+---
+
 ## 11. human_review + ReviewCard
 
 - **FR-HR-1:** Mọi ca vào human_review phải kèm **ReviewCard** để HR quyết nhanh, KHÔNG chỉ đánh dấu "cần review".
@@ -239,9 +315,9 @@ dậy theo sự kiện hoặc theo hạn.
 
 ### 12.1 HR
 
-- FR-HR-JD-1: **Luồng tạo JD 2 bước** — (a) tạo *Tin tuyển dụng* (tiêu đề, cấp bậc, lương, quyền lợi, loại việc, mô tả + yêu cầu dạng văn bản định dạng dán-được) → lưu `DRAFT` + embedding Qdrant; (b) *Cấu hình sàng lọc* trên JD đã lưu (rubric + câu hỏi sàng lọc). Sửa mô tả/tiêu đề/yêu cầu → re-embed.
+- FR-HR-JD-1: **Luồng tạo JD 2 bước** — (a) tạo _Tin tuyển dụng_ (tiêu đề, cấp bậc, lương, quyền lợi, loại việc, mô tả + yêu cầu dạng văn bản định dạng dán-được) → lưu `DRAFT` + embedding Qdrant; (b) _Cấu hình sàng lọc_ trên JD đã lưu (rubric + câu hỏi sàng lọc). Sửa mô tả/tiêu đề/yêu cầu → re-embed.
 - FR-HR-JD-2: **Rubric bắt buộc để MỞ** — JD tạo được không cần rubric (DRAFT), nhưng phải có rubric mới `OPEN` (nhận CV). Câu hỏi sàng lọc **tùy chọn** (rỗng → pipeline bỏ qua Screener).
-- FR-HR-RUBRIC-1 (**AI gợi ý rubric** — bước đầu của trụ cột 4): nút on-demand, đọc JD đã lưu (tiêu đề+mô tả+yêu cầu, và cấp bậc làm ngữ cảnh) → LLM đề xuất *tiêu chí + trọng số* (structured output) → HR chỉnh/lưu. **Cap retry 3 lần/JD**, `rubric_suggestion_count` neo trên JD; **reset khi nội dung JD (tiêu đề/mô tả/yêu cầu) đổi** (dùng chung phép so sánh với re-embed). Auth-gated (require_hr).
+- FR-HR-RUBRIC-1 (**AI gợi ý rubric** — bước đầu của trụ cột 4): nút on-demand, đọc JD đã lưu (tiêu đề+mô tả+yêu cầu, và cấp bậc làm ngữ cảnh) → LLM đề xuất _tiêu chí + trọng số_ (structured output) → HR chỉnh/lưu. **Cap retry 3 lần/JD**, `rubric_suggestion_count` neo trên JD; **reset khi nội dung JD (tiêu đề/mô tả/yêu cầu) đổi** (dùng chung phép so sánh với re-embed). Auth-gated (require_hr).
 - FR-HR-JD-3: **Trạng thái JD** `DRAFT → OPEN → CLOSED` (đóng/tạm dừng, giữ dữ liệu) và **ARCHIVED** (lưu trữ, ẩn khỏi danh sách, giữ dữ liệu + kiểm toán, khôi phục được). **KHÔNG hard-delete JD** (bảo toàn hồ sơ ứng viên + nhật ký kiểm toán); xóa data test chỉ qua script dev.
 - FR-HR-JD-4: Gate (auto_reject/auto_invite) — toggle theo JD, truy cập nhanh **trên danh sách JD**.
 - FR-HR-DASH-1: dashboard giám sát pipeline thời gian thực (trạng thái từng CV, agent trace, hàng đợi).
@@ -268,7 +344,16 @@ dậy theo sự kiện hoặc theo hạn.
 
 ### 12.4 Thông báo
 
-- FR-NOTI-1: email tới ứng viên (xác nhận nộp, câu hỏi Screener, nhắc, kết quả).
+- FR-NOTI-1: email tới ứng viên (xác nhận nộp, câu hỏi Screener, nhắc, kết quả, **link đặt lịch, xác nhận
+  lịch kèm `.ics`, nhắc trước buổi PV**).
+- FR-BOOK-1: thư mời kèm **link tự đặt lịch**; ứng viên mở link → **mới** sinh 5 slot từ trạng thái hiện tại
+  - giữ chỗ 10 phút (§10b.2).
+- FR-BOOK-2: chọn slot → transaction `HELD → BOOKED` + unique constraint `start_at`; thua race → 409 + làm
+  mới danh sách (§10b.5).
+- FR-BOOK-3: token đặt lịch **KHÔNG one-time**, TTL 72h; hết hạn chưa đặt → nhắc 1 lần → `PENDING_REVIEW`
+  cờ `booking_no_response`, **KHÔNG auto-reject**.
+- FR-BOOK-4: nhắc trước buổi PV 24h; hủy (link trong email xác nhận) → nhả slot + báo HR; HR dời/hủy được.
+- FR-BOOK-5: cấu hình khả dụng **toàn cục** qua env (§10b.7); mọi mốc thời gian theo `Asia/Ho_Chi_Minh`.
 - FR-NOTI-2: badge số ca chờ trong app (web push đẩy thật: xem §17) tới HR khi có ca cần review.
 
 ---
@@ -290,13 +375,18 @@ SCREENING
   GATE MỜI:
         ổn + auto-invite ON → SCHEDULING
         OFF / có cờ         → PENDING_REVIEW
-SCHEDULING → INTERVIEW_SCHEDULED        (passed)
+SCHEDULING → (gửi thư mời + link đặt lịch) → AWAITING_BOOKING
+        chọn slot  → INTERVIEW_SCHEDULED   (passed; + email xác nhận .ics)
+        +nhắc      → (vẫn AWAITING_BOOKING)
+        hết hạn    → PENDING_REVIEW[booking_no_response]   (KHÔNG auto-reject)
+        hủy        → PENDING_REVIEW (slot được nhả)
 PENDING_REVIEW (HR quyết):
         duyệt   → SCHEDULING → INTERVIEW_SCHEDULED
         từ chối → REJECTED
 ```
 
-**Ba rổ dashboard:** đang xử lý (`SUBMITTED..RANKING`, `SCREENING`, `AWAITING_SCREENER`, `SCHEDULING`);
+**Ba rổ dashboard:** đang xử lý (`SUBMITTED..RANKING`, `SCREENING`, `AWAITING_SCREENER`, `SCHEDULING`,
+`AWAITING_BOOKING`);
 chờ HR (`PENDING_REVIEW`); kết thúc (`INTERVIEW_SCHEDULED`, `REJECTED`). Lỗi kỹ thuật vào `PENDING_REVIEW`
 nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt".
 
@@ -337,6 +427,11 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 
 ## 16. Mô hình dữ liệu (thực thể chính)
 
+- **InterviewBooking:** id, application_id, start_at, end_at, `status` (`HELD`/`BOOKED`/`CANCELLED`),
+  `hold_expires_at`, created_at. **Unique constraint trên `start_at` khi `status='BOOKED'`** (chống đặt trùng).
+- **BookingSession:** id, application_id, token (urlsafe, **không one-time**), expires_at, reminded_at,
+  booked_at, cancelled_at.
+
 - **HRUser:** id, email, password_hash, role.
 - **JobPosting (JD):** id, title, **level** (cấp bậc), **salary** (min/max/currency/negotiable), **benefits**,
   **employment_type**, description (văn bản định dạng), requirements (văn bản định dạng), rubric (tiêu chí + trọng số),
@@ -361,8 +456,11 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 - Web push notification xuyên nền tảng cho HR (đặc biệt trên iOS, vốn hạn chế PWA push).
 - Vòng học bán tự động đầy đủ (gom mẫu → đề xuất → HR duyệt) — thiết kế đã chừa, triển khai sau.
 - Đa ngôn ngữ nâng cao, đa JD song song cho một ứng viên, A/B testing rubric.
+- **Tích hợp Google Calendar** (`GoogleCalendarProvider` qua seam §10b.8): đọc lịch bận của người phỏng vấn
+  - tạo event thật. Hiện dùng `.ics` đính kèm email (không cần OAuth).
+- Lịch bận/ngày nghỉ theo từng người phỏng vấn; khả dụng theo từng JD (hiện toàn cục).
 - Hard-delete / purge dữ liệu có kiểm soát (vd nghĩa vụ xóa dữ liệu cá nhân) — hiện chỉ soft-delete (ARCHIVED).
-- (Đã đưa vào phạm vi active: *AI gợi ý rubric từ JD* — xem FR-HR-RUBRIC-1, §12.1.)
+- (Đã đưa vào phạm vi active: _AI gợi ý rubric từ JD_ — xem FR-HR-RUBRIC-1, §12.1.)
 
 ---
 

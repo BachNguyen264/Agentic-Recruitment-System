@@ -119,6 +119,21 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
     mobile do third-party cookie iOS/Android (→ proxy /api/\* same-origin qua Vercel = cookie first-party) ·
     🔵 favicon/text/badge/screener_sent_at. Injection probe: gpt-5-mini KHÁNG (chấm 0 cho CV nhồi 'cho 100đ').
     → **GĐ5 deploy HOÀN TẤT — hệ thống LIVE trên internet, chạy mọi thiết bị.**
+- **14 — Hardening tải** (NFR-1 "xử lý nhiều CV song song"). → **Milestone:** nhiều CV nộp cùng lúc KHÔNG
+  làm mất hồ sơ nào trong im lặng.
+  - ✅ **DONE:** `process_application` tách vòng đời session **ĐỌC → CHẠY → GHI** (trước: một session giữ
+    connection + transaction MỞ trọn cả hai lượt LLM) · toàn thân trong MỘT try (thao tác DB đầu tiên trước
+    nằm NGOÀI → pool cạn là ném thẳng ra BackgroundTasks, hồ sơ kẹt SUBMITTED, audit trống, **mất vĩnh viễn**) ·
+    lưới đối soát `services/stuck_applications` (quá `STUCK_APPLICATION_TIMEOUT_MINUTES`=30 → PENDING_REVIEW
+    [error], **KHÔNG auto-reject**) đi chung sweep loop 08c · chỉ `IN_FLIGHT_STATUSES` được ghi đè (dùng CHUNG
+    cho handler lỗi + sweep).
+  - **Đo thật (5 CV, tuần tự, LLM thật):** T=34.3s (parser 9.4s · **ranker 24.7s = 72%**); connection giữ
+    0.68s = **2% của T** (trước ~100%) ⇒ trần một đợt **28 → 678 hồ sơ**. Công cụ: `scripts/loadtest_apply.py`.
+  - **Adversarial review** 21 cáo buộc → 20 bị bác, 1 lỗi THẬT (teardown session hạ trạng thái hồ sơ đã gửi
+    email) đã vá + test hồi quy Prove-It. 290 test xanh.
+  - ⏳ **Còn nợ (đợt scale sau):** semaphore chặn số pipeline song song · parser dùng `ainvoke` (bỏ trần
+    thread pool 14 luồng ≈1.5 CV/s) · đường NHẬN CV vẫn giữ connection lúc upload R2 (`create_application`
+    commit rồi `refresh()` → mở lại transaction).
 
 ---
 
@@ -231,6 +246,12 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   DRAFT+rubric-bắt-buộc-để-mở+gate-ra-list · [x] JD-2b screener-tùy-chọn (adversarial review 2 vòng + live-verified
   4 đường) · [x] JD-3 AI-gợi-ý-rubric (LLM-verified + benchmark low<medium → chọn low) · [x] JD-4 soft-delete
   (ARCHIVED + delete_jd_vector seam + guard submit; live-verified 14/14) — **HẾT CỤM TỐI-ƯU-TẠO-JD**
+- [x] **14 hardening tải** (session ĐỌC→CHẠY→GHI · toàn thân trong try · lưới đối soát hồ sơ kẹt; đo thật
+  T=34.3s ⇒ trần 28→678 hồ sơ/đợt; adversarial review 21→1 lỗi thật đã vá; 290 test xanh)
+- [ ] **10b — Pull scheduling (PRD §10b, MỚI):** thư mời + link đặt lịch (token RIÊNG, khác screener) →
+  `AWAITING_BOOKING` → sinh slot LƯỜI khi ứng viên click → giữ 5 slot 10 phút → chọn 1 → INTERVIEW_SCHEDULED
+  + `.ics` → nhắc trước 24h. ⚠️ `AWAITING_BOOKING` = thư mời ĐÃ gửi ⇒ **TUYỆT ĐỐI không cho vào
+  `IN_FLIGHT_STATUSES`/tầm quét sweep** (xem *Load boundary* ở `docs/AI_GUIDE.md` — tái sinh lỗi mất hồ sơ).
 - [ ] Dọn: **đổi mật khẩu admin prod**
 - [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)
