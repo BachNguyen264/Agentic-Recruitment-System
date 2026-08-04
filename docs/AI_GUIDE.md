@@ -44,6 +44,11 @@
   RANKING — hằng số ở `models/application.py`) được phép ghi đè: đó là các trạng thái CHƯA quyết và CHƯA
   email gì. Handler lỗi VÀ sweep đối soát PHẢI dùng CHUNG hằng số này — hai lưới lệch định nghĩa chính là
   cách sinh ra lớp lỗi cả hai đang chặn. Sweep loop 08c nay chạy HAI lưới (screener timeout + hồ sơ kẹt).
+  **Thêm TRẠNG THÁI MỚI vào vòng đời → dừng lại và hỏi: "tới trạng thái này, ứng viên ĐÃ nhận email/link
+  chưa?"** Nếu RỒI thì nó KHÔNG được vào `IN_FLIGHT_STATUSES` và KHÔNG được vào tầm quét của sweep — cứ
+  thêm vào là tái sinh đúng lỗi mất-bài-dự-tuyển đã vá (xem gotcha "Đóng session KHÔNG vô hại"). Áp dụng
+  ngay cho `AWAITING_BOOKING` của **PRD §10b** (pull scheduling — thư mời + link đặt lịch ĐÃ gửi trước khi
+  vào trạng thái đó), y như `AWAITING_SCREENER` và `SCHEDULING` hôm nay.
 - **Ranker:** score is ONLY the reasoned rubric (weights from the JD); cosine/embedding is a SIDE signal, NOT in
   the score, NO JD chunking. confidence/flags = DETERMINISTIC heuristic (don't ask the LLM to self-score).
 - **scheduler is the SOLE email-send point** — don't scatter sends.
