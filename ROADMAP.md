@@ -258,9 +258,15 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
     `generate_slots` sinh lười + giữ 10 phút + **bấm lại trả ĐÚNG slot cũ** + trộn sáng/chiều nhiều ngày ·
     `confirm_booking` HELD→BOOKED chống race · seam `CalendarProvider`+`IcsProvider` (0-dependency).
     51 test (36 trong `make test`, 15 gated `RUN_BOOKING_IT=1` gồm **race thật 2 transaction**).
-  - [ ] **SCH-2 lát dọc:** `scheduler_node` gửi thư mời + link → `AWAITING_BOOKING`; endpoint công khai
-    `GET/POST /api/public/booking/{token}` (409 khi thua race); trang `/booking/{token}`; email xác nhận
-    kèm `.ics`. ⚠️ Giữ bất biến 08d: chỉ đổi trạng thái SAU khi email đã gửi; dispatch cô lập khỏi error handler.
+  - [x] **SCH-2 lát dọc — luồng CHẠY THẬT:** cả BA đường quyết định mời (gate lần-đầu, gate sau-screener,
+    HR duyệt) đi chung `booking_flow.dispatch_booking_invite` → thư mời kèm link → `AWAITING_BOOKING`
+    (chỉ sau khi email gửi THÀNH CÔNG); endpoint công khai GET/POST + trang `/booking/[token]` (giờ VN,
+    đếm ngược hold, 409 tự làm mới, `already_booked`); thư xác nhận kèm `.ics` → `INTERVIEW_SCHEDULED`.
+    Verify LIVE (LLM + email thật) 8/8 bước, gồm race 2 ứng viên → đúng 1 thắng + 409.
+    **Adversarial review 3 góc bắt 7 lỗi THẬT** (TOCTOU giữ chỗ 2 lượt GET → 10 hàng; đếm hạn mức theo
+    hàng; `except` tự ném `PendingRollbackError`; giữ khoá hàng 1.29s qua lượt gửi mail + gửi thư trùng;
+    thư mời bay trước khi ghi token → link 404; ứng viên bị từ chối vẫn tự đặt lịch được; deadlock ra
+    500 thay vì 409) — đã vá + 5 test hồi quy trên DB thật.
   - [ ] **SCH-3 hoàn thiện:** nhắc trước PV 24h · link hết hạn → nhắc 1 lần → `PENDING_REVIEW[booking_no_response]`
     (**KHÔNG auto-reject**) qua sweep 08c · link hủy → nhả slot + báo HR · HR xem/dời/hủy lịch trên dashboard.
 - [ ] Dọn: **đổi mật khẩu admin prod**

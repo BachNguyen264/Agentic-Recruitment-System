@@ -51,7 +51,7 @@ Past scaffold — building real logic slice by slice. Node REAL vs STUB:
 | -------------- | -------- | ----- |
 | `parser`       | ✅ REAL  | CV→JSON via OpenAI `gpt-4.1-mini` (structured output) + certificates/languages/awards/other |
 | `ranker`       | ✅ REAL  | reasoned rubric scoring via `gpt-5-mini` (reasoning_effort=low); embedding = SIDE signal only |
-| `screener`     | ✅ REAL  | **08a–08d DONE (GĐ3 hết):** suspend/resume (`interrupt()` + AsyncPostgresSaver/Neon) + **magic-link form** (token/hết hạn/one-time/row-lock → resume BẰNG câu trả lời) + **timeout/nhắc** (in-process sweep sau seam `ScreeningTimeoutScheduler`/`InProcessScheduler`: nhắc 1 lần → hết hạn resume `no_response` → human_review, KHÔNG auto-reject; trả lời trễ báo êm) + **gate auto-mời 08d** (sau resume: ca sạch + JD `auto_invite` ON → thư mời THẬT qua scheduler → INTERVIEW_SCHEDULED; no_response/cờ/low-conf/OFF → human_review; "cờ thắng gate"). Answers hiện cho HR (PRD §9, §10) |
+| `screener`     | ✅ REAL  | **08a–08d DONE (GĐ3 hết):** suspend/resume (`interrupt()` + AsyncPostgresSaver/Neon) + **magic-link form** (token/hết hạn/one-time/row-lock → resume BẰNG câu trả lời) + **timeout/nhắc** (in-process sweep sau seam `ScreeningTimeoutScheduler`/`InProcessScheduler`: nhắc 1 lần → hết hạn resume `no_response` → human_review, KHÔNG auto-reject; trả lời trễ báo êm) + **gate auto-mời 08d** (sau resume: ca sạch + JD `auto_invite` ON → thư mời THẬT qua scheduler → **AWAITING_BOOKING** (SCH-2 đổi: kèm link tự đặt lịch); no_response/cờ/low-conf/OFF → human_review; "cờ thắng gate"). Answers hiện cho HR (PRD §9, §10) |
 | `scheduler`    | ✅ REAL  | sends real invite/rejection email via **Resend** (fixed VN templates); Calendar deferred |
 | `human_review` | ✅ REAL  | ReviewCard + approve/reject → delegates to scheduler; audit-logged (PRD §11) |
 
@@ -64,7 +64,7 @@ server-side magic-byte validation — slice 07); **Screener suspend/resume** (Po
 `screening_timeout.send_screening_reminder`/`handle_screening_timeout` tách khỏi cơ chế; cột `reminded_at`/
 `timed_out_at`; timeout resume `no_response` → human_review) + **gate auto-mời** (08d: `route_after_screener`
 đối xứng `route_after_ranker`; ca sạch + JD `auto_invite` → `scheduler_node` (SCHEDULING) → `resume_screener`
-gửi thư mời THẬT → INTERVIEW_SCHEDULED; dispatch CÔ LẬP khỏi error handler; toggle auto_invite ở form JD);
+gửi thư mời THẬT → AWAITING_BOOKING (SCH-2); dispatch CÔ LẬP khỏi error handler; toggle auto_invite ở form JD);
 PWA dashboard; HR pages `/cv-check`, `/applications` (list + score detail), `/review` (queue), `/jobs` (JD UI).
 **HR auth (09, GĐ4 XONG):** `hr_user` (email + bcrypt hash) + seed từ env (`scripts/seed_hr_admin.py`,
 idempotent); JWT HS256 trong cookie httpOnly (`core/security.py` — bcrypt trực tiếp + pyjwt, KHÔNG passlib);
@@ -102,7 +102,19 @@ T=34.3s (parser 9.4s · ranker 24.7s ⇒ ranker chiếm 72%); connection giữ 0
 100%) ⇒ trần một đợt **28 → 678 hồ sơ**. Nút thắt kế tiếp: thread pool 14 luồng (parser gọi LLM ĐỒNG BỘ,
 ~1.5 CV/s bền) rồi RAM (~11MB/CV 10MB đang bay). Công cụ: `scripts/loadtest_apply.py`.
 
-**Đặt lịch — ứng viên tự chọn giờ (SCH-1 XONG, PRD §10b):** tầng nghiệp vụ THUẦN, **chưa ai gọi tới**.
+**Đặt lịch — ứng viên tự chọn giờ (SCH-1 + SCH-2 XONG, PRD §10b):** luồng CHẠY THẬT end-to-end.
+**SCH-2:** cả BA đường quyết định mời (gate lần-đầu, gate sau-screener, HR duyệt) đi chung
+`services/booking_flow.dispatch_booking_invite` → thư mời KÈM LINK `/booking/{token}` → **`AWAITING_BOOKING`**
+(chỉ sau khi email gửi THÀNH CÔNG — bất biến 08d); `INTERVIEW_SCHEDULED` nay đặt lúc ứng viên CHỌN XONG giờ.
+Endpoint công khai `GET/POST /api/public/booking/{token}` (projection an toàn; `already_booked` = 200 chứ
+không phải lỗi; thua race = 409) + trang `/booking/[token]` (giờ VN, đếm ngược hold, 409 tự làm mới) + thư
+xác nhận kèm `.ics`. **Thứ tự KHÁC nhau có chủ ý:** gửi thư mời = *email trước, trạng thái sau*; xác nhận
+lịch = *DB trước, email sau* (ứng viên đang nhìn màn xác nhận nên họ ĐÃ biết; thư chỉ là biên nhận — gửi
+hỏng thì GIỮ lịch + gắn cờ cho HR). Adversarial review bắt **7 lỗi thật** (TOCTOU giữ chỗ, đếm hạn mức sai,
+`except` tự ném, giữ khoá qua lượt gửi mail, link 404, token cũ lật ngược quyết định HR, deadlock ra 500)
+— đã vá + 5 test hồi quy trên DB thật. **Còn lại: SCH-3** (nhắc/hết hạn/hủy/HR dời lịch).
+
+**Nền SCH-1 (PRD §10b):** tầng nghiệp vụ thuần.
 `InterviewBooking`/`BookingSession` + migration viết tay **partial unique index** `UNIQUE(start_at) WHERE
 status='BOOKED'` (chốt chặn cuối chống đặt trùng; HELD chỉ là khuyến nghị nên hai người cùng HELD một giờ
 là HỢP LỆ); khả dụng TOÀN CỤC qua 14 env `BOOKING_*` → `services/booking_config.BookingConfig` (có validate);
@@ -110,8 +122,7 @@ là HỢP LỆ); khả dụng TOÀN CỤC qua 14 env `BOOKING_*` → `services/b
 nhiều ngày, `confirm_booking` HELD→BOOKED chống race (`IntegrityError` → `SlotTaken` để SCH-2 dịch 409),
 `release_holds`; seam `services/calendar` (`CalendarProvider` + `IcsProvider` 0-dependency, giờ UTC trong
 `.ics`). Test: 36 trong `make test` + 15 gated `RUN_BOOKING_IT=1` (**race thật 2 transaction**).
-**Còn lại:** SCH-2 (nối `scheduler_node` + endpoint công khai + trang chọn giờ + email kèm `.ics`),
-SCH-3 (nhắc/hết hạn/hủy/HR dời lịch). Ranh giới + bẫy → `docs/AI_GUIDE.md` *Booking boundary*.
+Ranh giới + bẫy → `docs/AI_GUIDE.md` *Booking boundary*.
 
 **NOT yet done:** analytics; observability; anti-prompt-injection; **runbook + verify live của 13**;
 UI redesign; learning loop. Hardening tải còn nợ: semaphore chặn số pipeline song song, parser dùng

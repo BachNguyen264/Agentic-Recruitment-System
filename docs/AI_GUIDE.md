@@ -23,13 +23,18 @@
   KHÔNG đăng ký/quên/reset/RBAC/OAuth; ứng viên GUEST vĩnh viễn (KHÔNG account). Object storage (06) DONE.
   Deploy (13) ĐÃ LIVE. NOT yet built: analytics, observability, anti-injection, UI redesign, learning loop
   — keep stub + TODO pointing to PRD; don't build outside the current slice.
-- **Booking boundary (SCH-1, PRD §10b):** tầng nghiệp vụ đặt lịch ĐÃ CÓ nhưng **chưa nối vào đâu cả** —
-  `booking_service` + `BookingConfig` + seam `CalendarProvider`. Nối vào `scheduler_node`/endpoint công
-  khai/trang chọn giờ/email = **SCH-2**; nhắc/hết hạn/hủy/HR dời lịch = **SCH-3**. Mọi thao tác trên khung
-  giờ đi QUA `booking_service` (đừng truy vấn thẳng `interview_booking` ở nơi khác) — chỗ-đã-chiếm là
-  `BOOKED` **hoặc** `HELD` còn hạn, và chốt chặn cuối là **partial unique index** `UNIQUE(start_at) WHERE
-  status='BOOKED'`. Đặt lịch nằm NGOÀI graph: **KHÔNG thêm `interrupt()`** cho nó. Khả dụng là TOÀN CỤC
-  (env `BOOKING_*`), không theo từng JD. `AWAITING_BOOKING` = thư mời ĐÃ gửi ⇒ xem *Load boundary*.
+- **Booking boundary (SCH-1 + SCH-2, PRD §10b):** luồng đặt lịch CHẠY THẬT; còn **SCH-3** (nhắc trước PV /
+  link hết hạn → `booking_no_response` / hủy / HR dời lịch). Mọi thao tác trên khung giờ đi QUA
+  `booking_service` (đừng truy vấn thẳng `interview_booking`); chỗ-đã-chiếm = `BOOKED` **hoặc** `HELD` còn
+  hạn; chốt chặn cuối là **partial unique index** `UNIQUE(start_at) WHERE status='BOOKED'`. Đặt lịch nằm
+  NGOÀI graph: **KHÔNG thêm `interrupt()`**. Khả dụng TOÀN CỤC (env `BOOKING_*`), không theo từng JD.
+  **Mọi đường tới quyết định MỜI phải gọi `booking_flow.dispatch_booking_invite`** — đừng tự viết lại thứ
+  tự email-trước-trạng-thái-sau ở đường thứ tư. Hai thứ tự ghi KHÁC nhau CÓ CHỦ Ý: *gửi thư mời* = email
+  trước (chưa gửi được thì chưa mời); *xác nhận lịch* = DB trước, email sau (ứng viên đang nhìn màn xác
+  nhận nên họ ĐÃ biết; huỷ lịch vì gửi thư hỏng mới là cái sai lớn). Sau khi `confirm_booking` thành công
+  thì **tuyệt đối không ném ra ngoài nữa**. `AWAITING_BOOKING` = thư mời ĐÃ gửi ⇒ xem *Load boundary*.
+  Thêm đường đưa hồ sơ rời khỏi hướng phỏng vấn (vd SCH-3 hạ vì hết hạn) → **nhớ `cancel_sessions`**, nếu
+  không token cũ sẽ lật ngược quyết định đó.
 - **Storage boundary (06):** nghiệp vụ TUYỆT ĐỐI không mở path CV — chỉ qua `services/storage`
   (`get_storage().save/get/delete`). Thêm chỗ đọc/ghi CV mới → đi qua seam, nếu không sẽ vỡ khi
   `STORAGE_BACKEND=r2`. `cv_file_ref` là KEY (opaque), KHÔNG trả ra client (dùng `has_cv` + endpoint tải).
@@ -181,6 +186,25 @@
 - **`zoneinfo` đọc tzdata của HỆ ĐIỀU HÀNH — ảnh Docker slim có thể không có (SCH-1).** Thiếu thì
   `ZoneInfo("Asia/Ho_Chi_Minh")` ném `ZoneInfoNotFoundError`: chết hẳn trên prod trong khi máy dev xanh.
   Đã ghim gói `tzdata` (thuần dữ liệu, zoneinfo tự dùng làm nguồn dự phòng) — đừng gỡ khi dọn dependency.
+- **"Đọc rồi ghi" ở endpoint công khai là TOCTOU THẬT, không phải lo xa (SCH-2).** `generate_slots` kiểm
+  "đã có hold chưa" rồi mới chèn; đo trên Postgres thật: 2 lượt GET chồng nhau trên CÙNG token → 10 hàng
+  giữ chỗ, 8 lượt → 40. Bất biến "bấm lại trả slot cũ" chỉ đúng khi TUẦN TỰ, mà ứng viên bấm F5 hai lần
+  là đủ phá. Vá bằng `pg_advisory_xact_lock` theo `application_id` — nhớ **commit ở mọi nhánh trả về sớm**
+  để nhả khoá. Cùng họ: **đếm hạn mức theo HÀNG thay vì theo mốc giờ** làm `max_per_day` phồng lên và đóng
+  sạch những ngày gần nhất với MỌI ứng viên khác.
+- **Khối `except` đọc thuộc tính ORM sau khi commit hỏng thì CHÍNH NÓ ném (SCH-2).** Flush lỗi ⇒ SQLAlchemy
+  expire TOÀN BỘ object trong session; `logger.exception(..., booking.id)` trong handler sẽ nạp lười trên
+  session đang cần rollback → `PendingRollbackError` thoát ra route → 500 cho người vừa đặt lịch THÀNH
+  CÔNG. Trong mọi handler kiểu "không bao giờ được ném", **lấy giá trị nguyên thuỷ TRƯỚC** rồi chỉ dùng
+  chúng; đừng chạm object ORM.
+- **Nhánh idempotent trả về mà KHÔNG commit = giữ khoá + connection qua I/O mạng (SCH-2).**
+  `confirm_booking` mở `SELECT … FOR UPDATE`; nhánh "đã BOOKED rồi, trả về luôn" quên commit nên caller đi
+  gọi Resend trong lúc vẫn giữ khoá hàng — đo được 1.29s. Mọi `return` sớm sau một `FOR UPDATE` phải đóng
+  transaction. Kèm theo: đường bấm-lại phải **bỏ qua việc gửi lại** biên nhận, nếu không mỗi lần tải lại
+  là một email nữa (Resend là kênh DUY NHẤT của hệ thống — đốt quota là làm câm cả pipeline).
+- **Deadlock KHÔNG phải `IntegrityError` (SCH-2).** Hai tab của cùng ứng viên chốt hai `booking_id` khác
+  nhau khoá chéo nhau qua `release_holds`; `DeadlockDetectedError` là `DBAPIError`, lọt qua
+  `except IntegrityError` → 500 thay vì 409. Bắt `DBAPIError` cho các đường có thể khoá chéo.
 - **Test async chạm DB THẬT: đừng dùng `AsyncSessionLocal` toàn cục (SCH-1).** pytest-asyncio cấp mỗi test
   một event loop MỚI, còn pool của engine toàn cục giữ connection asyncpg gắn với loop của test TRƯỚC →
   test thứ hai nổ `Future attached to a different loop` (test đầu vẫn xanh, nên trông như lỗi ngẫu nhiên).
