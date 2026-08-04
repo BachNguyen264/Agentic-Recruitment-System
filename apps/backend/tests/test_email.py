@@ -10,14 +10,22 @@ from __future__ import annotations
 import pytest
 
 from app.services import email_service
-from app.services.email_templates import invite_email, rejection_email
+from app.services.email_templates import booking_confirmed_email, invite_email, rejection_email
+
+# SCH-2: thư mời BẮT BUỘC kèm link tự đặt lịch (PRD §10b.1) — không còn thư mời "sẽ liên hệ sau".
+_LINK = "http://localhost:3000/booking/tok123"
+
+
+def _invite(name, title):
+    return invite_email(name, title, booking_url=_LINK, deadline_text="72 giờ")
 
 
 # ── template (cố định, điền placeholder) ─────────────────────────────────────
 
 
 def test_invite_template_fills_name_and_title() -> None:
-    subject, html = invite_email("Trần Văn B", "Kỹ sư Backend")
+    subject, html = _invite("Trần Văn B", "Kỹ sư Backend")
+    assert _LINK in html  # thư mời PHẢI mang link, nếu không ứng viên mắc kẹt
     assert "Trần Văn B" in html
     assert "Kỹ sư Backend" in html
     assert "Kỹ sư Backend" in subject  # subject nêu vị trí
@@ -32,20 +40,20 @@ def test_rejection_template_fills_name_and_title() -> None:
 
 def test_templates_escape_html_in_name() -> None:
     # Tên lấy từ CV (không tin cậy) — phải escape để không chèn HTML/script vào email.
-    _, html = invite_email("<script>alert(1)</script>", "Dev")
+    _, html = _invite("<script>alert(1)</script>", "Dev")
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
 
 
 def test_templates_fallback_when_empty() -> None:
-    subject, html = invite_email("", "")
+    subject, html = _invite("", "")
     assert "Ứng viên" in html  # fallback tên
     assert subject  # vẫn có tiêu đề
 
 
 def test_subject_is_single_line() -> None:
     # Tiêu đề dùng cho email header — không được chứa newline (chống header injection).
-    subject, _ = invite_email("A", "Backend\r\nBcc: x@e.com")
+    subject, _ = _invite("A", "Backend\r\nBcc: x@e.com")
     assert "\n" not in subject and "\r" not in subject
 
 
@@ -61,7 +69,7 @@ async def test_send_email_requires_api_key(monkeypatch) -> None:
 async def test_send_email_wraps_resend_error(monkeypatch) -> None:
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
 
-    def boom(to: str, subject: str, html: str) -> None:
+    def boom(to: str, subject: str, html: str, attachments) -> None:
         raise RuntimeError("network down")
 
     monkeypatch.setattr(email_service, "_send_sync", boom)
@@ -73,12 +81,35 @@ async def test_send_email_success_passes_params(monkeypatch) -> None:
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
     captured: dict = {}
 
-    def fake_send(to: str, subject: str, html: str) -> None:
-        captured.update(to=to, subject=subject, html=html)
+    def fake_send(to: str, subject: str, html: str, attachments) -> None:
+        captured.update(to=to, subject=subject, html=html, attachments=attachments)
 
     monkeypatch.setattr(email_service, "_send_sync", fake_send)
     await email_service.send_email(to="a@e.com", subject="Mời", html="<p>xin chào</p>")
-    assert captured == {"to": "a@e.com", "subject": "Mời", "html": "<p>xin chào</p>"}
+    assert captured == {
+        "to": "a@e.com", "subject": "Mời", "html": "<p>xin chào</p>", "attachments": [],
+    }
+
+
+async def test_send_email_encodes_attachment_base64(monkeypatch) -> None:
+    """SCH-2: `.ics` đính kèm phải tới Resend dưới dạng BASE64 — gửi bytes thô là Resend từ chối."""
+    import base64
+
+    monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
+    captured: dict = {}
+
+    def fake_send(to: str, subject: str, html: str, attachments) -> None:
+        captured["attachments"] = attachments
+
+    monkeypatch.setattr(email_service, "_send_sync", fake_send)
+    await email_service.send_email(
+        to="a@e.com", subject="s", html="<p>h</p>",
+        attachments=[("phong-van.ics", b"BEGIN:VCALENDAR\r\n", "text/calendar")],
+    )
+    att = captured["attachments"][0]
+    assert att["filename"] == "phong-van.ics"
+    assert att["content_type"] == "text/calendar"
+    assert base64.b64decode(att["content"]) == b"BEGIN:VCALENDAR\r\n"
 
 
 async def test_send_email_builds_resend_payload(monkeypatch) -> None:

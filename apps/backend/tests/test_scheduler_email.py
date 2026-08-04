@@ -41,7 +41,7 @@ def _audit_actions(session: FakeSession) -> list[str]:
 async def test_notify_invite_sends_invite_email(monkeypatch) -> None:
     captured: dict = {}
 
-    async def fake_send(*, to: str, subject: str, html: str) -> None:
+    async def fake_send(*, to: str, subject: str, html: str, attachments=None) -> None:
         captured.update(to=to, subject=subject, html=html)
 
     monkeypatch.setattr(scheduler.email_service, "send_email", fake_send)
@@ -50,6 +50,7 @@ async def test_notify_invite_sends_invite_email(monkeypatch) -> None:
     out = await scheduler.notify_decision(
         session, "invite", application_id=1, applicant_email="a@e.com",
         candidate_name="Nguyễn Văn A", job_title="Backend Intern",
+        booking_url="http://localhost:3000/booking/tok", deadline_text="72 giờ",
     )
 
     assert out["email_sent"] is True
@@ -62,7 +63,7 @@ async def test_notify_invite_sends_invite_email(monkeypatch) -> None:
 async def test_notify_reject_sends_rejection_email(monkeypatch) -> None:
     captured: dict = {}
 
-    async def fake_send(*, to: str, subject: str, html: str) -> None:
+    async def fake_send(*, to: str, subject: str, html: str, attachments=None) -> None:
         captured.update(subject=subject, html=html)
 
     monkeypatch.setattr(scheduler.email_service, "send_email", fake_send)
@@ -80,7 +81,7 @@ async def test_notify_reject_sends_rejection_email(monkeypatch) -> None:
 
 
 async def test_notify_swallows_send_error(monkeypatch) -> None:
-    async def boom(*, to: str, subject: str, html: str) -> None:
+    async def boom(*, to: str, subject: str, html: str, attachments=None) -> None:
         raise email_service.EmailError("Resend down")
 
     monkeypatch.setattr(scheduler.email_service, "send_email", boom)
@@ -90,6 +91,7 @@ async def test_notify_swallows_send_error(monkeypatch) -> None:
     out = await scheduler.notify_decision(
         session, "invite", application_id=3, applicant_email="c@e.com",
         candidate_name="X", job_title="Y",
+        booking_url="http://localhost:3000/booking/tok", deadline_text="72 giờ",
     )
 
     assert out["email_sent"] is False

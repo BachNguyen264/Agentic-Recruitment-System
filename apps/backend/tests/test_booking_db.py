@@ -26,7 +26,7 @@ from app.core.config import settings
 from app.models.application import Application
 from app.models.booking import BookingStatus, InterviewBooking
 from app.models.job_posting import JobPosting
-from app.services import booking_service
+from app.services import booking_flow, booking_service
 from app.services.booking_service import (
     AlreadyBooked,
     BookingNotFound,
@@ -368,8 +368,9 @@ async def test_real_race_exactly_one_winner(Session, apps: list[int]) -> None:  
 
 
 async def test_loser_keeps_other_holds_to_choose_again(Session, apps: list[int]) -> None:  # noqa: N803
-    """Thua race thì rollback phải trả lại NGUYÊN TRẠNG — kể cả các chỗ giữ anh em vừa nhả, để ứng
-    viên chọn lại được ngay (SCH-2 làm mới danh sách, §10b.5)."""
+    """Thua race thì rollback phải trả lại các chỗ giữ ANH EM (đã nhả dở giữa chừng) để ứng viên
+    chọn lại ngay — chỉ MỘT hàng biến mất: chính khung giờ vừa thua, vì nó đã vô giá trị (xem
+    `test_race_loser_hold_is_cancelled_so_refresh_offers_new_times`)."""
     winner, loser = apps[0], apps[1]
     async with Session() as s:
         loser_slots = await generate_slots(s, loser)
@@ -389,7 +390,8 @@ async def test_loser_keeps_other_holds_to_choose_again(Session, apps: list[int])
         with pytest.raises(SlotTaken):
             await confirm_booking(s, loser, contested.id)
         remaining = await _held(s, loser)
-        assert len(remaining) == len(loser_slots), "các chỗ giữ khác phải còn nguyên sau rollback"
+        assert len(remaining) == len(loser_slots) - 1, "chỉ mất đúng khung giờ vừa thua"
+        assert contested.start_at not in {b.start_at for b in remaining}
 
 
 # ── Múi giờ trên DB thật ──────────────────────────────────────────────────────────────────
@@ -406,3 +408,103 @@ async def test_slots_land_inside_vietnam_working_hours(Session, apps: list[int])
             assert local.isoweekday() in cfg.work_days
             assert cfg.work_start <= local.time() <= cfg.work_end
             assert (row.end_at - row.start_at) == timedelta(minutes=cfg.duration_minutes)
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# SCH-2 — phiên đặt lịch (token) trên DB thật
+# ══════════════════════════════════════════════════════════════════════════════════════════
+
+
+async def test_booking_token_is_not_one_time(Session, apps: list[int]) -> None:  # noqa: N803
+    """Khác magic-link screener: mở lại BAO NHIÊU LẦN cũng được (PRD §10b.3).
+
+    Sinh slot LƯỜI nên mỗi lần mở là danh sách tươi ⇒ link không bao giờ ôi ⇒ không cần "gửi lại
+    link" kiểu resend-OTP. Copy nhánh `used_at` của screener vào đây là phá đúng tính chất đó."""
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, apps[0])
+        token = row.token
+        await s.commit()
+
+        for _ in range(3):
+            again = await booking_service.load_valid_session(s, token)
+            assert again.id == row.id
+
+
+async def test_booking_token_unknown_and_expired_and_cancelled(Session, apps: list[int]) -> None:  # noqa: N803
+    async with Session() as s:
+        with pytest.raises(booking_service.TokenNotFound):
+            await booking_service.load_valid_session(s, "khong-ton-tai")
+
+        expired = booking_service.create_booking_session(s, apps[0])
+        expired.expires_at = _now() - timedelta(minutes=1)
+        cancelled = booking_service.create_booking_session(s, apps[1])
+        cancelled.cancelled_at = _now()
+        await s.commit()
+
+        with pytest.raises(booking_service.TokenExpired):
+            await booking_service.load_valid_session(s, expired.token)
+        with pytest.raises(booking_service.TokenExpired):
+            await booking_service.load_valid_session(s, cancelled.token)
+
+
+async def test_expired_link_still_opens_after_booking(Session, apps: list[int]) -> None:  # noqa: N803
+    """Hạn 72h là để BẮT ĐẦU đặt lịch, không phải để xem lại lịch ĐÃ chốt — người đã đặt xong mà mở
+    link sau 3 ngày vẫn phải thấy "bạn đã đặt lúc X", không phải màn hết hạn."""
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, apps[0])
+        row.expires_at = _now() - timedelta(hours=1)
+        booking_service.mark_session_booked(row)
+        await s.commit()
+        assert (await booking_service.load_valid_session(s, row.token)).id == row.id
+
+
+async def test_booking_view_projection_and_already_booked(Session, apps: list[int]) -> None:  # noqa: N803
+    """GET công khai đi trọn vòng trên DB thật: danh sách slot → sau khi chốt thì `already_booked`."""
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, apps[0])
+        await s.commit()
+
+        view = await booking_flow.booking_view(s, row.token)
+        assert view["already_booked"] is False
+        assert view["slots"] and view["hold_expires_at"] is not None
+        assert set(view) == {
+            "job_title", "candidate_name", "already_booked",
+            "booked_start_at", "booked_end_at", "slots", "hold_expires_at",
+        }
+
+        chosen = view["slots"][0]
+        await confirm_booking(s, apps[0], chosen.id)
+
+        after = await booking_flow.booking_view(s, row.token)
+        assert after["already_booked"] is True
+        assert after["booked_start_at"] == chosen.start_at
+        assert after["slots"] == []
+
+
+async def test_race_loser_hold_is_cancelled_so_refresh_offers_new_times(  # noqa: N803
+    Session, apps: list[int]
+) -> None:
+    """Thua race → chỗ giữ vừa thua bị HUỶ, nên "tải danh sách mới" KHÔNG trả lại đúng giờ đó.
+
+    Không có bước này thì UI làm mới xong vẫn hiện khung giờ vừa mất, ứng viên bấm lại và chỉ nhận
+    thêm 409 — vòng lặp không lối ra."""
+    winner, loser = apps[0], apps[1]
+    async with Session() as s:
+        loser_slots = await generate_slots(s, loser)
+        contested = loser_slots[0]
+        s.add(
+            InterviewBooking(
+                application_id=winner, start_at=contested.start_at, end_at=contested.end_at,
+                status=BookingStatus.BOOKED.value,
+            )
+        )
+        await s.commit()
+
+    async with Session() as s:
+        with pytest.raises(SlotTaken):
+            await confirm_booking(s, loser, contested.id)
+
+    async with Session() as s:
+        refreshed = await generate_slots(s, loser)
+        assert contested.start_at not in {b.start_at for b in refreshed}
+        assert len(refreshed) == len(loser_slots) - 1  # 4 chỗ giữ kia còn nguyên

@@ -4,7 +4,8 @@ Phủ (mock scheduler/email — KHÔNG gửi thật, KHÔNG chạm DB thật):
   1) route_after_screener: ca SẠCH + auto_invite ON → auto_invite; OFF → human_review;
      ca KHÔNG sạch (no_response / cờ / low-conf / error) + gate ON → human_review LUÔN ("cờ thắng gate").
   2) scheduler_node = marker SCHEDULING (quyết định mời, chưa gửi — pure, không email).
-  3) background.resume_screener nhánh auto_invite → notify_decision("invite"); email OK → INTERVIEW_SCHEDULED,
+  3) background.resume_screener nhánh auto_invite → thư mời KÈM LINK đặt lịch (SCH-2); email OK →
+     AWAITING_BOOKING (KHÔNG còn INTERVIEW_SCHEDULED — ứng viên phải tự chọn giờ trước, PRD §10b),
      email FAIL → PENDING_REVIEW (KHÔNG "trạng thái nói dối").
 
 BẤT BIẾN (PRD §9 FR-GATE-2): gate CHỈ áp ca tự tin/sạch; ca bất định/no_response LUÔN → human_review.
@@ -128,6 +129,7 @@ async def test_graph_clean_resume_gate_off_human_review() -> None:
 
 from app.models.application import Application  # noqa: E402
 from app.models.audit_log import AuditLog  # noqa: E402
+from app.models.booking import BookingSession  # noqa: E402
 
 
 class _FakeSession:
@@ -179,7 +181,10 @@ def _auto_invite_out() -> dict:
 
 
 async def test_resume_auto_invite_sends_invite_and_schedules(monkeypatch) -> None:
-    """auto_invite + email gửi OK → INTERVIEW_SCHEDULED + delegate scheduler(invite) đúng + audit."""
+    """auto_invite + email gửi OK → AWAITING_BOOKING + thư mời có LINK đặt lịch + audit.
+
+    SCH-2 đổi đích đến: quyết định mời KHÔNG còn ra thẳng "đã hẹn phỏng vấn" nữa, vì chưa ai chọn
+    giờ cả. Thư mời phải mang link (`booking_url`) — thiếu nó ứng viên không có đường nào đặt lịch."""
     from app.agents.nodes import scheduler
     from app.tasks import background
 
@@ -197,12 +202,17 @@ async def test_resume_auto_invite_sends_invite_and_schedules(monkeypatch) -> Non
 
     res = await background.resume_screener(session, 7, {"answers": [{"question": "Q", "answer": "A"}]})
 
-    assert app_row.status == ApplicationStatus.INTERVIEW_SCHEDULED.value  # chỉ đặt khi thư mời đã gửi
-    assert res["status"] == ApplicationStatus.INTERVIEW_SCHEDULED.value and res["branch"] == "auto_invite"
+    assert app_row.status == ApplicationStatus.AWAITING_BOOKING.value  # chỉ đặt khi thư mời đã gửi
+    assert res["status"] == ApplicationStatus.AWAITING_BOOKING.value and res["branch"] == "auto_invite"
     assert captured["mode"] == "invite" and captured["applicant_email"] == "me@e.com"
     assert captured["candidate_name"] == "Nguyễn Văn A" and captured["job_title"] == "Backend Intern"
+    assert "/booking/" in captured["booking_url"], "thư mời PHẢI kèm link tự đặt lịch (PRD §10b.1)"
+    # Phiên đặt lịch được tạo CÙNG lượt (token trong link phải tra được, nếu không ứng viên gặp 404).
+    sessions = [o for o in session.added if isinstance(o, BookingSession)]
+    assert len(sessions) == 1 and sessions[0].token in captured["booking_url"]
+    assert sessions[0].cancelled_at is None
     actions = [(a.node, a.action) for a in session.added if isinstance(a, AuditLog)]
-    assert ("gate", "auto_invite") in actions
+    assert ("gate", "booking_invite_sent") in actions
 
 
 async def test_resume_auto_invite_email_fail_goes_review_no_lie(monkeypatch) -> None:
@@ -221,11 +231,15 @@ async def test_resume_auto_invite_email_fail_goes_review_no_lie(monkeypatch) -> 
 
     res = await background.resume_screener(session, 8, {"answers": [{"question": "Q", "answer": "A"}]})
 
-    assert app_row.status == ApplicationStatus.PENDING_REVIEW.value  # KHÔNG giả "đã hẹn"
+    assert app_row.status == ApplicationStatus.PENDING_REVIEW.value  # KHÔNG giả "đã mời"
     assert app_row.escalation_reason and "thư mời" in app_row.escalation_reason
     assert res["status"] == ApplicationStatus.PENDING_REVIEW.value
+    # Phiên đặt lịch phải bị HUỶ: một liên kết chưa từng tới tay ai mà để sống thì SCH-3 sẽ đi nhắc,
+    # rồi hạ hồ sơ vì "không phản hồi" một lời mời chưa bao giờ được gửi.
+    sessions = [o for o in session.added if isinstance(o, BookingSession)]
+    assert len(sessions) == 1 and sessions[0].cancelled_at is not None
     actions = [(a.node, a.action) for a in session.added if isinstance(a, AuditLog)]
-    assert ("gate", "auto_invite_failed") in actions
+    assert ("gate", "booking_invite_failed") in actions
 
 
 async def test_resume_human_review_branch_never_invites(monkeypatch) -> None:
