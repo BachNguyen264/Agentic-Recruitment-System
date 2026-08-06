@@ -235,3 +235,25 @@
   gỡ hẳn `booked_at` vì vế trạng thái che mất. Muốn biết chốt chặn còn sống thì phải dựng đúng trạng thái
   mâu thuẫn (phiên đã đặt + hồ sơ AWAITING_BOOKING) rồi đo — nếu không, một guard chết từ lâu mà cả bộ test
   vẫn xanh.
+- **CORS KHÔNG phải chốt chặn CSRF — và POST không-thân là lỗ hổng (SCH-3).** Cookie phiên HR phải
+  `SameSite=None` (cross-domain Vercel↔Render) nên trình duyệt gửi kèm nó cả từ trang lạ. Một `POST`
+  KHÔNG có thân là *simple request*: không preflight, nên Starlette chạy XONG handler rồi mới quyết định
+  có trả header CORS hay không — **tác dụng phụ đã xảy ra**, chỉ phản hồi bị giấu. Mọi mutation HR trước
+  SCH-3 tình cờ an toàn vì đều nhận thân JSON (ép preflight). Thêm endpoint HR **không thân** → nhớ nó
+  nằm sau `OriginCheckMiddleware` (`core/hardening.py`), đừng dựa vào CORS.
+- **`rollback()` expire object BẤT KỂ `expire_on_commit=False` (SCH-3).** Đóng transaction thừa (do
+  `refresh()` mở lại) bằng `rollback()` thì caller đọc `app_row.status` ngay sau đó sẽ nạp lười — mở lại
+  đúng transaction vừa đóng, và nổ `MissingGreenlet` nếu đọc từ ngữ cảnh đồng bộ. Dùng **`commit()`**:
+  cùng tác dụng nhả connection, KHÔNG expire.
+- **Cờ trạng thái không phải sự thật — bảng mới là (SCH-3).** Lưới hết hạn lọc theo `booked_at` +
+  `status`; cả hai đều là CỜ và có thể lệch nếu một đường ghi hỏng giữa chừng. Thiếu chốt
+  `~exists(BOOKED)` thì hồ sơ đang cầm lịch (đã có `.ics`) bị báo "không phản hồi", và khung giờ `BOOKED`
+  đó không đường nào nhả nữa ⇒ mất khỏi lịch công ty vĩnh viễn (partial unique index). Lưới nào hạ trạng
+  thái thì phải hỏi BẢNG, không chỉ hỏi cờ.
+- **"TTL chặn vòng lặp" chỉ đúng theo THỜI GIAN, không theo SỐ EMAIL (SCH-3).** Vòng đặt-huỷ-đặt kết
+  thúc sau 72h, nhưng mỗi vòng phát hai thư và trần còn lại chỉ là rate-limit IP ⇒ ~1400 thư/liên kết,
+  trong khi Resend free là 100/ngày. Hết quota = thư mời/từ chối/magic-link của MỌI ứng viên khác cùng
+  câm. Đường nào cho người dùng lặp lại một hành động CÓ GỬI MAIL đều cần hạn mức riêng.
+- **Gắn cờ thì phải có đường GỠ cờ (SCH-3).** `booking_no_response` không được xoá khi mời lại ⇒ hồ sơ
+  đã chốt lịch vẫn mang nhãn "không phản hồi" vĩnh viễn, và vì handler khử trùng theo TÊN cờ nên lần hết
+  hạn THẬT tiếp theo bị bỏ qua im lặng. Cờ vòng đời phải được dọn ở nhánh thành công của lượt sau.
