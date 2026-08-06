@@ -26,7 +26,7 @@ from app.core.config import settings
 from app.models.application import Application, ApplicationStatus
 from app.models.booking import BookingSession, BookingStatus, InterviewBooking
 from app.models.job_posting import JobPosting
-from app.services import booking_flow, booking_service
+from app.services import booking_flow, booking_lifecycle, booking_service
 from app.services.booking_service import (
     AlreadyBooked,
     BookingNotFound,
@@ -647,3 +647,256 @@ async def test_invite_reuses_live_session_instead_of_minting_second_token(  # no
             )
         ).scalar_one()
         assert n == 1, "chỉ được có MỘT phiên đặt lịch"
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# SCH-3 — vòng đời lịch (PRD §10b.6, FR-BOOK-3/4/6). Những bất biến chỉ DB mới chứng minh được.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+
+
+async def _book_one(Session, app_id: int, monkeypatch) -> tuple[str, InterviewBooking]:  # noqa: N803
+    """Đưa một hồ sơ tới trạng thái đã-chốt-lịch THẬT (qua đúng đường của SCH-2). Email bị chặn."""
+    async def fake_confirmed(_s, **_kw):  # noqa: ANN001
+        return {"email_sent": True}
+
+    monkeypatch.setattr(booking_flow.scheduler, "notify_booking_confirmed", fake_confirmed)
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, app_id)
+        token = row.token
+        await s.commit()
+        view = await booking_flow.booking_view(s, token)
+        await booking_flow.confirm_and_notify(s, token, view["slots"][0].id)
+    async with Session() as s:
+        booking = await booking_service.latest_booking(s, app_id)
+    return token, booking
+
+
+async def test_cancel_frees_the_slot_for_everyone_immediately(  # noqa: N803
+    Session, apps: list[int], monkeypatch
+) -> None:
+    """Huỷ → khung giờ khả dụng lại NGAY cho ứng viên KHÁC, không chờ vòng quét nào.
+
+    Đây là bất biến quan trọng nhất của việc huỷ: khung giờ là tài nguyên tranh chấp, giữ thêm phút
+    nào là chặn người khác phút đó. Kiểm bằng chính `generate_slots` của ứng viên thứ hai chứ không
+    bằng cột `status` — thứ cần đúng là danh sách mà người tiếp theo NHÌN THẤY.
+    """
+    async def fake_cancelled(_s, **_kw):  # noqa: ANN001
+        return {"email_sent": True}
+
+    monkeypatch.setattr(booking_flow.scheduler, "notify_booking_cancelled", fake_cancelled)
+    token, booking = await _book_one(Session, apps[0], monkeypatch)
+    taken_at = booking.start_at
+
+    async with Session() as s:  # ứng viên khác: khung giờ đó đang bị chiếm
+        others = await generate_slots(s, apps[1])
+        assert taken_at not in {b.start_at for b in others}
+        await release_holds(s, apps[1])
+        await s.commit()
+
+    async with Session() as s:
+        out = await booking_flow.cancel_by_candidate(s, token)
+        assert out["cancelled"] is True and out["can_rebook"] is True
+
+    async with Session() as s:  # ...và ngay sau khi huỷ thì nó quay lại kho chung
+        again = await generate_slots(s, apps[2])
+        assert taken_at in {b.start_at for b in again}
+
+
+async def test_cancel_lets_candidate_rebook_without_extending_deadline(  # noqa: N803
+    Session, apps: list[int], monkeypatch
+) -> None:
+    """Huỷ xong chọn lại được — nhưng hạn 72h GỐC giữ nguyên (PRD §10b.6).
+
+    Gia hạn khi huỷ là mở cửa cho vòng lặp đặt-huỷ-đặt không điểm dừng; hạn gốc đóng cửa sau đúng
+    72h dù ứng viên huỷ bao nhiêu lần.
+    """
+    async def fake_cancelled(_s, **_kw):  # noqa: ANN001
+        return {"email_sent": True}
+
+    monkeypatch.setattr(booking_flow.scheduler, "notify_booking_cancelled", fake_cancelled)
+    token, _ = await _book_one(Session, apps[0], monkeypatch)
+
+    async with Session() as s:
+        before = (await booking_service.load_valid_session(s, token)).expires_at
+        await booking_flow.cancel_by_candidate(s, token)
+
+    async with Session() as s:
+        after_row = await booking_service.load_valid_session(s, token)
+        assert after_row.expires_at == before, "huỷ KHÔNG được gia hạn liên kết"
+        assert after_row.booked_at is None
+        assert (await s.get(Application, apps[0])).status == ApplicationStatus.AWAITING_BOOKING.value
+        # ...và danh sách chọn giờ mở lại được (không còn kẹt ở AlreadyBooked).
+        view = await booking_flow.booking_view(s, token)
+        assert view["already_booked"] is False and view["slots"]
+
+
+async def test_expired_link_sweep_returns_to_hr_and_releases_holds(  # noqa: N803
+    Session, apps: list[int]
+) -> None:
+    """Sweep hết hạn: PENDING_REVIEW[booking_no_response], nhả HELD sót, KHÔNG auto-reject."""
+    app_id = apps[0]
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, app_id)
+        row.expires_at = _now() - timedelta(minutes=1)  # đã quá hạn
+        await s.commit()
+        await generate_slots(s, app_id)  # ứng viên có bấm link, bỏ dở giữa chừng
+
+    counts = await booking_lifecycle.sweep_once(Session)
+    assert counts["expired"] >= 1
+
+    async with Session() as s:
+        app_row = await s.get(Application, app_id)
+        assert app_row.status == ApplicationStatus.PENDING_REVIEW.value
+        assert app_row.status != ApplicationStatus.REJECTED.value
+        assert "booking_no_response" in app_row.uncertainty_flags
+        assert await _held(s, app_id) == [], "chỗ giữ bỏ dở phải được nhả"
+
+    # Chạy lại: KHÔNG xử lại (idempotent bằng mốc `cancelled_at` + trạng thái đã rời AWAITING_BOOKING).
+    assert (await booking_lifecycle.sweep_once(Session))["expired"] == 0
+
+
+async def test_sweep_never_touches_a_candidate_who_just_booked(  # noqa: N803
+    Session, apps: list[int], monkeypatch
+) -> None:
+    """Ứng viên bấm xác nhận đúng giây chót vẫn THẮNG sweep.
+
+    Hạ hồ sơ của người vừa giành được khung giờ là lấy mất đúng thứ họ vừa giành. Lưới hết hạn có
+    HAI chốt chặn cho chuyện này (`booked_at` và trạng thái hồ sơ) và test kiểm CẢ HAI riêng rẽ —
+    ở đâu có hai nguồn sự thật thì phải giả định sẽ có lúc chúng nói khác nhau.
+    """
+    token, _ = await _book_one(Session, apps[0], monkeypatch)
+    async with Session() as s:
+        sess_row = await booking_service.load_valid_session(s, token)
+        sess_row.expires_at = _now() - timedelta(minutes=1)
+        await s.commit()
+
+    counts = await booking_lifecycle.sweep_once(Session)
+
+    async with Session() as s:
+        assert (await s.get(Application, apps[0])).status == ApplicationStatus.INTERVIEW_SCHEDULED.value
+    assert counts["expired"] == 0
+
+    # Chốt chặn THỨ HAI, đo riêng: dựng đúng trạng thái mâu thuẫn (phiên ĐÃ đặt nhưng hồ sơ lại đang
+    # AWAITING_BOOKING) rồi kiểm truy vấn vẫn bỏ qua nó. Không dựng tay thì `booked_at` luôn bị vế
+    # trạng thái che mất, và ta không biết nó còn tác dụng hay đã chết từ bao giờ.
+    async with Session() as s:
+        app_row = await s.get(Application, apps[0])
+        app_row.status = ApplicationStatus.AWAITING_BOOKING.value
+        await s.commit()
+        due = await booking_lifecycle._due_expiry_ids(s, _now())
+        booked_sess = await booking_service.booked_session(s, apps[0])
+        assert booked_sess is not None and booked_sess.id not in due
+
+
+async def test_interview_reminder_sent_once_then_never_again(  # noqa: N803
+    Session, apps: list[int], monkeypatch
+) -> None:
+    """Nhắc trước buổi PV đúng MỘT lần — vòng sweep chạy lại KHÔNG dội thêm thư."""
+    sent: list[int] = []
+
+    async def fake_reminder(_s, **kw):  # noqa: ANN001
+        sent.append(kw["application_id"])
+        return {"mode": "interview_reminder", "email_sent": True}
+
+    monkeypatch.setattr(booking_lifecycle.scheduler, "notify_interview_reminder", fake_reminder)
+    _, booking = await _book_one(Session, apps[0], monkeypatch)
+
+    async with Session() as s:  # kéo buổi PV vào trong cửa sổ nhắc
+        row = await s.get(InterviewBooking, booking.id)
+        row.start_at = _now() + timedelta(hours=1)
+        row.end_at = row.start_at + timedelta(hours=1)
+        await s.commit()
+
+    assert (await booking_lifecycle.sweep_once(Session))["interview_reminded"] == 1
+    assert (await booking_lifecycle.sweep_once(Session))["interview_reminded"] == 0
+    assert sent == [apps[0]]
+
+    async with Session() as s:
+        assert (await s.get(InterviewBooking, booking.id)).reminder_sent_at is not None
+
+
+async def test_link_reminder_reuses_old_token_and_fires_once(  # noqa: N803
+    Session, apps: list[int], monkeypatch
+) -> None:
+    """Nhắc chọn lịch: đúng MỘT lần, và DÙNG LẠI link cũ (token KHÔNG one-time — §10b.3)."""
+    urls: list[str] = []
+
+    async def fake_reminder(_s, **kw):  # noqa: ANN001
+        urls.append(kw["booking_url"])
+        return {"mode": "booking_reminder", "email_sent": True}
+
+    monkeypatch.setattr(booking_lifecycle.scheduler, "notify_booking_reminder", fake_reminder)
+    app_id = apps[0]
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, app_id)
+        row.expires_at = _now() + timedelta(minutes=5)  # sắp hết hạn → trong cửa sổ nhắc
+        token = row.token
+        await s.commit()
+
+    assert (await booking_lifecycle.sweep_once(Session))["link_reminded"] == 1
+    assert (await booking_lifecycle.sweep_once(Session))["link_reminded"] == 0
+    assert urls == [f"{settings.frontend_base_url.rstrip('/')}/booking/{token}"]
+
+
+async def test_hr_cancel_then_resend_is_the_reschedule_flow(  # noqa: N803
+    Session, apps: list[int], monkeypatch
+) -> None:
+    """Hai nút HR ghép lại = đổi lịch: huỷ (slot nhả + về hàng chờ) → gửi lại link (token MỚI)."""
+    async def ok(_s, **_kw):  # noqa: ANN001
+        return {"email_sent": True}
+
+    monkeypatch.setattr(booking_flow.scheduler, "notify_booking_cancelled", ok)
+    old_token, booking = await _book_one(Session, apps[0], monkeypatch)
+    app_id = apps[0]
+
+    async with Session() as s:
+        app_row = await booking_flow.cancel_by_hr(s, app_id)
+        assert app_row.status == ApplicationStatus.PENDING_REVIEW.value
+
+    async with Session() as s:
+        # Link cũ CHẾT — HR đang cầm ca, ứng viên không được lặng lẽ tự đặt lại.
+        with pytest.raises(booking_service.TokenExpired):
+            await booking_service.load_valid_session(s, old_token)
+        assert (await s.get(InterviewBooking, booking.id)).status == BookingStatus.CANCELLED.value
+
+    async def fake_invite(_s, _mode, **_kw):  # noqa: ANN001
+        return {"mode": "invite", "email_sent": True}
+
+    monkeypatch.setattr(booking_flow.scheduler, "notify_decision", fake_invite)
+    async with Session() as s:
+        app_row = await booking_flow.resend_booking_link(s, app_id)
+        assert app_row.status == ApplicationStatus.AWAITING_BOOKING.value
+
+    async with Session() as s:
+        fresh = await booking_service.active_session(s, app_id)
+        assert fresh is not None and fresh.token != old_token
+
+
+async def test_no_slots_flag_is_set_then_cleared(Session, apps: list[int], monkeypatch) -> None:  # noqa: N803
+    """Hết khung giờ → cờ RIÊNG cho HR; có slot trở lại → cờ TỰ TẮT (FR-BOOK-6).
+
+    Ép cạn lịch bằng lead-time một năm thay vì đi chiếm hết slot: tất định, nhanh, và KHÔNG để lại
+    hàng giữ chỗ rác trong bảng dùng chung của các test khác.
+    """
+    app_id = apps[0]
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, app_id)
+        token = row.token
+        await s.commit()
+
+    empty = make_cfg(lead_time_hours=24 * 365)  # mốc sớm nhất nằm ngoài cửa sổ → không slot nào
+
+    async with Session() as s:
+        monkeypatch.setattr(booking_service, "load_booking_config", lambda: empty)
+        view = await booking_flow.booking_view(s, token)
+        assert view["slots"] == []
+        monkeypatch.undo()
+
+    async with Session() as s:
+        assert app_id in await booking_service.no_slot_application_ids(s)
+
+    async with Session() as s:  # lịch mở lại (cấu hình thật) → cờ phải tắt
+        view = await booking_flow.booking_view(s, token)
+        assert view["slots"]
+    async with Session() as s:
+        assert app_id not in await booking_service.no_slot_application_ids(s)

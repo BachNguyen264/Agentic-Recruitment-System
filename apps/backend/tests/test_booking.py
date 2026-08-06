@@ -48,10 +48,10 @@ def make_cfg(**over) -> BookingConfig:
         duration_minutes=60,
         buffer_minutes=15,
         lead_time_hours=24,
-        max_per_day=4,
-        window_days=14,
+        max_per_day=6,
+        window_days=21,
         slots_offered=5,
-        hold_minutes=10,
+        hold_minutes=5,
         link_ttl_hours=72,
     )
     base.update(over)
