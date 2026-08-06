@@ -51,12 +51,14 @@ __all__ = [
     "TokenExpired",
     "TokenNotFound",
     "active_session",
+    "cancel_booked",
     "cancel_sessions",
     "confirm_booking",
     "create_booking_session",
     "generate_slots",
     "load_valid_session",
     "mark_session_booked",
+    "mark_session_reopened",
     "release_holds",
 ]
 
@@ -534,6 +536,56 @@ def mark_session_booked(row: BookingSession, *, now: datetime | None = None) -> 
     row.booked_at = _as_utc(now, "now") if now is not None else _now()
 
 
+def mark_session_reopened(row: BookingSession) -> None:
+    """Ứng viên vừa HUỶ lịch → phiên quay lại trạng thái "chưa chốt" để họ chọn giờ khác (SCH-3).
+
+    Xoá `booked_at` là thao tác BẮT BUỘC, không phải dọn dẹp cho đẹp: `load_valid_session` cố ý BỎ
+    QUA hạn 72h khi `booked_at` có giá trị (để người đã đặt xong còn mở lại link xem lịch). Giữ
+    nguyên nó sau khi huỷ nghĩa là liên kết sống VĨNH VIỄN — đúng cái "gia hạn TTL" mà PRD §10b.6
+    cấm, và là cửa cho vòng lặp đặt-huỷ-đặt không điểm dừng. `expires_at` KHÔNG đổi: hạn gốc vẫn là
+    hạn gốc.
+    """
+    row.booked_at = None
+
+
+async def cancel_booked(
+    session: AsyncSession, application_id: int, *, now: datetime | None = None
+) -> InterviewBooking | None:
+    """Huỷ lịch ĐÃ chốt của một hồ sơ → khung giờ nhả NGAY. **KHÔNG commit.** Trả hàng vừa huỷ.
+
+    Trả `None` khi hồ sơ không có lịch nào đang `BOOKED` — đó là chuyện BÌNH THƯỜNG, không phải lỗi:
+    ứng viên bấm link huỷ hai lần, hoặc HR vừa huỷ xong thì ứng viên mới bấm. Caller xử lý êm.
+
+    `SELECT … FOR UPDATE` để hai lượt huỷ đồng thời (ứng viên bấm + HR bấm) không cùng đọc ra một
+    hàng rồi cùng tưởng mình là người huỷ — chỉ một bên được gửi thư "đã huỷ".
+
+    Nhả TỨC THÌ (không chờ sweep): khung giờ là tài nguyên tranh chấp, giữ thêm phút nào là chặn
+    ứng viên khác phút đó. `CANCELLED` không nằm trong tập "đang bị chiếm" nên slot khả dụng lại
+    ngay ở lượt `generate_slots` kế tiếp, và partial unique index chỉ ràng buộc hàng `BOOKED`.
+    """
+    at = _as_utc(now, "now") if now is not None else _now()
+    row = (
+        await session.execute(
+            select(InterviewBooking)
+            .where(
+                InterviewBooking.application_id == application_id,
+                InterviewBooking.status == BookingStatus.BOOKED.value,
+            )
+            .order_by(InterviewBooking.start_at)
+            .with_for_update()
+        )
+    ).scalars().first()
+    if row is None:
+        return None
+    row.status = BookingStatus.CANCELLED.value
+    row.hold_expires_at = None
+    logger.info(
+        "booking: app=%s HUỶ lịch booking=%s (%s) — khung giờ nhả lúc %s",
+        application_id, row.id, row.start_at.isoformat(), at.isoformat(),
+    )
+    return row
+
+
 async def latest_booking(
     session: AsyncSession, application_id: int
 ) -> InterviewBooking | None:
@@ -568,6 +620,46 @@ async def active_session(
             BookingSession.expires_at > at,
         )
         .order_by(BookingSession.created_at.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def no_slot_application_ids(session: AsyncSession) -> set[int]:
+    """id các hồ sơ đang KẸT vì HẾT KHUNG GIỜ — dashboard hiện nhãn riêng (SCH-3 §3.5, FR-BOOK-6).
+
+    MỘT truy vấn cho cả danh sách, không phải một truy vấn mỗi dòng: trang `/applications` liệt kê
+    mọi hồ sơ nên đường N+1 ở đây sẽ hỏng đúng lúc dữ liệu lớn lên. Tập trả về thường rất nhỏ (chỉ
+    những phiên đã CHẠM cảnh hết lịch mà chưa được gỡ cờ).
+
+    Chỉ tính phiên còn sống và chưa đặt được giờ: đặt xong rồi thì cảnh báo cũ không còn nghĩa gì.
+    """
+    stmt = select(BookingSession.application_id).where(
+        BookingSession.no_slots_at.is_not(None),
+        BookingSession.cancelled_at.is_(None),
+        BookingSession.booked_at.is_(None),
+    )
+    return set((await session.execute(stmt)).scalars().all())
+
+
+async def booked_session(
+    session: AsyncSession, application_id: int
+) -> BookingSession | None:
+    """Phiên ĐÃ chốt giờ của một hồ sơ — để dựng lại LIÊN KẾT quản lý lịch trong thư nhắc (SCH-3).
+
+    KHÔNG lọc `expires_at` (khác `active_session`): hạn 72h là hạn để **bắt đầu** đặt lịch, còn
+    người đã đặt xong thì vẫn phải mở được link để xem/huỷ — `load_valid_session` bỏ qua hạn khi
+    `booked_at` có giá trị, nên truy vấn này phải khớp với luật đó. Lọc theo hạn ở đây sẽ khiến thư
+    nhắc trước buổi PV mất nút huỷ đúng lúc ứng viên cần nó nhất (buổi PV thường nằm SAU 72h).
+    """
+    stmt = (
+        select(BookingSession)
+        .where(
+            BookingSession.application_id == application_id,
+            BookingSession.cancelled_at.is_(None),
+            BookingSession.booked_at.is_not(None),
+        )
+        .order_by(BookingSession.booked_at.desc())
         .limit(1)
     )
     return (await session.execute(stmt)).scalar_one_or_none()

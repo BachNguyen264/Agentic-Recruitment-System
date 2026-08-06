@@ -70,8 +70,12 @@ class ApplicationRead(BaseModel):
     # sàng lọc. CHỈ populate ở endpoint chi tiết (list để rỗng, tránh N+1).
     screener_answers: list = Field(default_factory=list)
     # Lịch phỏng vấn ĐÃ chốt (SCH-2 · PRD §10b) — None nếu ứng viên chưa chọn giờ. CHỈ populate ở
-    # endpoint chi tiết (như screener_answers, tránh N+1 ở danh sách). HR chỉ ĐỌC ở lát này.
+    # endpoint chi tiết (như screener_answers, tránh N+1 ở danh sách).
     interview: BookedInterview | None = None
+    # SCH-3 (FR-BOOK-6): ứng viên ĐÃ mở link nhưng kho khung giờ trống rỗng. Cần một trường RIÊNG
+    # chứ không suy từ `status`, vì cả hai tình huống "chưa bấm link" và "bấm rồi mà hết lịch" đều
+    # đứng ở `AWAITING_BOOKING` — gộp lại thành một nhãn là đổ lỗi cho người không có lỗi.
+    booking_no_slots: bool = False
     created_at: datetime
     updated_at: datetime
 

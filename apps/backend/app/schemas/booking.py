@@ -50,3 +50,16 @@ class BookingConfirmResponse(BaseModel):
     # Để UI nói THẬT: gửi được thì báo "đã gửi thư xác nhận", không gửi được thì báo bộ phận Tuyển
     # dụng sẽ liên hệ. Hứa một email không tồn tại đúng là lớp "trạng thái nói dối" mà dự án né.
     email_sent: bool
+
+
+class BookingCancelResponse(BaseModel):
+    """Kết quả huỷ lịch của ứng viên (SCH-3 · FR-BOOK-4). Vẫn KHÔNG lộ trạng thái nội bộ hồ sơ."""
+
+    # `False` = không có gì để huỷ (bấm hai lần, hoặc HR đã huỷ trước). Đây là TRẠNG THÁI, không
+    # phải lỗi — cùng tinh thần `already_booked` ở trên.
+    cancelled: bool
+    job_title: str
+    # Liên kết cũ CÒN HẠN → ứng viên tự chọn giờ khác ngay. Hết hạn → HR sẽ liên hệ. UI phải nói
+    # đúng cái nào, vì hai câu dẫn tới hai hành vi hoàn toàn khác nhau của người đọc.
+    can_rebook: bool
+    email_sent: bool

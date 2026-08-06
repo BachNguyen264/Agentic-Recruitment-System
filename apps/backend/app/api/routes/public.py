@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from app.api.deps import DBSession
 from app.schemas.application import ApplicationCreate, PublicSubmitResponse
 from app.schemas.booking import (
+    BookingCancelResponse,
     BookingConfirm,
     BookingConfirmResponse,
     PublicBookingRead,
@@ -168,6 +169,30 @@ async def confirm_booking_slot(
         job_title=result["job_title"],
         start_at=result["start_at"],
         end_at=result["end_at"],
+        email_sent=result["email_sent"],
+    )
+
+
+@router.post(
+    "/booking/{token}/cancel",
+    response_model=BookingCancelResponse,
+    summary="Ứng viên huỷ lịch phỏng vấn qua chính link đặt lịch (SCH-3, FR-BOOK-4)",
+)
+async def cancel_booking_slot(token: str, session: DBSession) -> BookingCancelResponse:
+    """Huỷ lịch đã chốt → **nhả khung giờ NGAY** → chọn lại được nếu liên kết còn hạn.
+
+    Không có gì để huỷ (bấm hai lần, HR vừa huỷ trước) → `cancelled=false` + **200**, không phải
+    lỗi: người vừa bấm huỷ xong mà nhận màn hình lỗi sẽ tưởng thao tác của mình hỏng.
+    Token sai → 404; liên kết đã bị huỷ → 410.
+    """
+    try:
+        result = await booking_flow.cancel_by_candidate(session, token)
+    except booking_service.BookingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+    return BookingCancelResponse(
+        cancelled=result["cancelled"],
+        job_title=result["job_title"],
+        can_rebook=result["can_rebook"],
         email_sent=result["email_sent"],
     )
 

@@ -25,13 +25,21 @@ from app.agents.nodes import scheduler
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.application import Application, ApplicationStatus
+from app.models.booking import BookingSession
 from app.models.job_posting import JobPosting
 from app.services import audit_service, booking_service
 from app.services.booking_config import load_booking_config
 
 logger = get_logger("app.services.booking_flow")
 
-__all__ = ["booking_view", "confirm_and_notify", "dispatch_booking_invite"]
+__all__ = [
+    "booking_view",
+    "cancel_by_candidate",
+    "cancel_by_hr",
+    "confirm_and_notify",
+    "dispatch_booking_invite",
+    "resend_booking_link",
+]
 
 _EMAIL_FAILED_FLAG = (
     "Đã đặt lịch phỏng vấn nhưng GỬI THƯ XÁC NHẬN THẤT BẠI — cần báo ứng viên thủ công."
@@ -48,9 +56,33 @@ _BOOKABLE_STATUSES = frozenset(
     }
 )
 
+# HR gửi lại link đặt lịch được ở hai trạng thái này. `INTERVIEW_SCHEDULED` cố ý VẮNG MẶT: xem
+# `resend_booking_link`.
+_RESENDABLE_STATUSES = frozenset(
+    {ApplicationStatus.PENDING_REVIEW.value, ApplicationStatus.AWAITING_BOOKING.value}
+)
+
+
+class BookingActionError(Exception):
+    """Thao tác lịch của HR không hợp lệ (route dịch thẳng ra `status_code`).
+
+    Tách khỏi `booking_service.BookingError`: cái kia là lỗi của ĐƯỜNG CÔNG KHAI với thông điệp viết
+    cho ứng viên đọc. Ở đây người đọc là HR, nên thông điệp được phép nói rõ trạng thái nội bộ.
+    """
+
+    def __init__(self, message: str, *, status_code: int = 409) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Mốc đọc từ DB → aware UTC. asyncpg trả timestamptz đã aware; hàng dựng trong test có thể naive."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
 def _deadline_text() -> str:
@@ -160,6 +192,7 @@ async def booking_view(session: AsyncSession, token: str) -> dict:
 
     job_title = await _job_title(session, app_row)
     base = {"job_title": job_title, "candidate_name": _candidate_name(app_row)}
+    had_no_slots = session_row.no_slots_at is not None
 
     try:
         slots = await booking_service.generate_slots(session, app_row.id)
@@ -173,6 +206,10 @@ async def booking_view(session: AsyncSession, token: str) -> dict:
             "hold_expires_at": None,
         }
 
+    await _record_slot_availability(
+        session, session_row, app_row, had_no_slots=had_no_slots, has_slots=bool(slots)
+    )
+
     return {
         **base,
         "already_booked": False,
@@ -182,6 +219,44 @@ async def booking_view(session: AsyncSession, token: str) -> dict:
         # Mọi slot trong một lượt giữ chung một hạn — UI đếm ngược theo mốc này (không gia hạn).
         "hold_expires_at": slots[0].hold_expires_at if slots else None,
     }
+
+
+async def _record_slot_availability(
+    session: AsyncSession,
+    session_row: BookingSession,
+    app_row: Application,
+    *,
+    had_no_slots: bool,
+    has_slots: bool,
+) -> None:
+    """Ghi nhận việc ứng viên GẶP (hoặc thôi gặp) cảnh hết khung giờ — SCH-3 §3.5, FR-BOOK-6.
+
+    Vì sao cần cột riêng thay vì suy ra từ trạng thái: hồ sơ vẫn đứng ở `AWAITING_BOOKING` trong cả
+    hai tình huống "ứng viên chưa bấm link" và "ứng viên đã bấm nhưng lịch trống rỗng". Gộp chúng
+    lại thành một nhãn là đổ lỗi cho người không có lỗi — HR nhìn dashboard tưởng ứng viên chậm
+    trong khi thứ đang chặn là lịch của chính công ty.
+
+    Ghi MỘT lần (mốc thời gian, không đếm) và **xoá ngay khi có slot trở lại** — cảnh báo không tự
+    tắt là cảnh báo sẽ bị phớt lờ, kể cả khi HR đã mở thêm lịch từ lâu.
+    """
+    if had_no_slots is not has_slots:
+        return  # tình hình y hệt lần trước (vẫn hết, hoặc vẫn có) — khỏi ghi DB
+
+    if has_slots:
+        session_row.no_slots_at = None
+        await session.commit()
+        logger.info("booking_flow: app=%s đã có khung giờ trở lại — gỡ cảnh báo hết lịch", app_row.id)
+        return
+
+    session_row.no_slots_at = _now()
+    await audit_service.record(
+        session, application_id=app_row.id, node="scheduler", action="booking_no_slots",
+        escalation_reason="no_slots",
+        detail={"window_days": load_booking_config().window_days}, commit=True,
+    )
+    logger.warning(
+        "booking_flow: app=%s mở link nhưng HẾT khung giờ trống — cần HR mở thêm lịch", app_row.id
+    )
 
 
 async def confirm_and_notify(session: AsyncSession, token: str, booking_id: int) -> dict:
@@ -232,6 +307,9 @@ async def confirm_and_notify(session: AsyncSession, token: str, booking_id: int)
         result = await scheduler.notify_booking_confirmed(
             session, application_id=application_id, applicant_email=applicant_email,
             candidate_name=candidate_name, job_title=job_title, booking=booking,
+            # SCH-3: liên kết HUỶ nằm trong thư xác nhận, và nó là CHÍNH token này (§10b.6) — mở ra
+            # thấy lịch đã chốt kèm nút huỷ. Không phát token thứ hai chỉ để huỷ.
+            manage_url=_booking_url(token),
         )
         email_sent = bool(result.get("email_sent"))
     except Exception:  # noqa: BLE001 — lịch ĐÃ chốt; thư hỏng không được phép làm hỏng lượt đặt
@@ -268,3 +346,162 @@ async def confirm_and_notify(session: AsyncSession, token: str, booking_id: int)
         "end_at": end_at,
         "email_sent": email_sent,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# Vòng đời sau khi đã chốt lịch (SCH-3 · PRD §10b.6, FR-BOOK-4)
+# ══════════════════════════════════════════════════════════════════════════════════════════
+#
+# Cả ba đường huỷ dưới đây theo THỨ TỰ CỦA `confirm_and_notify`: **DB trước, email sau**. Lý do
+# giống hệt: khung giờ là tài nguyên tranh chấp — nhả nó phải TỨC THÌ và bền, còn thư chỉ là biên
+# nhận. Giữ chỗ lại chờ Resend trả lời là chặn ứng viên khác vì một lý do không liên quan tới họ.
+_CANDIDATE_CANCEL_FLAG = "Ứng viên đã huỷ lịch và đang tự chọn lại khung giờ khác."
+_CANDIDATE_CANCEL_EXPIRED_FLAG = (
+    "Ứng viên đã huỷ lịch phỏng vấn nhưng liên kết đặt lịch đã hết hạn — cần HR sắp xếp lại."
+)
+_HR_CANCEL_FLAG = "HR đã huỷ lịch phỏng vấn — cần sắp xếp lại với ứng viên."
+
+
+async def cancel_by_candidate(session: AsyncSession, token: str) -> dict:
+    """Ứng viên tự huỷ lịch qua **chính token đặt lịch** (không phát token thứ hai — §10b.6).
+
+    Hai kết cục, quyết bởi liên kết CŨ còn hạn hay không:
+
+    - còn hạn → `AWAITING_BOOKING`, ứng viên chọn lại ngay trong hạn cũ. **KHÔNG gia hạn TTL**:
+      gia hạn mỗi lần huỷ là tự tạo vòng lặp đặt-huỷ-đặt không có điểm dừng, còn hạn gốc thì đóng
+      cửa sau đúng 72h dù có huỷ bao nhiêu lần.
+    - hết hạn → `PENDING_REVIEW` + cờ, HR xử tiếp. (KHÔNG auto-reject — huỷ ≠ từ chối.)
+
+    Bấm huỷ lần hai / hồ sơ không còn ở `INTERVIEW_SCHEDULED` → trả `cancelled=False`, **200 chứ
+    không phải lỗi**: người vừa huỷ xong mà bấm lại thì thấy màn hình bình thường, và một token cũ
+    KHÔNG có cửa lật ngược quyết định HR đã ghi trong lúc đó (bài học lỗi #6 của SCH-2).
+    """
+    session_row = await booking_service.load_valid_session(session, token)
+    app_row = await session.get(Application, session_row.application_id)
+    if app_row is None:
+        raise booking_service.TokenNotFound("Liên kết không hợp lệ.")
+
+    # Gom TRƯỚC mọi commit (gotcha refresh()/expire — lỗi #3 SCH-2).
+    application_id = app_row.id
+    applicant_email = app_row.applicant_email
+    candidate_name = _candidate_name(app_row)
+    job_title = await _job_title(session, app_row)
+
+    if app_row.status != ApplicationStatus.INTERVIEW_SCHEDULED.value:
+        await session.rollback()  # nhả connection ngay, đừng ôm transaction đọc suốt phần còn lại
+        return {"cancelled": False, "job_title": job_title, "can_rebook": False, "email_sent": False}
+
+    booking = await booking_service.cancel_booked(session, application_id)
+    if booking is None:
+        # Trạng thái nói có lịch nhưng bảng thì không — không tự ý sửa trạng thái ở đường công khai.
+        logger.warning("booking_flow: app=%s INTERVIEW_SCHEDULED nhưng không có hàng BOOKED", application_id)
+        await session.rollback()
+        return {"cancelled": False, "job_title": job_title, "can_rebook": False, "email_sent": False}
+
+    start_at = booking.start_at  # nguyên thuỷ, lấy TRƯỚC commit
+    can_rebook = _as_utc(session_row.expires_at) > _now()
+
+    if can_rebook:
+        booking_service.mark_session_reopened(session_row)
+        app_row.status = ApplicationStatus.AWAITING_BOOKING.value
+        app_row.escalation_reason = _CANDIDATE_CANCEL_FLAG
+    else:
+        await booking_service.cancel_sessions(session, application_id)
+        app_row.status = ApplicationStatus.PENDING_REVIEW.value
+        app_row.escalation_reason = _CANDIDATE_CANCEL_EXPIRED_FLAG
+
+    await audit_service.record(
+        session, application_id=application_id, node="scheduler", action="booking_cancelled",
+        escalation_reason="booking_cancelled",
+        detail={"by": "candidate", "start_at": start_at.isoformat(),
+                "final_status": app_row.status, "can_rebook": can_rebook},
+        commit=True,
+    )
+
+    result = await scheduler.notify_booking_cancelled(
+        session, application_id=application_id, applicant_email=applicant_email,
+        candidate_name=candidate_name, job_title=job_title, start_at=start_at,
+        rebook_url=_booking_url(token) if can_rebook else None,
+    )
+    return {
+        "cancelled": True,
+        "job_title": job_title,
+        "can_rebook": can_rebook,
+        "email_sent": bool(result.get("email_sent")),
+    }
+
+
+async def cancel_by_hr(session: AsyncSession, application_id: int) -> Application:
+    """HR huỷ lịch từ dashboard → nhả slot + báo ứng viên → `PENDING_REVIEW` (§3.4, FR-BOOK-4).
+
+    Huỷ luôn LIÊN KẾT đặt lịch: HR huỷ nghĩa là HR đang cầm ca này: để link cũ sống thì ứng viên tự
+    đặt lại một giờ khác trong khi HR tưởng ca đang nằm ở hàng chờ mình. Muốn ứng viên chọn lại thì
+    bấm **Gửi lại link** — đó là nửa còn lại của "đổi lịch".
+    """
+    app_row = await session.get(Application, application_id)
+    if app_row is None:
+        raise BookingActionError(f"Application {application_id} không tồn tại.", status_code=404)
+    if app_row.status != ApplicationStatus.INTERVIEW_SCHEDULED.value:
+        raise BookingActionError(
+            f"Hồ sơ này không có lịch phỏng vấn để huỷ (hiện: {app_row.status}).", status_code=409
+        )
+
+    applicant_email = app_row.applicant_email
+    candidate_name = _candidate_name(app_row)
+    job_title = await _job_title(session, app_row)
+
+    booking = await booking_service.cancel_booked(session, application_id)
+    if booking is None:
+        await session.rollback()
+        raise BookingActionError("Không tìm thấy lịch phỏng vấn đang chốt cho hồ sơ này.", status_code=409)
+    start_at = booking.start_at
+
+    await booking_service.cancel_sessions(session, application_id)
+    app_row.status = ApplicationStatus.PENDING_REVIEW.value
+    app_row.escalation_reason = _HR_CANCEL_FLAG
+    await audit_service.record(
+        session, application_id=application_id, node="human_review", action="booking_cancelled",
+        escalation_reason="booking_cancelled",
+        detail={"by": "hr", "start_at": start_at.isoformat(), "final_status": app_row.status},
+        commit=True,
+    )
+
+    await scheduler.notify_booking_cancelled(
+        session, application_id=application_id, applicant_email=applicant_email,
+        candidate_name=candidate_name, job_title=job_title, start_at=start_at, by_hr=True,
+    )
+    return app_row
+
+
+async def resend_booking_link(session: AsyncSession, application_id: int) -> Application:
+    """HR gửi lại link đặt lịch → phiên MỚI (TTL mới) + thư mời → `AWAITING_BOOKING` (§3.4).
+
+    Huỷ phiên cũ TRƯỚC khi phát phiên mới, vì hai lý do khác nhau: (a) `dispatch_booking_invite` cố
+    ý DÙNG LẠI phiên còn sống — không dọn thì "gửi lại" chỉ gửi lại đúng liên kết sắp hết hạn, đúng
+    thứ HR đang muốn thay; (b) hai liên kết sống song song thì ứng viên không biết cái nào thật.
+
+    KHÔNG cho gọi khi đang `INTERVIEW_SCHEDULED`: lịch đã chốt mà phát thêm đường chọn giờ là mở cửa
+    cho một ứng viên chiếm hai khung giờ. Muốn đổi lịch thì **Huỷ lịch** trước — hai bước, tường minh.
+    """
+    app_row = await session.get(Application, application_id)
+    if app_row is None:
+        raise BookingActionError(f"Application {application_id} không tồn tại.", status_code=404)
+    if app_row.status not in _RESENDABLE_STATUSES:
+        raise BookingActionError(
+            f"Chỉ gửi lại link khi hồ sơ đang chờ HR hoặc chờ ứng viên chọn lịch (hiện: {app_row.status}). "
+            "Nếu đã có lịch, hãy Huỷ lịch trước.",
+            status_code=409,
+        )
+
+    applicant_email = app_row.applicant_email
+    candidate_name = _candidate_name(app_row)
+    job_title = await _job_title(session, app_row)
+
+    await booking_service.cancel_sessions(session, application_id)
+    await session.commit()
+
+    await dispatch_booking_invite(
+        session, app_row, applicant_email=applicant_email, candidate_name=candidate_name,
+        job_title=job_title, audit_node="human_review",
+    )
+    return app_row

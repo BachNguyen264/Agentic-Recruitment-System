@@ -19,7 +19,7 @@ from app.schemas.application import (
     BookedInterview,
     ReviewRequest,
 )
-from app.services import application_service, booking_service, screening
+from app.services import application_service, booking_flow, booking_service, screening
 from app.services import review as review_service
 from app.services.storage import (
     StorageError,
@@ -81,7 +81,15 @@ async def create_application(
 @router.get("", response_model=list[ApplicationRead])
 async def list_applications(session: DBSession) -> list[ApplicationRead]:
     rows = await application_service.list_applications(session)
-    return [ApplicationRead.model_validate(r) for r in rows]
+    # MỘT truy vấn cho cả trang (không phải mỗi dòng một truy vấn): hồ sơ nào đã chạm cảnh hết
+    # khung giờ thì dashboard phải nói đúng là LỊCH đang chặn, không phải ứng viên chậm (SCH-3).
+    no_slots = await booking_service.no_slot_application_ids(session)
+    return [
+        ApplicationRead.model_validate(r).model_copy(
+            update={"booking_no_slots": r.id in no_slots}
+        )
+        for r in rows
+    ]
 
 
 @router.get("/{application_id}", response_model=ApplicationRead)
@@ -92,10 +100,12 @@ async def get_application(application_id: int, session: DBSession) -> Applicatio
     # Chi tiết: kèm câu trả lời sàng lọc + lịch phỏng vấn đã chốt (nếu có) cho HR (PRD §7.3, §10b, §11).
     answers = await screening.latest_answers(session, application_id)
     booking = await booking_service.latest_booking(session, application_id)
+    no_slots = await booking_service.no_slot_application_ids(session)
     return ApplicationRead.model_validate(app_row).model_copy(
         update={
             "screener_answers": answers,
             "interview": BookedInterview.model_validate(booking) if booking else None,
+            "booking_no_slots": application_id in no_slots,
         }
     )
 
@@ -156,4 +166,37 @@ async def review_application(
         raise HTTPException(status_code=404, detail="Application không tồn tại") from None
     except review_service.InvalidReviewState as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
+    return ApplicationRead.model_validate(app_row)
+
+
+@router.post(
+    "/{application_id}/booking/cancel",
+    response_model=ApplicationRead,
+    summary="HR huỷ lịch phỏng vấn — nhả slot + báo ứng viên → PENDING_REVIEW (SCH-3, FR-BOOK-4)",
+)
+async def cancel_interview(application_id: int, session: DBSession) -> ApplicationRead:
+    """Huỷ lịch đã chốt. Chỉ ca `INTERVIEW_SCHEDULED` mới huỷ được (else 409).
+
+    Đây là NỬA ĐẦU của "đổi lịch": huỷ xong bấm tiếp **Gửi lại link** để ứng viên chọn giờ khác.
+    Không có luồng dời-lịch một-chạm — hai bước tường minh thì HR luôn biết ca đang ở đâu.
+    Chưa đăng nhập → 401 (`require_hr` áp cấp-router).
+    """
+    try:
+        app_row = await booking_flow.cancel_by_hr(session, application_id)
+    except booking_flow.BookingActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+    return ApplicationRead.model_validate(app_row)
+
+
+@router.post(
+    "/{application_id}/booking/resend",
+    response_model=ApplicationRead,
+    summary="HR gửi lại link đặt lịch — phiên MỚI (TTL mới) → AWAITING_BOOKING (SCH-3)",
+)
+async def resend_interview_link(application_id: int, session: DBSession) -> ApplicationRead:
+    """Phát liên kết đặt lịch MỚI + gửi lại thư mời. Ca đang `INTERVIEW_SCHEDULED` → 409 (huỷ trước)."""
+    try:
+        app_row = await booking_flow.resend_booking_link(session, application_id)
+    except booking_flow.BookingActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
     return ApplicationRead.model_validate(app_row)
