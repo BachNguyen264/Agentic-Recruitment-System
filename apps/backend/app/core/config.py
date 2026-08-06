@@ -121,13 +121,24 @@ class Settings(BaseSettings):
     booking_buffer_minutes: int = 15
     # KHÔNG mời giờ sớm hơn ngần này kể từ lúc ứng viên bấm link (ứng viên cần thời gian thu xếp).
     booking_lead_time_hours: float = 24
-    booking_max_per_day: int = 4
-    booking_window_days: int = 14
+    # SỨC CHỨA (chỉnh ở SCH-3 sau khi đo). Ba số này quyết định "bao nhiêu ứng viên xem link cùng lúc
+    # thì lịch cạn": mỗi lượt xem giữ `slots_offered` khung trong `hold_minutes`, tổng kho là
+    # max_per_day × số ngày làm trong window. 4×14 ngày (~36 khung) chỉ đủ ~7 người xem đồng thời —
+    # đo ở SCH-2. 6×21 ngày ≈ 90 khung ⇒ ~18 người, và hold 5 phút trả khung về kho nhanh gấp đôi.
+    booking_max_per_day: int = 6
+    booking_window_days: int = 21
     booking_slots_offered: int = 5
     # Hai đồng hồ KHÁC NHAU (PRD §10b.3): HOLD = giữ chỗ trong MỘT phiên chọn; LINK_TTL = ứng viên
     # có bao lâu để BẮT ĐẦU đặt lịch. float để verify đặt ngưỡng nhỏ (như screener_deadline_hours).
-    booking_hold_minutes: float = 10
+    booking_hold_minutes: float = 5
     booking_link_ttl_hours: float = 72
+    # ── Vòng đời lịch (SCH-3 — PRD §10b.6, FR-BOOK-3/4) ──
+    # Nhắc TRƯỚC BUỔI PHỎNG VẤN: gửi một lần khi buổi PV còn cách ngần này giờ (email + .ics).
+    booking_interview_reminder_hours: float = 24
+    # Nhắc CHỌN LỊCH: gửi một lần khi liên kết đặt lịch còn ngần này giờ nữa là hết hạn. Đo theo
+    # thời gian CÒN LẠI (khác `screener_reminder_hours` — cái đó đo từ lúc gửi). Hết hạn mà chưa đặt
+    # → PENDING_REVIEW[booking_no_response], TUYỆT ĐỐI không auto-reject (im lặng ≠ từ chối).
+    booking_reminder_hours: float = 24
     # Seam lịch ngoài (PRD §10b.8): `ics` = đính kèm .ics vào email (không cần OAuth).
     # Chừa đường cho `google` (PRD §17) mà KHÔNG phải sửa nghiệp vụ.
     calendar_provider: str = "ics"

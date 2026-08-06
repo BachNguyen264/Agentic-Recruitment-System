@@ -253,7 +253,7 @@ kiểu resend-OTP, chỉ cần MỘT link.
 | Đồng hồ            | Thời hạn (env)                   | Ý nghĩa                                     |
 | ------------------ | -------------------------------- | ------------------------------------------- |
 | **Link đặt lịch**  | 72h (`BOOKING_LINK_TTL_HOURS`)   | Ứng viên có bao lâu để **bắt đầu** đặt lịch |
-| **Giữ chỗ (HELD)** | 10 phút (`BOOKING_HOLD_MINUTES`) | Slot bị giữ trong **một phiên** chọn        |
+| **Giữ chỗ (HELD)** | 5 phút (`BOOKING_HOLD_MINUTES`)  | Slot bị giữ trong **một phiên** chọn        |
 
 Hold ngắn KHÔNG trừng phạt ứng viên: hết hold chỉ cần tải lại → danh sách mới ngay (nhờ sinh lười).
 Token đặt lịch **KHÔNG one-time** (khác screener): mở lại được nhiều lần tới khi đặt xong hoặc link hết hạn.
@@ -276,17 +276,36 @@ Token đặt lịch **KHÔNG one-time** (khác screener): mở lại được nh
 
 ### 10b.6 Không phản hồi / hủy / đổi
 
-- Link hết hạn (72h) mà chưa đặt → **nhắc một lần** ở `BOOKING_REMINDER_HOURS`, hết hạn → `PENDING_REVIEW`
-  gắn cờ `booking_no_response` (**KHÔNG auto-reject** — im lặng ≠ từ chối, đối xứng FR-SCR-3). Dùng sweep
-  loop sẵn có (§10).
-- **Hủy/đổi (mức tối thiểu):** email xác nhận kèm **link hủy**; ứng viên hủy → slot nhả + HR được báo +
-  về `PENDING_REVIEW`. HR **dời/hủy** được booking từ dashboard.
+- Link hết hạn (72h) mà chưa đặt → **nhắc một lần** khi còn `BOOKING_REMINDER_HOURS` nữa là hết hạn, hết
+  hạn → `PENDING_REVIEW` gắn cờ `booking_no_response` (**KHÔNG auto-reject** — im lặng ≠ từ chối, đối xứng
+  FR-SCR-3). Dùng sweep loop sẵn có (§10).
+- **Nhắc trước buổi phỏng vấn** `BOOKING_INTERVIEW_REMINDER_HOURS` (mặc định 24h): email + `.ics`, **một
+  lần** (idempotent qua mốc `reminder_sent_at`).
+- **Hủy (ứng viên):** thư xác nhận lịch kèm **liên kết hủy** — chính token đặt lịch, không phát token mới.
+  Hủy → slot **nhả ngay** + HR được báo, rồi:
+  - liên kết **còn hạn** → về `AWAITING_BOOKING`, ứng viên **tự chọn lại giờ khác trong hạn CŨ**
+    (**KHÔNG gia hạn TTL** — gia hạn là mở đường cho vòng lặp hủy-đặt-hủy không điểm dừng);
+  - liên kết **đã hết hạn** → `PENDING_REVIEW` gắn cờ `booking_cancelled`, HR xử tiếp.
+
+  Lý do cho nhánh đầu: người bận đúng khung giờ đã chọn thì việc họ cần là **một giờ khác**, không phải
+  một hàng chờ HR. Ứng viên tự xử lý được thì hệ thống không kéo con người vào.
+- **Hủy/đổi (HR):** dashboard có **Hủy lịch** (nhả slot + báo ứng viên → `PENDING_REVIEW`) và **Gửi lại
+  link đặt lịch** (phát phiên MỚI, TTL mới → `AWAITING_BOOKING`). Hai nút này **ghép lại chính là "đổi
+  lịch"** — không có luồng dời-lịch riêng.
+- **Hết khung giờ:** ứng viên mở link mà kho khung giờ đã cạn → ghi nhận `no_slots_at` + **nhãn dashboard
+  riêng** cho HR ("cần mở thêm lịch"), KHÔNG dùng nhãn "chờ ứng viên chọn lịch" — lỗi ở hệ thống thì
+  đừng hiển thị như thể ứng viên đang chậm trễ.
 
 ### 10b.7 Cấu hình khả dụng (toàn cục)
 
 Giờ làm việc, nghỉ trưa, độ dài buổi PV, đệm giữa hai buổi, lead-time tối thiểu (không đặt sớm hơn N giờ),
-số buổi tối đa/ngày, cửa sổ đặt lịch (mặc định 14 ngày tới). **Toàn hệ thống** (không theo từng JD) — phù hợp
-single-tenant. Múi giờ chốt tường minh **Asia/Ho_Chi_Minh**.
+số buổi tối đa/ngày (mặc định 6), cửa sổ đặt lịch (mặc định 21 ngày tới). **Toàn hệ thống** (không theo từng
+JD) — phù hợp single-tenant. Múi giờ chốt tường minh **Asia/Ho_Chi_Minh**.
+
+**Sức chứa là ràng buộc thật, không phải con số trang trí:** kho khung giờ = `MAX_PER_DAY` × số ngày làm
+việc trong cửa sổ, còn mỗi lượt ứng viên mở link giữ `SLOTS_OFFERED` khung trong `HOLD_MINUTES`. Đặt quá
+thấp thì chỉ vài ứng viên xem cùng lúc là người tiếp theo thấy trang trống (đo thật ở SCH-2: 4×14 ngày ≈ 36
+khung ⇒ cạn ở ~7 người xem đồng thời).
 
 ### 10b.8 Seam tích hợp lịch ngoài
 
@@ -352,7 +371,11 @@ phải sửa nghiệp vụ.
   mới danh sách (§10b.5).
 - FR-BOOK-3: token đặt lịch **KHÔNG one-time**, TTL 72h; hết hạn chưa đặt → nhắc 1 lần → `PENDING_REVIEW`
   cờ `booking_no_response`, **KHÔNG auto-reject**.
-- FR-BOOK-4: nhắc trước buổi PV 24h; hủy (link trong email xác nhận) → nhả slot + báo HR; HR dời/hủy được.
+- FR-BOOK-4: nhắc trước buổi PV 24h (email + `.ics`, một lần); hủy (chính token đặt lịch, link trong email
+  xác nhận) → nhả slot NGAY + báo HR → `AWAITING_BOOKING` nếu link còn hạn (KHÔNG gia hạn TTL), else
+  `PENDING_REVIEW[booking_cancelled]`; HR **hủy lịch** + **gửi lại link** từ dashboard (= "đổi lịch").
+- FR-BOOK-6: hết khung giờ trống khi ứng viên mở link → ghi `no_slots_at` + nhãn dashboard RIÊNG cho HR
+  ("cần mở thêm lịch"), không hiển thị như thể ứng viên đang chậm.
 - FR-BOOK-5: cấu hình khả dụng **toàn cục** qua env (§10b.7); mọi mốc thời gian theo `Asia/Ho_Chi_Minh`.
 - FR-NOTI-2: badge số ca chờ trong app (web push đẩy thật: xem §17) tới HR khi có ca cần review.
 
@@ -379,7 +402,13 @@ SCHEDULING → (gửi thư mời + link đặt lịch) → AWAITING_BOOKING
         chọn slot  → INTERVIEW_SCHEDULED   (passed; + email xác nhận .ics)
         +nhắc      → (vẫn AWAITING_BOOKING)
         hết hạn    → PENDING_REVIEW[booking_no_response]   (KHÔNG auto-reject)
-        hủy        → PENDING_REVIEW (slot được nhả)
+INTERVIEW_SCHEDULED:
+        +nhắc 24h trước buổi PV → (vẫn INTERVIEW_SCHEDULED)
+        ứng viên hủy → slot nhả NGAY, rồi:
+              link còn hạn → AWAITING_BOOKING (chọn lại, KHÔNG gia hạn TTL)
+              link hết hạn → PENDING_REVIEW[booking_cancelled]
+        HR hủy lịch  → PENDING_REVIEW (slot nhả + email báo ứng viên)
+        HR gửi lại link → AWAITING_BOOKING (phiên MỚI, TTL mới)
 PENDING_REVIEW (HR quyết):
         duyệt   → SCHEDULING → INTERVIEW_SCHEDULED
         từ chối → REJECTED

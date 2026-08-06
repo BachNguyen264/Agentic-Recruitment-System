@@ -13,7 +13,7 @@ import { BookingApiError, confirmBooking, getBooking } from "@/lib/api";
 //
 // Ba trạng thái đặc thù của trang này, cả ba đều phải xử lý tử tế vì người đọc vừa được MỜI phỏng vấn:
 //   1. `already_booked` — mở lại link sau khi đã đặt (token KHÔNG one-time) → hiện lịch đã đặt.
-//   2. Hết chỗ giữ (10 phút, KHÔNG gia hạn) → nói rõ + nút tải danh sách mới, đừng đổ lỗi người dùng.
+//   2. Hết chỗ giữ (BOOKING_HOLD_MINUTES, KHÔNG gia hạn) → nói rõ + nút tải danh sách mới, đừng đổ lỗi người dùng.
 //   3. Thua race (409) → tự làm mới danh sách ngay, không bắt họ tự mò.
 
 const VN_TZ = "Asia/Ho_Chi_Minh";
@@ -170,7 +170,7 @@ export default function BookingPage() {
             </div>
           ) : (
             <>
-              {/* Đồng hồ đếm ngược BẮT BUỘC: chỗ giữ 10 phút và KHÔNG được gia hạn khi tải lại
+              {/* Đồng hồ đếm ngược BẮT BUỘC: chỗ giữ vài phút và KHÔNG được gia hạn khi tải lại
                   (quyết định SCH-1) — không hiện thì người dùng bị bất ngờ đúng lúc bấm xác nhận. */}
               {msLeft !== null && !holdExpired && (
                 <p className="mt-4 text-[13px] text-ink/65" role="status">

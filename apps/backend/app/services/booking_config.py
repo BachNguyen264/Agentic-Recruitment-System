@@ -93,6 +93,10 @@ class BookingConfig:
     slots_offered: int
     hold_minutes: float
     link_ttl_hours: float
+    # SCH-3 (PRD §10b.6): nhắc trước BUỔI PHỎNG VẤN, và nhắc CHỌN LỊCH khi liên kết sắp hết hạn.
+    # Cái sau đo theo thời gian CÒN LẠI của liên kết, không phải thời gian đã trôi.
+    interview_reminder_hours: float = 24
+    reminder_hours: float = 24
 
     def __post_init__(self) -> None:
         if self.work_start >= self.work_end:
@@ -116,6 +120,12 @@ class BookingConfig:
             raise BookingConfigError("BOOKING_HOLD_MINUTES phải > 0 — hold 0 phút thì giữ chỗ vô nghĩa.")
         if self.link_ttl_hours <= 0:
             raise BookingConfigError("BOOKING_LINK_TTL_HOURS phải > 0.")
+        for name, value in (
+            ("BOOKING_INTERVIEW_REMINDER_HOURS", self.interview_reminder_hours),
+            ("BOOKING_REMINDER_HOURS", self.reminder_hours),
+        ):
+            if value < 0:
+                raise BookingConfigError(f"{name} không được âm (nhận được {value}).")
         if self.lunch is not None:
             lunch_start, lunch_end = self.lunch
             if lunch_start >= lunch_end:
@@ -168,4 +178,6 @@ def load_booking_config() -> BookingConfig:
         slots_offered=settings.booking_slots_offered,
         hold_minutes=settings.booking_hold_minutes,
         link_ttl_hours=settings.booking_link_ttl_hours,
+        interview_reminder_hours=settings.booking_interview_reminder_hours,
+        reminder_hours=settings.booking_reminder_hours,
     )

@@ -309,7 +309,7 @@ async function bookingFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-// Mở link đặt lịch: backend sinh slot LƯỜI ngay lúc này + giữ chỗ 10 phút. Mở lại → ĐÚNG slot cũ.
+// Mở link đặt lịch: backend sinh slot LƯỜI ngay lúc này + giữ chỗ vài phút. Mở lại → ĐÚNG slot cũ.
 export async function getBooking(token: string): Promise<BookingView> {
   return bookingFetch<BookingView>(`/api/public/booking/${encodeURIComponent(token)}`);
 }

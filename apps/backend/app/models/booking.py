@@ -3,7 +3,7 @@
 Hai bảng, hai vai trò KHÁC nhau — đừng gộp:
 
 - `InterviewBooking`: một **khung giờ** của hệ thống. `HELD` = giữ tạm trong lúc ứng viên đang chọn
-  (10 phút), `BOOKED` = đã chốt, `CANCELLED` = đã nhả. **HELD chỉ là khuyến nghị, BOOKED mới là
+  (`BOOKING_HOLD_MINUTES`), `BOOKED` = đã chốt, `CANCELLED` = đã nhả. **HELD chỉ là khuyến nghị, BOOKED mới là
   thẩm quyền** (PRD §10b.5) — nên chốt chặn cuối cùng nằm ở DB: **partial unique index trên
   `start_at` CHỈ áp cho hàng `BOOKED`**. Hai hàng cùng `start_at` được phép cùng `HELD` (hai người
   đang cân nhắc), nhưng chỉ MỘT được thành `BOOKED`; kẻ thua nhận `IntegrityError` → 409 (SCH-2).
@@ -97,7 +97,7 @@ class BookingSession(Base, TimestampMixin):
     # secrets.token_urlsafe(32) → ~43 ký tự (như ScreeningSession).
     token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
 
-    # Hạn của LIÊN KẾT (BOOKING_LINK_TTL_HOURS, mặc định 72h) — KHÁC hạn giữ chỗ 10 phút của
+    # Hạn của LIÊN KẾT (BOOKING_LINK_TTL_HOURS, mặc định 72h) — KHÁC hạn giữ chỗ vài phút của
     # `InterviewBooking.hold_expires_at`. Hai đồng hồ này rất dễ nhầm: xem bảng PRD §10b.3.
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

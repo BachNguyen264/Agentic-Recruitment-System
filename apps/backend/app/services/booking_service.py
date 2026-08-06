@@ -274,7 +274,7 @@ async def generate_slots(
     cho người thực sự có ý định đặt lịch, và danh sách luôn tươi nên MỘT link là đủ.
 
     **Bấm lại link → trả về ĐÚNG các slot đang giữ, không giữ thêm.** (Không gia hạn hold: hết 10
-    phút thì tải lại là có danh sách mới — §10b.3. Gia hạn theo mỗi lần tải sẽ biến hold 10 phút
+    phút thì tải lại là có danh sách mới — §10b.3. Gia hạn theo mỗi lần tải sẽ biến hold ngắn
     thành hold vô hạn.)
 
     Không còn khung giờ nào → trả danh sách RỖNG (không phải lỗi); SCH-2 quyết cách báo cho ứng
@@ -459,7 +459,7 @@ async def confirm_booking(
                 .values(status=BookingStatus.CANCELLED.value, hold_expires_at=None)
             )
             await session.commit()
-        except Exception:  # noqa: BLE001 — dọn dẹp phụ trợ: hỏng thì hold cũng tự hết hạn sau 10 phút
+        except Exception:  # noqa: BLE001 — dọn dẹp phụ trợ: hỏng thì hold cũng tự hết hạn
             await session.rollback()
             logger.warning("booking: không huỷ được chỗ giữ thua race booking=%s", booking_id)
         raise SlotTaken("Giờ này vừa có người đặt mất. Xin chọn một khung giờ khác.") from exc
