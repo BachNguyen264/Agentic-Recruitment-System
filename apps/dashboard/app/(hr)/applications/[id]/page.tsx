@@ -71,7 +71,12 @@ export default function ApplicationDetailPage() {
     onSuccess: onScheduleChanged,
   });
   const scheduleError = cancelSchedule.error ?? resendLink.error;
-  const canResend = app?.status === "PENDING_REVIEW" || app?.status === "AWAITING_BOOKING";
+  // Chỉ hồ sơ ĐÃ TỪNG được mời mới "gửi LẠI" được — cùng điều kiện backend kiểm (`has_any_session`).
+  // Bỏ vế này thì mọi ca PENDING_REVIEW (kể cả ca chưa ai duyệt) đều thấy nút, và HR chỉ biết mình
+  // bấm nhầm sau khi nhận 409.
+  const canResend =
+    Boolean(app?.has_booking_link) &&
+    (app?.status === "PENDING_REVIEW" || app?.status === "AWAITING_BOOKING");
 
   return (
     <div className="mx-auto max-w-[1120px] px-4 pb-8 pt-5 sm:px-8">

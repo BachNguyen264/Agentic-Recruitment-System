@@ -76,6 +76,11 @@ class ApplicationRead(BaseModel):
     # chứ không suy từ `status`, vì cả hai tình huống "chưa bấm link" và "bấm rồi mà hết lịch" đều
     # đứng ở `AWAITING_BOOKING` — gộp lại thành một nhãn là đổ lỗi cho người không có lỗi.
     booking_no_slots: bool = False
+    # Hồ sơ này đã TỪNG được phát liên kết đặt lịch chưa (SCH-3). Gương của điều kiện
+    # `has_any_session` mà `resend_booking_link` dùng để chặn: thiếu nó, dashboard hiện nút "Gửi
+    # lại link" cho MỌI ca `PENDING_REVIEW` — kể cả ca chưa ai duyệt — và HR chỉ biết mình bấm nhầm
+    # sau khi nhận 409. CHỈ populate ở endpoint chi tiết (như `interview`, tránh N+1 ở danh sách).
+    has_booking_link: bool = False
     created_at: datetime
     updated_at: datetime
 

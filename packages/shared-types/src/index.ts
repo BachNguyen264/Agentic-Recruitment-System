@@ -104,6 +104,9 @@ export interface ApplicationDetail extends ApplicationListItem {
   screener_answers: ScreenerAnswer[]; // [] khi chưa/không sàng lọc (08b)
   // Lịch phỏng vấn ứng viên đã tự chọn (SCH-2 · PRD §10b). null = chưa chọn.
   interview: BookedInterview | null;
+  // Đã TỪNG được phát liên kết đặt lịch chưa (SCH-3) — gương của điều kiện backend dùng để chặn
+  // "Gửi lại link". Không có nó thì nút hiện ở mọi ca PENDING_REVIEW rồi 409 khi bấm.
+  has_booking_link: boolean;
   // Có file CV gốc để tải không (slice 06). Bytes lấy qua GET /api/applications/{id}/cv (require_hr).
   has_cv: boolean;
 }

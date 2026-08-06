@@ -45,9 +45,14 @@
   **KHÔNG auto-reject ở BẤT KỲ nhánh nào** — hết hạn/huỷ đều về `PENDING_REVIEW`. "Đổi lịch" = HR huỷ +
   gửi lại link, **không có luồng dời-lịch riêng**; `resend_booking_link` phải `cancel_sessions` TRƯỚC, nếu
   không `dispatch_booking_invite` dùng lại đúng phiên cũ và "gửi lại" chẳng đổi được gì.
+  **Tệp `.ics` KHÔNG BAO GIỜ được chặn thư** — mọi đường sinh tệp đi qua `scheduler._interview_ics`
+  (hỏng → gửi thư không đính kèm + log). Đặt `create_event` chung `try` với `send_email` nghĩa là một
+  lỗi tzdata/định dạng sẽ nuốt luôn thư xác nhận của người vừa đặt lịch xong.
   **Văn bản gửi ra ngoài chỉ có MỘT nguồn:** tên gọi/tên vị trí/liên kết lấy qua
   `booking_flow.candidate_name_of` / `job_title_of` / `booking_url` (`booking_lifecycle` gọi vào đó,
   không chép lại) — hai bản chuỗi dự phòng lệch nhau là hai lá thư cùng một buổi PV xưng hô khác nhau.
+  Nút HR nào ánh xạ một điều kiện của backend (vd "Gửi lại link" ↔ `has_any_session`) thì backend phải
+  TRẢ RA cờ đó (`has_booking_link`) — để UI tự đoán là HR bấm rồi mới biết mình bấm nhầm qua 409.
 - **Storage boundary (06):** nghiệp vụ TUYỆT ĐỐI không mở path CV — chỉ qua `services/storage`
   (`get_storage().save/get/delete`). Thêm chỗ đọc/ghi CV mới → đi qua seam, nếu không sẽ vỡ khi
   `STORAGE_BACKEND=r2`. `cv_file_ref` là KEY (opaque), KHÔNG trả ra client (dùng `has_cv` + endpoint tải).

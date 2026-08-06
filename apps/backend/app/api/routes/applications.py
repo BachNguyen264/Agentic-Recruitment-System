@@ -106,6 +106,9 @@ async def get_application(application_id: int, session: DBSession) -> Applicatio
             "screener_answers": answers,
             "interview": BookedInterview.model_validate(booking) if booking else None,
             "booking_no_slots": application_id in no_slots,
+            # Đã từng được mời chưa — quyết định UI có hiện nút "Gửi lại link đặt lịch" hay không.
+            # Hỏi ĐÚNG câu mà `resend_booking_link` hỏi, để nút chỉ xuất hiện khi nó bấm được.
+            "has_booking_link": await booking_service.has_any_session(session, application_id),
         }
     )
 

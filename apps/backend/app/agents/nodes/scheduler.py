@@ -49,8 +49,10 @@ async def _interview_ics(
 ) -> tuple[Attachments | None, str | None]:
     """Sinh tệp `.ics` MỜI-lịch cho một buổi phỏng vấn → (đính kèm, `calendar_ref`).
 
-    Sinh hỏng KHÔNG được chặn thư — trả `(None, None)` + log: buổi phỏng vấn vẫn diễn ra dù ứng
-    viên có thêm được vào ứng dụng lịch hay không.
+    Sinh hỏng KHÔNG được chặn thư — trả `(None, None)` + log. Buổi phỏng vấn vẫn diễn ra dù ứng
+    viên có thêm được vào ứng dụng lịch hay không; và với thư xác nhận thì khung giờ ĐÃ `BOOKED`
+    trong DB rồi, nên biên nhận còn quan trọng hơn tệp đính kèm. Một chính sách xuống cấp DUY NHẤT
+    cho mọi thư có `.ics` — trước đây thư xác nhận âm thầm không được gửi khi tệp lỗi.
     """
     try:
         event = await get_calendar_provider().create_event(
@@ -185,48 +187,25 @@ async def notify_booking_confirmed(
     Điểm phát email DUY NHẤT, như hai hàm trên. Tệp `.ics` đi qua seam `CalendarProvider` (SCH-1) —
     đổi sang Google Calendar sau này KHÔNG phải sửa chỗ này.
 
-    Lỗi gửi (hoặc lỗi sinh `.ics`) → audit `email_failed` + trả `email_sent=False`, **KHÔNG raise**:
-    khác 08d một cách CÓ CHỦ Ý — ở đây khung giờ đã BOOKED trong DB và ứng viên vừa thấy màn xác
-    nhận trên web, nên thư chỉ là biên nhận. Huỷ lịch chỉ vì gửi thư hỏng mới là cái sai lớn.
+    Lỗi gửi → audit `email_failed` + trả `email_sent=False`, **KHÔNG raise**: khác 08d một cách CÓ
+    CHỦ Ý — ở đây khung giờ đã BOOKED trong DB và ứng viên vừa thấy màn xác nhận trên web, nên thư
+    chỉ là biên nhận. Huỷ lịch chỉ vì gửi thư hỏng mới là cái sai lớn.
+
+    Sinh `.ics` hỏng thì thư vẫn ĐI (không đính kèm) — xem `_interview_ics`. Nuốt luôn cả thư xác
+    nhận vì một tệp đính kèm là bỏ rơi đúng người vừa đặt lịch xong.
     """
     subject, html = booking_confirmed_email(
         candidate_name, job_title, start_at=booking.start_at, end_at=booking.end_at,
         manage_url=manage_url,
     )
-    try:
-        event = await get_calendar_provider().create_event(
-            booking,
-            summary=f"Phỏng vấn — {job_title}",
-            description=f"Buổi phỏng vấn vị trí {job_title}.",
-        )
-        attachments = [("phong-van.ics", event.ics, _ICS_MIME)] if event.ics else None
-        await email_service.send_email(
-            to=applicant_email, subject=subject, html=html, attachments=attachments
-        )
-    except Exception as exc:  # noqa: BLE001 — nuốt có kiểm soát: lịch ĐÃ chốt, thư chỉ là biên nhận
-        logger.warning(
-            "[scheduler] app=%s: GỬI EMAIL xác nhận lịch THẤT BẠI tới %s: %s",
-            application_id, applicant_email, exc,
-        )
-        await audit_service.record(
-            session, application_id=application_id, node="scheduler", action="email_failed",
-            detail={"mode": "booking_confirmed", "to": applicant_email, "error": str(exc)},
-            commit=True,
-        )
-        return {"mode": "booking_confirmed", "email_sent": False, "error": str(exc)}
-
-    logger.info(
-        "[scheduler] app=%s: đã gửi thư xác nhận lịch (%s) tới %s",
-        application_id, booking.start_at.isoformat(), applicant_email,
+    attachments, calendar_ref = await _interview_ics(
+        booking, job_title=job_title, application_id=application_id, mode="booking_confirmed"
     )
-    await audit_service.record(
-        session, application_id=application_id, node="scheduler",
-        action="email_sent:booking_confirmed",
-        detail={"to": applicant_email, "start_at": booking.start_at.isoformat(),
-                "calendar_ref": event.ref},
-        commit=True,
+    return await _dispatch(
+        session, application_id=application_id, mode="booking_confirmed",
+        applicant_email=applicant_email, subject=subject, html=html, attachments=attachments,
+        detail={"start_at": booking.start_at.isoformat(), "calendar_ref": calendar_ref},
     )
-    return {"mode": "booking_confirmed", "email_sent": True, "calendar_ref": event.ref}
 
 
 async def notify_interview_reminder(
