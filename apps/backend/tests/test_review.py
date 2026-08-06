@@ -114,10 +114,11 @@ async def test_review_approve_sets_interview_and_audits(monkeypatch) -> None:
     assert "/booking/" in captured["booking_url"], "thư mời từ đường HR cũng phải kèm link"
     assert ("human_review", "approve") in _audit_actions(session)
     assert ("human_review", "booking_invite_sent") in _audit_actions(session)
-    # Ba commit, theo đúng thứ tự an toàn: (1) quyết định HR, (2) phiên đặt lịch BỀN trước khi thư
+    # Bốn commit, theo đúng thứ tự an toàn: (1) quyết định HR, (2) phiên đặt lịch BỀN trước khi thư
     # rời máy chủ — gửi xong mới ghi mà tiến trình chết ở giữa là ứng viên cầm link 404, (3) thư đã
-    # gửi → AWAITING_BOOKING.
-    assert session.commits == 3
+    # gửi → AWAITING_BOOKING, (4) đóng transaction mà `refresh()` của audit vừa mở lại (gotcha
+    # refresh(): không đóng thì route ôm một connection của pool tới hết request — Load boundary).
+    assert session.commits == 4
 
 
 async def test_review_approve_email_fail_stays_pending_review(monkeypatch) -> None:

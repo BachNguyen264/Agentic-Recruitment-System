@@ -619,10 +619,12 @@ async def test_confirm_refuses_when_application_no_longer_bookable(Session, apps
 async def test_invite_reuses_live_session_instead_of_minting_second_token(  # noqa: N803
     Session, apps: list[int], monkeypatch
 ) -> None:
-    """Gửi lại lời mời (HR bấm duyệt ở hai tab) phải DÙNG LẠI link còn sống.
+    """Gửi lại lời mời (HR bấm duyệt ở hai tab) phải ra MỘT link và MỘT thư.
 
     Hai token sống song song = hai email hai link khác nhau; ứng viên không biết cái nào thật, và ta
-    có một token mồ côi không ai theo dõi."""
+    có một token mồ côi không ai theo dõi. Sau adversarial review, lượt thứ hai còn bị chặn hẳn ở
+    khâu gửi (đã có link sống + hồ sơ đã ở AWAITING_BOOKING = lượt trước xong rồi), nên hộp thư ứng
+    viên cũng không nhận thư trùng."""
     urls: list[str] = []
 
     async def fake_notify(_s, mode, **kw):  # noqa: ANN001
@@ -638,7 +640,7 @@ async def test_invite_reuses_live_session_instead_of_minting_second_token(  # no
                 s, app_row, applicant_email="a@e.com", candidate_name="A",
                 job_title="Backend", audit_node="human_review",
             )
-        assert urls[0] == urls[1]
+        assert len(urls) == 1, f"gửi {len(urls)} thư mời cho một quyết định"
         n = (
             await s.execute(
                 select(func.count())
@@ -900,3 +902,193 @@ async def test_no_slots_flag_is_set_then_cleared(Session, apps: list[int], monke
         assert view["slots"]
     async with Session() as s:
         assert app_id not in await booking_service.no_slot_application_ids(s)
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# Hồi quy sau adversarial review SCH-3 — mỗi test dưới đây tương ứng MỘT lỗi đã tái hiện được.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+
+
+async def test_two_concurrent_invites_produce_one_link(  # noqa: N803
+    Session, apps: list[int], monkeypatch
+) -> None:
+    """HR bấm Duyệt ở HAI tab → phải ra ĐÚNG MỘT liên kết.
+
+    Đo được trước khi vá: 2 phiên sống + 2 thư mời với hai link KHÁC NHAU. Ứng viên không biết cái
+    nào thật, và cái còn lại thành token mồ côi không lưới nào theo dõi — nó là bàn đạp cho cả lỗi
+    "đặt bằng link B, huỷ bằng link A" lẫn lỗi hạ nhầm hồ sơ đã có lịch.
+    """
+    sent: list[str] = []
+
+    async def fake_invite(_s, _mode, **kw):  # noqa: ANN001
+        sent.append(kw["booking_url"])
+        return {"mode": "invite", "email_sent": True}
+
+    monkeypatch.setattr(booking_flow.scheduler, "notify_decision", fake_invite)
+    app_id = apps[0]
+    async with Session() as s:  # bắt đầu từ hàng chờ HR, như đường /review thật
+        row = await s.get(Application, app_id)
+        row.status = ApplicationStatus.PENDING_REVIEW.value
+        await s.commit()
+
+    async def dispatch() -> None:
+        async with Session() as s:
+            app_row = await s.get(Application, app_id)
+            await booking_flow.dispatch_booking_invite(
+                s, app_row, applicant_email="a@e.com", candidate_name="A",
+                job_title="Backend", audit_node="human_review",
+            )
+
+    await asyncio.gather(dispatch(), dispatch())
+
+    async with Session() as s:
+        live = (await s.execute(select(BookingSession).where(
+            BookingSession.application_id == app_id,
+            BookingSession.cancelled_at.is_(None)))).scalars().all()
+        assert len(live) == 1, f"{len(live)} liên kết sống — ứng viên nhận nhiều link khác nhau"
+        assert (await s.get(Application, app_id)).status == ApplicationStatus.AWAITING_BOOKING.value
+    assert len(set(sent)) == 1, "hai thư mời trỏ hai liên kết khác nhau"
+
+
+async def test_sweep_spares_application_holding_a_booked_slot(  # noqa: N803
+    Session, apps: list[int], monkeypatch
+) -> None:
+    """Có hàng `BOOKED` thì lưới hết hạn phải TRÁNH, dù mọi CỜ đều nói "chưa đặt".
+
+    Cờ (`booked_at`, trạng thái hồ sơ) có thể lệch khỏi sự thật khi một đường ghi hỏng giữa chừng;
+    bảng `interview_booking` mới là sự thật. Thiếu chốt này thì hồ sơ đang cầm lịch (đã có `.ics`
+    trong tay) bị báo cho HR là "không phản hồi", và khung giờ BOOKED đó không đường nào nhả nữa —
+    biến mất khỏi lịch công ty vĩnh viễn vì partial unique index.
+    """
+    async def fake_confirmed(_s, **_kw):  # noqa: ANN001
+        return {"email_sent": True}
+
+    monkeypatch.setattr(booking_flow.scheduler, "notify_booking_confirmed", fake_confirmed)
+    app_id = apps[0]
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, app_id)
+        token = row.token
+        await s.commit()
+        view = await booking_flow.booking_view(s, token)
+        await booking_flow.confirm_and_notify(s, token, view["slots"][0].id)
+
+    # Dựng ĐÚNG trạng thái lệch: hàng BOOKED còn đó, nhưng mọi cờ đều nói "chưa đặt, quá hạn".
+    async with Session() as s:
+        sess_row = (await s.execute(
+            select(BookingSession).where(BookingSession.token == token))).scalar_one()
+        sess_row.booked_at = None
+        sess_row.expires_at = _now() - timedelta(minutes=1)
+        app_row = await s.get(Application, app_id)
+        app_row.status = ApplicationStatus.AWAITING_BOOKING.value
+        await s.commit()
+
+    counts = await booking_lifecycle.sweep_once(Session)
+
+    async with Session() as s:
+        app_row = await s.get(Application, app_id)
+        assert app_row.status == ApplicationStatus.AWAITING_BOOKING.value, "đã hạ nhầm hồ sơ có lịch"
+        assert "booking_no_response" not in (app_row.uncertainty_flags or [])
+        assert (await booking_service.latest_booking(s, app_id)) is not None
+    assert counts["expired"] == 0
+
+
+async def test_no_slots_case_keeps_its_own_label_after_expiry(  # noqa: N803
+    Session, apps: list[int], monkeypatch
+) -> None:
+    """Hết khung giờ rồi hết hạn → cờ `booking_no_slots`, KHÔNG phải `booking_no_response`.
+
+    Đây là ca DUY NHẤT mà lỗi thuộc về hệ thống. Gộp nó vào "ứng viên không phản hồi" là đảo ngược
+    đúng cái quy-trách-nhiệm mà FR-BOOK-6 sinh ra để giữ.
+    """
+    app_id = apps[0]
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, app_id)
+        token = row.token
+        await s.commit()
+
+    empty = make_cfg(lead_time_hours=24 * 365)
+    async with Session() as s:
+        monkeypatch.setattr(booking_service, "load_booking_config", lambda: empty)
+        assert (await booking_flow.booking_view(s, token))["slots"] == []
+        monkeypatch.undo()
+
+    async with Session() as s:
+        sess_row = (await s.execute(
+            select(BookingSession).where(BookingSession.token == token))).scalar_one()
+        sess_row.expires_at = _now() - timedelta(minutes=1)
+        await s.commit()
+
+    assert (await booking_lifecycle.sweep_once(Session))["expired"] == 1
+
+    async with Session() as s:
+        app_row = await s.get(Application, app_id)
+        assert app_row.status == ApplicationStatus.PENDING_REVIEW.value
+        assert "booking_no_slots" in (app_row.uncertainty_flags or [])
+        assert "booking_no_response" not in (app_row.uncertainty_flags or [])
+
+
+async def test_rebook_loop_is_capped(Session, apps: list[int], monkeypatch) -> None:  # noqa: N803
+    """Vòng đặt-huỷ-đặt phải DỪNG — TTL chặn theo thời gian, không chặn theo SỐ EMAIL.
+
+    Mỗi vòng phát hai thư (xác nhận + báo huỷ) và trần duy nhất còn lại là rate-limit theo IP, nên
+    trong 72h một liên kết có thể đốt hàng trăm lượt gửi. Resend là kênh DUY NHẤT của hệ thống: hết
+    quota là thư mời/từ chối/sàng lọc của MỌI ứng viên khác cùng câm.
+    """
+    async def ok(_s, **_kw):  # noqa: ANN001
+        return {"email_sent": True}
+
+    monkeypatch.setattr(booking_flow.scheduler, "notify_booking_confirmed", ok)
+    monkeypatch.setattr(booking_flow.scheduler, "notify_booking_cancelled", ok)
+    app_id = apps[0]
+    async with Session() as s:
+        row = booking_service.create_booking_session(s, app_id)
+        token = row.token
+        await s.commit()
+
+    cycles = 0
+    for _ in range(booking_flow._MAX_REBOOKS + 3):
+        async with Session() as s:
+            view = await booking_flow.booking_view(s, token)
+            if view["already_booked"] or not view["slots"]:
+                break
+            await booking_flow.confirm_and_notify(s, token, view["slots"][0].id)
+        async with Session() as s:
+            out = await booking_flow.cancel_by_candidate(s, token)
+        cycles += 1
+        if not out["can_rebook"]:
+            break
+
+    assert cycles == booking_flow._MAX_REBOOKS + 1, f"vòng lặp chạy {cycles} lượt — hạn mức không có tác dụng"
+    async with Session() as s:
+        app_row = await s.get(Application, app_id)
+        assert app_row.status == ApplicationStatus.PENDING_REVIEW.value  # về NGƯỜI, không auto-reject
+        assert app_row.status != ApplicationStatus.REJECTED.value
+        assert "booking_cancelled" in (app_row.uncertainty_flags or [])
+
+
+async def test_reinvite_clears_stale_booking_flags(Session, apps: list[int], monkeypatch) -> None:  # noqa: N803
+    """Mời LẠI phải gỡ cờ của lượt trước.
+
+    Để nguyên thì một ứng viên đã chốt lịch vẫn mang nhãn "không phản hồi" vĩnh viễn, và
+    `handle_booking_timeout` (khử trùng theo TÊN cờ) sẽ im lặng bỏ qua lần hết hạn THẬT tiếp theo.
+    """
+    async def fake_invite(_s, _mode, **_kw):  # noqa: ANN001
+        return {"mode": "invite", "email_sent": True}
+
+    monkeypatch.setattr(booking_flow.scheduler, "notify_decision", fake_invite)
+    app_id = apps[0]
+    async with Session() as s:
+        booking_service.create_booking_session(s, app_id)  # đã từng được mời
+        app_row = await s.get(Application, app_id)
+        app_row.status = ApplicationStatus.PENDING_REVIEW.value
+        app_row.uncertainty_flags = ["booking_no_response", "low_confidence"]
+        await s.commit()
+
+    async with Session() as s:
+        await booking_flow.resend_booking_link(s, app_id)
+
+    async with Session() as s:
+        app_row = await s.get(Application, app_id)
+        assert app_row.status == ApplicationStatus.AWAITING_BOOKING.value
+        assert "booking_no_response" not in app_row.uncertainty_flags
+        assert "low_confidence" in app_row.uncertainty_flags, "chỉ gỡ cờ ĐẶT LỊCH, đừng đụng cờ khác"

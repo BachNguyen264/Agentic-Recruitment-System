@@ -98,6 +98,7 @@ def build_ics(
     location: str = "",
     dtstamp: datetime | None = None,
     sequence: int = 0,
+    cancelled: bool = False,
 ) -> bytes:
     """Dựng một VCALENDAR chứa đúng một VEVENT. Trả bytes UTF-8 (sẵn sàng đính kèm email).
 
@@ -110,6 +111,12 @@ def build_ics(
         "VERSION:2.0",
         f"PRODID:{_PRODID}",
         "CALSCALE:GREGORIAN",
+    ]
+    # `METHOD:CANCEL` CHỈ có ở tệp huỷ. Tệp mời vẫn cố ý không có METHOD (xem docstring dưới) —
+    # đặt `METHOD:REQUEST` sẽ kéo theo ràng buộc ORGANIZER/ATTENDEE của iTIP mà ta chưa cần.
+    if cancelled:
+        lines.append("METHOD:CANCEL")
+    lines += [
         "BEGIN:VEVENT",
         f"UID:{uid}",
         f"DTSTAMP:{_stamp(dtstamp or datetime.now(timezone.utc))}",
@@ -117,7 +124,7 @@ def build_ics(
         f"DTEND:{_stamp(end_at)}",
         f"SUMMARY:{_escape(summary)}",
         f"SEQUENCE:{int(sequence)}",
-        "STATUS:CONFIRMED",
+        "STATUS:CANCELLED" if cancelled else "STATUS:CONFIRMED",
     ]
     if description:
         lines.append(f"DESCRIPTION:{_escape(description)}")
@@ -152,8 +159,32 @@ class IcsProvider:
             ),
         )
 
-    async def cancel_event(self, ref: str) -> None:
-        """No-op CÓ CHỦ Ý: tệp `.ics` đã nằm trong hộp thư ứng viên, không có sự kiện phía máy chủ
-        nào để xoá. Việc huỷ được truyền đạt bằng EMAIL huỷ (SCH-3) — nơi có thể đính kèm một `.ics`
-        `METHOD:CANCEL`. Ghi log để đường huỷ vẫn để lại dấu vết kiểm toán."""
-        logger.info("calendar(ics): huỷ %s — không có sự kiện phía máy chủ để xoá (email huỷ ở SCH-3)", ref)
+    async def cancel_event(
+        self,
+        booking: InterviewBooking,
+        *,
+        summary: str = "",
+    ) -> CalendarEvent:
+        """Sinh tệp `.ics` **METHOD:CANCEL** để đính vào thư báo huỷ (SCH-3).
+
+        Không có sự kiện phía máy chủ nào để xoá — tệp cũ đã nằm trong ứng dụng lịch của ứng viên,
+        và cách DUY NHẤT gỡ nó ra là gửi một tệp mới cùng `UID`, `SEQUENCE` cao hơn, `STATUS:CANCELLED`.
+        Thiếu bước này thì ứng viên vẫn thấy buổi phỏng vấn trên lịch ở một khung giờ đã nhả cho
+        người khác — và có thể tới dự một buổi không còn tồn tại.
+
+        `SEQUENCE:1` (> 0 của tệp mời) là thứ khiến ứng dụng lịch chấp nhận bản cập nhật; giữ nguyên
+        số cũ thì nhiều ứng dụng lặng lẽ bỏ qua.
+        """
+        uid = event_uid(booking.id)
+        logger.info("calendar(ics): sinh .ics huỷ cho %s", uid)
+        return CalendarEvent(
+            ref=uid,
+            ics=build_ics(
+                uid=uid,
+                start_at=booking.start_at,
+                end_at=booking.end_at,
+                summary=summary or "Phỏng vấn (đã huỷ)",
+                sequence=1,
+                cancelled=True,
+            ),
+        )

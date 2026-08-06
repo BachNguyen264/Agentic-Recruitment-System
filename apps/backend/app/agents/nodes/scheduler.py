@@ -300,20 +300,43 @@ async def notify_booking_cancelled(
     candidate_name: str,
     job_title: str,
     start_at: datetime,
+    end_at: datetime | None = None,
+    booking_id: int | None = None,
     rebook_url: str | None = None,
     by_hr: bool = False,
 ) -> dict:
-    """Thư báo buổi phỏng vấn ĐÃ HUỶ (SCH-3 · FR-BOOK-4). Ứng viên tự huỷ hoặc HR huỷ.
+    """Thư báo buổi phỏng vấn ĐÃ HUỶ + `.ics` **METHOD:CANCEL** (SCH-3 · FR-BOOK-4).
 
     `rebook_url` chỉ được truyền khi liên kết CŨ còn hạn và hồ sơ thật sự quay lại `AWAITING_BOOKING`
     — hứa một đường chọn lại không tồn tại là đúng lớp "trạng thái nói dối" dự án này tránh.
+
+    Tệp huỷ là thứ GỠ buổi phỏng vấn khỏi ứng dụng lịch của ứng viên (họ đã thêm nó từ thư xác nhận
+    hoặc thư nhắc). Bỏ nó đi thì lịch của họ vẫn báo một buổi ở khung giờ đã nhả cho người khác.
+    Sinh tệp hỏng KHÔNG được chặn thư huỷ: biết mình bị huỷ quan trọng hơn tệp đính kèm.
     """
     subject, html = booking_cancelled_email(
         candidate_name, job_title, start_at=start_at, rebook_url=rebook_url, by_hr=by_hr
     )
+    attachments: Attachments | None = None
+    if booking_id is not None and end_at is not None:
+        try:
+            # Dựng một hàng TẠM (không `add()` vào session) thay vì truyền object ORM thật: mọi
+            # caller đều đã đóng transaction trước khi tới đây, nên chạm thuộc tính của hàng thật sẽ
+            # nạp lười trên một session đã rollback — đúng bẫy `refresh()`/expire của SCH-2.
+            stub = InterviewBooking(
+                id=booking_id, application_id=application_id, start_at=start_at, end_at=end_at,
+            )
+            event = await get_calendar_provider().cancel_event(
+                stub, summary=f"Phỏng vấn — {job_title}"
+            )
+            if event is not None and event.ics:
+                attachments = [("huy-phong-van.ics", event.ics, "text/calendar; charset=utf-8")]
+        except Exception:  # noqa: BLE001 — thiếu tệp huỷ còn hơn thiếu thư huỷ
+            logger.warning("[scheduler] app=%s: không sinh được .ics huỷ", application_id)
+
     return await _dispatch(
         session, application_id=application_id, mode="booking_cancelled",
-        applicant_email=applicant_email, subject=subject, html=html,
+        applicant_email=applicant_email, subject=subject, html=html, attachments=attachments,
         detail={"start_at": start_at.isoformat(), "by_hr": by_hr, "can_rebook": bool(rebook_url)},
     )
 

@@ -32,7 +32,13 @@ def _now() -> datetime:
 
 
 class _EmptyResult:
+    """Kết quả rỗng. `scalar()` trả None = "hồ sơ KHÔNG có lịch đã chốt" — đúng tiền đề của các test
+    hết-hạn ở đây (chốt chặn "đang có BOOKED thì đừng hạ" được đo riêng trên DB thật)."""
+
     rowcount = 0
+
+    def scalar(self):  # noqa: ANN201
+        return None
 
     def scalar_one_or_none(self):  # noqa: ANN201
         return None
@@ -137,11 +143,16 @@ def _stub_cancel_booked(monkeypatch, booking: InterviewBooking | None) -> None:
 # ── A) Hết hạn liên kết: về NGƯỜI, KHÔNG auto-reject ─────────────────────────────────────
 
 
-async def test_timeout_goes_to_pending_review_never_rejected() -> None:
+async def test_timeout_goes_to_pending_review_never_rejected(monkeypatch) -> None:
     """Bất biến xuyên dự án: im lặng của ứng viên KHÔNG phải lời từ chối (đối xứng FR-SCR-3)."""
     app_row = _app(ApplicationStatus.AWAITING_BOOKING.value)
     sess_row = _session_row(expires_in_hours=-1, booked=False)
     session = FakeSession({(Application, 5): app_row})
+    killed: list[int] = []
+    monkeypatch.setattr(
+        booking_service, "cancel_sessions",
+        lambda _s, aid, **_kw: _async(killed.append(aid) or 1),
+    )
 
     await booking_lifecycle.handle_booking_timeout(session, sess_row)
 
@@ -149,9 +160,30 @@ async def test_timeout_goes_to_pending_review_never_rejected() -> None:
     assert app_row.status != ApplicationStatus.REJECTED.value
     assert "booking_no_response" in app_row.uncertainty_flags
     assert app_row.escalation_reason  # HR phải đọc được VÌ SAO ca này quay lại hàng chờ
-    # Liên kết bị khoá → vòng quét sau không nhặt lại (idempotent bằng mốc, không phải bộ đếm).
-    assert sess_row.cancelled_at is not None
+    # Huỷ MỌI liên kết còn sống, không riêng phiên đang xử: một phiên mồ côi còn sống là còn đường
+    # cho token cũ lật ngược quyết định vừa ghi (lỗi #6 SCH-2, phía hết hạn).
+    assert killed == [5]
     assert ("scheduler", "booking_no_response") in session.audits()
+
+
+async def test_timeout_blames_the_calendar_when_there_were_no_slots(monkeypatch) -> None:
+    """Ứng viên mở link mà lịch trống rỗng thì họ KHÔNG có gì để bấm.
+
+    Dán "không phản hồi" lên họ chính là cái đổ-lỗi-nhầm-người FR-BOOK-6 sinh ra để chặn — và tệ hơn,
+    nó XOÁ luôn nhãn "hết khung giờ" (vì `no_slot_application_ids` lọc `cancelled_at IS NULL`), nên
+    bằng chứng duy nhất về lỗi của hệ thống biến mất đúng lúc HR cần nó."""
+    app_row = _app(ApplicationStatus.AWAITING_BOOKING.value)
+    sess_row = _session_row(expires_in_hours=-1, booked=False)
+    sess_row.no_slots_at = _now()
+    session = FakeSession({(Application, 5): app_row})
+    monkeypatch.setattr(booking_service, "cancel_sessions", lambda *_a, **_kw: _async(1))
+
+    await booking_lifecycle.handle_booking_timeout(session, sess_row)
+
+    assert "booking_no_slots" in app_row.uncertainty_flags
+    assert "booking_no_response" not in app_row.uncertainty_flags
+    assert "công ty" in app_row.escalation_reason
+    assert ("scheduler", "booking_no_slots") in session.audits()
 
 
 async def test_timeout_sends_no_email_to_candidate(monkeypatch) -> None:
@@ -325,10 +357,31 @@ async def test_hr_resend_kills_old_link_before_issuing_new(monkeypatch) -> None:
 
     monkeypatch.setattr(booking_service, "cancel_sessions", fake_cancel_sessions)
     monkeypatch.setattr(booking_flow, "dispatch_booking_invite", fake_dispatch)
+    monkeypatch.setattr(booking_service, "has_any_session", _returning(True))
 
     await booking_flow.resend_booking_link(session, 5)
 
     assert order == ["cancel_sessions", "dispatch"]
+
+
+async def test_hr_resend_refuses_application_never_invited(monkeypatch) -> None:
+    """"Gửi LẠI" chỉ có nghĩa với hồ sơ ĐÃ từng được mời.
+
+    Không có chốt này, nút gửi-lại trở thành một đường mời TẮT: một ca PENDING_REVIEW chưa ai duyệt
+    vẫn nhận thư mời phỏng vấn THẬT, bỏ qua /review, và audit không có dòng `approve` nào — trong khi
+    PRD §11 bắt buộc ghi lại quyết định của HR."""
+    session = FakeSession({(Application, 5): _app(ApplicationStatus.PENDING_REVIEW.value)})
+    monkeypatch.setattr(booking_service, "has_any_session", _returning(False))
+
+    async def explode(*_a, **_kw):  # pragma: no cover — chạm vào là test đỏ
+        raise AssertionError("KHÔNG được gửi thư mời cho hồ sơ chưa từng được duyệt")
+
+    monkeypatch.setattr(booking_flow, "dispatch_booking_invite", explode)
+
+    with pytest.raises(booking_flow.BookingActionError) as exc:
+        await booking_flow.resend_booking_link(session, 5)
+    assert exc.value.status_code == 409
+    assert "chưa từng được mời" in exc.value.message
 
 
 # ── E) Hết khung giờ: cờ RIÊNG, và cờ tự tắt ─────────────────────────────────────────────
@@ -363,6 +416,15 @@ async def test_no_slots_flag_clears_when_slots_return() -> None:
     )
 
     assert sess_row.no_slots_at is None
+
+
+def _async(value):  # noqa: ANN001, ANN202
+    """Bọc một giá trị thành coroutine — để `lambda` thay được hàm async trong monkeypatch."""
+
+    async def run():  # noqa: ANN202
+        return value
+
+    return run()
 
 
 def _returning(value):  # noqa: ANN001, ANN202

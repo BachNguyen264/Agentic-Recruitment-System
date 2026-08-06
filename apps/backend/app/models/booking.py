@@ -24,7 +24,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -113,6 +113,13 @@ class BookingSession(Base, TimestampMixin):
     # đủ), không phải ứng viên chậm — nên nó phải hiện thành nhãn RIÊNG trên dashboard. Xoá về NULL
     # ngay khi có slot trở lại, nếu không nhãn báo động sẽ ở lại vĩnh viễn sau khi HR đã mở thêm lịch.
     no_slots_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Số lần ứng viên đã tự huỷ rồi chọn lại TRÊN LIÊN KẾT NÀY. Đây là chỗ DUY NHẤT trong bảng dùng
+    # bộ đếm thay vì mốc thời gian, và có lý do: nó không trả lời "đã làm chưa" (idempotency) mà
+    # "đã làm bao nhiêu lần" (hạn mức). TTL 72h chặn vòng lặp đặt-huỷ-đặt theo THỜI GIAN nhưng
+    # không chặn theo SỐ EMAIL — mỗi vòng phát hai thư, và Resend là kênh duy nhất của hệ thống.
+    rebook_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0"), default=0
+    )
     # Mốc ứng viên chốt được giờ. KHÔNG dùng làm cờ one-time (link mở lại được — PRD §10b.3);
     # nó chỉ nói "phiên này đã xong việc" để SCH-3 khỏi nhắc.
     booked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

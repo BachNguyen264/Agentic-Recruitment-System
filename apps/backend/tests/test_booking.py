@@ -343,11 +343,27 @@ async def test_ics_provider_create_event_returns_attachment() -> None:
     assert event.ics is not None and b"DTSTART:20260810T010000Z" in event.ics
 
 
-async def test_ics_provider_cancel_is_noop_and_idempotent() -> None:
-    """Không có sự kiện phía máy chủ để xoá — gọi bao nhiêu lần cũng không lỗi (SCH-3 gửi email huỷ)."""
+async def test_ics_provider_cancel_produces_a_cancel_file() -> None:
+    """Huỷ phải sinh tệp `METHOD:CANCEL` — đó là cách DUY NHẤT gỡ buổi PV khỏi lịch ứng viên.
+
+    Ba thứ phải khớp thì ứng dụng lịch mới chịu cập nhật: **cùng UID** với tệp mời, `SEQUENCE` LỚN
+    HƠN, và `STATUS:CANCELLED`. Thiếu bất kỳ cái nào là tệp bị bỏ qua im lặng — ứng viên vẫn thấy
+    buổi phỏng vấn ở một khung giờ đã nhả cho người khác, và có thể tới dự một buổi không tồn tại.
+    """
+    booking = _booking()
     provider = IcsProvider()
-    assert await provider.cancel_event("booking-7@ars.local") is None
-    assert await provider.cancel_event("booking-7@ars.local") is None
+    invite = await provider.create_event(booking, summary="Phỏng vấn — Backend")
+    cancel = await provider.cancel_event(booking, summary="Phỏng vấn — Backend")
+
+    assert cancel.ref == invite.ref  # cùng UID
+    text = cancel.ics.decode("utf-8")
+    assert "METHOD:CANCEL" in text
+    assert "STATUS:CANCELLED" in text and "STATUS:CONFIRMED" not in text
+    assert f"UID:{invite.ref}" in text
+    assert "SEQUENCE:1" in text and "SEQUENCE:0" in invite.ics.decode("utf-8")
+    # Vẫn phải là iCalendar HỢP LỆ: CRLF, có DTSTART/DTEND, đóng đúng khối.
+    assert text.startswith("BEGIN:VCALENDAR\r\n") and text.endswith("END:VCALENDAR\r\n")
+    assert "DTSTART:" in text and "DTEND:" in text
 
 
 def test_calendar_provider_factory(monkeypatch: pytest.MonkeyPatch) -> None:

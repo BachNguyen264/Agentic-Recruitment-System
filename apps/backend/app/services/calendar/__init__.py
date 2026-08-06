@@ -59,8 +59,19 @@ class CalendarProvider(Protocol):
         location: str = "",
     ) -> CalendarEvent: ...
 
-    async def cancel_event(self, ref: str) -> None:
-        """Huỷ sự kiện đã tạo. IDEMPOTENT: `ref` không còn tồn tại → không lỗi."""
+    async def cancel_event(
+        self,
+        booking: InterviewBooking,
+        *,
+        summary: str = "",
+    ) -> CalendarEvent | None:
+        """Huỷ sự kiện đã tạo. IDEMPOTENT: sự kiện không còn tồn tại → không lỗi.
+
+        Trả `CalendarEvent` khi provider cần GỬI thứ gì đó cho ứng viên để lịch của họ tự cập nhật
+        (`IcsProvider`: tệp `METHOD:CANCEL`), hoặc `None` khi provider đã xoá thẳng trên lịch ngoài.
+        Không có bước này thì ứng viên đã "thêm vào lịch" từ thư xác nhận vẫn thấy buổi phỏng vấn ở
+        một khung giờ đã nhả — và có thể tới dự một buổi không còn tồn tại.
+        """
         ...
 
 

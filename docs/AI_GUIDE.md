@@ -23,8 +23,7 @@
   KHÔNG đăng ký/quên/reset/RBAC/OAuth; ứng viên GUEST vĩnh viễn (KHÔNG account). Object storage (06) DONE.
   Deploy (13) ĐÃ LIVE. NOT yet built: analytics, observability, anti-injection, UI redesign, learning loop
   — keep stub + TODO pointing to PRD; don't build outside the current slice.
-- **Booking boundary (SCH-1 + SCH-2, PRD §10b):** luồng đặt lịch CHẠY THẬT; còn **SCH-3** (nhắc trước PV /
-  link hết hạn → `booking_no_response` / hủy / HR dời lịch). Mọi thao tác trên khung giờ đi QUA
+- **Booking boundary (SCH-1 → SCH-3 — feature ĐÃ KHÉP, PRD §10b):** Mọi thao tác trên khung giờ đi QUA
   `booking_service` (đừng truy vấn thẳng `interview_booking`); chỗ-đã-chiếm = `BOOKED` **hoặc** `HELD` còn
   hạn; chốt chặn cuối là **partial unique index** `UNIQUE(start_at) WHERE status='BOOKED'`. Đặt lịch nằm
   NGOÀI graph: **KHÔNG thêm `interrupt()`**. Khả dụng TOÀN CỤC (env `BOOKING_*`), không theo từng JD.
@@ -33,8 +32,19 @@
   trước (chưa gửi được thì chưa mời); *xác nhận lịch* = DB trước, email sau (ứng viên đang nhìn màn xác
   nhận nên họ ĐÃ biết; huỷ lịch vì gửi thư hỏng mới là cái sai lớn). Sau khi `confirm_booking` thành công
   thì **tuyệt đối không ném ra ngoài nữa**. `AWAITING_BOOKING` = thư mời ĐÃ gửi ⇒ xem *Load boundary*.
-  Thêm đường đưa hồ sơ rời khỏi hướng phỏng vấn (vd SCH-3 hạ vì hết hạn) → **nhớ `cancel_sessions`**, nếu
-  không token cũ sẽ lật ngược quyết định đó.
+  Thêm đường đưa hồ sơ rời khỏi hướng phỏng vấn (HR từ chối, HR huỷ lịch, link hết hạn) → **nhớ
+  `cancel_sessions`**, nếu không token cũ sẽ lật ngược quyết định đó.
+  **SCH-3 (vòng đời sau khi có lịch):** ba lưới nhắc/hết hạn nằm ở `booking_lifecycle.sweep_once`, chạy
+  GHÉP vào sweep loop 08c — thêm loại deadline mới thì thêm handler ở đó, **đừng dựng cơ chế nền thứ hai**.
+  Idempotent bằng **cột mốc thời gian** (`reminder_sent_at`/`reminded_at`/`cancelled_at`/`no_slots_at`),
+  không bằng bộ đếm; mốc được ghi + commit **TRƯỚC** khi gửi thư (at-most-once — thà thiếu một lời nhắc
+  còn hơn dội mail mỗi vòng khi Resend trục trặc). **Huỷ KHÔNG được gia hạn TTL**: `mark_session_reopened`
+  xoá `booked_at` để hạn GỐC áp lại — giữ nguyên `booked_at` là biến liên kết thành vĩnh viễn (vì
+  `load_valid_session` bỏ qua hạn khi phiên đã đặt) và mở cửa cho vòng lặp đặt-huỷ-đặt. Huỷ phải **nhả
+  khung giờ TỨC THÌ** (`cancel_booked`), không chờ vòng quét: slot là tài nguyên tranh chấp.
+  **KHÔNG auto-reject ở BẤT KỲ nhánh nào** — hết hạn/huỷ đều về `PENDING_REVIEW`. "Đổi lịch" = HR huỷ +
+  gửi lại link, **không có luồng dời-lịch riêng**; `resend_booking_link` phải `cancel_sessions` TRƯỚC, nếu
+  không `dispatch_booking_invite` dùng lại đúng phiên cũ và "gửi lại" chẳng đổi được gì.
 - **Storage boundary (06):** nghiệp vụ TUYỆT ĐỐI không mở path CV — chỉ qua `services/storage`
   (`get_storage().save/get/delete`). Thêm chỗ đọc/ghi CV mới → đi qua seam, nếu không sẽ vỡ khi
   `STORAGE_BACKEND=r2`. `cv_file_ref` là KEY (opaque), KHÔNG trả ra client (dùng `has_cv` + endpoint tải).
@@ -55,7 +65,8 @@
   một lượt LLM (T≈34s) là cạn pool ở ~28 hồ sơ đồng thời. Chỉ `IN_FLIGHT_STATUSES` (SUBMITTED/PARSING/
   RANKING — hằng số ở `models/application.py`) được phép ghi đè: đó là các trạng thái CHƯA quyết và CHƯA
   email gì. Handler lỗi VÀ sweep đối soát PHẢI dùng CHUNG hằng số này — hai lưới lệch định nghĩa chính là
-  cách sinh ra lớp lỗi cả hai đang chặn. Sweep loop 08c nay chạy HAI lưới (screener timeout + hồ sơ kẹt).
+  cách sinh ra lớp lỗi cả hai đang chặn. Sweep loop 08c nay chạy BA lưới (screener timeout + hồ sơ kẹt +
+  vòng đời lịch SCH-3) — thêm loại deadline nữa thì thêm handler vào đó, đừng dựng cơ chế nền mới.
   **Thêm TRẠNG THÁI MỚI vào vòng đời → dừng lại và hỏi: "tới trạng thái này, ứng viên ĐÃ nhận email/link
   chưa?"** Nếu RỒI thì nó KHÔNG được vào `IN_FLIGHT_STATUSES` và KHÔNG được vào tầm quét của sweep — cứ
   thêm vào là tái sinh đúng lỗi mất-bài-dự-tuyển đã vá (xem gotcha "Đóng session KHÔNG vô hại"). Áp dụng
@@ -210,3 +221,17 @@
   test thứ hai nổ `Future attached to a different loop` (test đầu vẫn xanh, nên trông như lỗi ngẫu nhiên).
   Dùng engine RIÊNG mỗi test + `NullPool` (xem `tests/test_booking_db.py`).
 
+- **Xoá `booked_at` là thứ CHẶN vòng lặp đặt-huỷ-đặt, không phải dọn dẹp cho đẹp (SCH-3).**
+  `load_valid_session` cố ý BỎ QUA hạn 72h khi `booked_at` có giá trị (để người đã đặt xong còn mở lại link
+  xem/huỷ). Nếu lúc huỷ mà giữ nguyên `booked_at`, liên kết sống VĨNH VIỄN — đúng cái "gia hạn TTL" mà PRD
+  §10b.6 cấm, và triệu chứng (`expires_at` vẫn y nguyên trong DB) trông như KHÔNG có gì sai. Chỉ lộ ra khi
+  thử huỷ-đặt-huỷ nhiều vòng.
+- **Truy vấn "phiên đã đặt xong" KHÔNG được lọc `expires_at` (SCH-3).** Buổi phỏng vấn thường nằm SAU hạn
+  72h của liên kết, nên `booked_session` mà dùng lại điều kiện của `active_session` thì thư nhắc trước buổi
+  PV mất nút huỷ đúng lúc ứng viên cần nó nhất. Hai truy vấn trông giống nhau nhưng trả lời hai câu hỏi
+  khác nhau — đừng gộp.
+- **Hai chốt chặn cho cùng một bất biến thì phải test RIÊNG từng cái (SCH-3).** Lưới hết hạn lọc cả
+  `booked_at IS NULL` lẫn `status == AWAITING_BOOKING`; test "người vừa đặt xong không bị hạ" vẫn XANH khi
+  gỡ hẳn `booked_at` vì vế trạng thái che mất. Muốn biết chốt chặn còn sống thì phải dựng đúng trạng thái
+  mâu thuẫn (phiên đã đặt + hồ sơ AWAITING_BOOKING) rồi đo — nếu không, một guard chết từ lâu mà cả bộ test
+  vẫn xanh.

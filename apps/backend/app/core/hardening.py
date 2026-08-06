@@ -5,6 +5,8 @@ HR. Hai lớp phòng thủ ĐƠN GIẢN, in-process (KHÔNG Redis — CLAUDE.md:
 
   1) `BodySizeLimitMiddleware` — chặn body quá lớn TRƯỚC khi handler đọc vào RAM.
   2) `RateLimitMiddleware` — cửa sổ trượt theo IP cho login + ghi công khai + health kiểm sâu.
+  3) `OriginCheckMiddleware` (SCH-3) — chặn CSRF: cookie phiên là `SameSite=None` nên trình duyệt
+     gửi kèm nó cả từ trang lạ, và một POST không thân KHÔNG bị CORS preflight chặn.
 
 GIỚI HẠN đã biết: trạng thái nằm trong RAM của MỘT tiến trình → chạy nhiều instance thì mỗi instance
 có quota riêng. Đủ cho đồ án (Render 1 instance); muốn chính xác toàn cục thì chuyển sang Redis.
@@ -12,6 +14,7 @@ có quota riêng. Đủ cho đồ án (Render 1 instance); muốn chính xác to
 
 from __future__ import annotations
 
+import re
 from collections import deque
 
 from starlette.datastructures import Headers
@@ -24,6 +27,10 @@ logger = get_logger("app.hardening")
 
 # Method có body — chỉ những method này bị kiểm kích thước và tính vào quota ghi công khai.
 _BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
+
+# Method ĐỔI TRẠNG THÁI — diện kiểm nguồn (CSRF). Rộng hơn `_BODY_METHODS` vì DELETE cũng đổi
+# trạng thái dù không có body.
+_STATE_CHANGING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 # Đường công khai có tác dụng phụ (tạo hồ sơ / nộp câu trả lời) — đây mới là thứ cần siết.
 _PUBLIC_WRITE_PREFIXES = ("/api/public/applications", "/api/public/screening")
@@ -302,3 +309,54 @@ async def _json(
 
 async def _noop_receive() -> Message:
     return {"type": "http.disconnect"}
+
+
+class OriginCheckMiddleware:
+    """Chặn CSRF cho MỌI request đổi trạng thái (SCH-3, sau adversarial review).
+
+    **Vì sao cần.** Phiên HR là cookie httpOnly, và deploy cross-domain (Vercel ↔ Render) buộc nó
+    phải `SameSite=None` — nghĩa là trình duyệt gửi kèm cookie đó cả khi request xuất phát từ một
+    trang lạ. CORS KHÔNG cứu: một `POST` không có body là "simple request", không hề preflight, nên
+    Starlette chạy xong handler rồi mới quyết định có trả header CORS hay không. **Tác dụng phụ đã
+    xảy ra** — chỉ có phản hồi là bị giấu. Reviewer tái hiện được: `Origin: https://evil.example` →
+    `200`, không header CORS, và hàng trong DB đã đổi.
+
+    Trước SCH-3, mọi mutation HR đều nhận thân JSON nên bị ép preflight và an toàn một cách TÌNH CỜ.
+    Lát này thêm hai endpoint KHÔNG thân (`/booking/cancel`, `/booking/resend`) — mỗi cái gửi email
+    thật cho ứng viên và huỷ một khung giờ đã chốt — nên sự tình cờ đó hết hiệu lực. Kiểm ở
+    middleware thay vì ở từng route để endpoint không-thân TIẾP THEO an toàn theo mặc định.
+
+    **Vì sao `Origin` là thứ đáng tin.** Trình duyệt tự đặt header này và trang web KHÔNG ghi đè
+    được. Thiếu `Origin` = client không phải trình duyệt (curl, SDK, script tải) — không có cookie
+    ambient nào để lợi dụng, nên CHO QUA: chặn ở đây sẽ giết luôn script vận hành và load test mà
+    chẳng chặn được cuộc tấn công nào.
+
+    Danh sách cho phép DÙNG CHUNG với CORS (`CORS_ORIGINS`), nên nếu đăng nhập đang chạy được thì
+    kiểm này không thể chặn nhầm frontend thật.
+    """
+
+    def __init__(self, app: ASGIApp, *, allowed: frozenset[str], allow_regex: str = "") -> None:
+        self.app = app
+        self._allowed = allowed
+        self._re = re.compile(allow_regex) if allow_regex else None
+
+    def _ok(self, origin: str | None) -> bool:
+        if origin is None:  # không phải trình duyệt → không có cookie ambient để lợi dụng
+            return True
+        if origin in self._allowed:
+            return True
+        return bool(self._re and self._re.fullmatch(origin))
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("method") not in _STATE_CHANGING:
+            await self.app(scope, receive, send)
+            return
+        origin = Headers(scope=scope).get("origin")
+        if not self._ok(origin):
+            logger.warning(
+                "CSRF: chặn %s %s từ origin=%r",
+                scope.get("method"), scope.get("path"), origin,
+            )
+            await _json(scope, send, 403, "Yêu cầu bị từ chối (nguồn không hợp lệ).")
+            return
+        await self.app(scope, receive, send)

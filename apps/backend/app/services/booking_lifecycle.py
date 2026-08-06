@@ -38,6 +38,10 @@ from app.services.booking_config import BookingConfig, load_booking_config
 logger = get_logger("app.services.booking_lifecycle")
 
 _NO_RESPONSE_REASON = "Ứng viên không chọn khung giờ phỏng vấn trong thời hạn của liên kết."
+_NO_SLOTS_REASON = (
+    "Ứng viên đã mở liên kết nhưng KHÔNG còn khung giờ trống, và liên kết đã hết hạn — "
+    "lỗi ở lịch của công ty, không phải ứng viên. Cần mở thêm lịch rồi liên hệ lại."
+)
 
 
 def _now() -> datetime:
@@ -115,8 +119,31 @@ async def _due_link_reminder_ids(
     return list((await session.execute(stmt)).scalars().all())
 
 
+def _has_live_booking(application_id) -> object:  # noqa: ANN001
+    """Điều kiện SQL: hồ sơ này đang có một khung giờ `BOOKED`.
+
+    Tách ra vì dùng ở HAI chỗ (truy vấn quét + re-check trong khoá) và hai chỗ đó BẮT BUỘC hỏi
+    cùng một câu — lệch nhau là tái sinh đúng lớp lỗi mà cả hai đang chặn.
+    """
+    return (
+        select(InterviewBooking.id)
+        .where(
+            InterviewBooking.application_id == application_id,
+            InterviewBooking.status == BookingStatus.BOOKED.value,
+        )
+        .exists()
+    )
+
+
 async def _due_expiry_ids(session: AsyncSession, now: datetime) -> list[int]:
-    """id phiên HẾT HẠN mà chưa đặt được giờ: quá `expires_at`, chưa đặt, chưa huỷ, app còn chờ."""
+    """id phiên HẾT HẠN mà chưa đặt được giờ: quá `expires_at`, chưa đặt, chưa huỷ, app còn chờ.
+
+    Chốt chặn CUỐI là `~_has_live_booking`: ba điều kiện kia đều là CỜ (`booked_at`, trạng thái hồ
+    sơ) — thứ có thể lệch khỏi sự thật nếu một đường ghi nào đó hỏng giữa chừng. Bảng
+    `interview_booking` mới là sự thật. Thiếu chốt này, một hồ sơ đang cầm lịch đã chốt (có `.ics`
+    trong tay) bị báo cho HR là "không phản hồi", và khung giờ `BOOKED` đó không đường nào nhả nữa
+    nên biến mất khỏi lịch công ty vĩnh viễn.
+    """
     stmt = (
         select(BookingSession.id)
         .join(Application, Application.id == BookingSession.application_id)
@@ -125,6 +152,7 @@ async def _due_expiry_ids(session: AsyncSession, now: datetime) -> list[int]:
             BookingSession.cancelled_at.is_(None),
             BookingSession.expires_at <= now,
             Application.status == ApplicationStatus.AWAITING_BOOKING.value,
+            ~_has_live_booking(BookingSession.application_id),
         )
     )
     return list((await session.execute(stmt)).scalars().all())
@@ -209,27 +237,45 @@ async def handle_booking_timeout(session: AsyncSession, sess: BookingSession) ->
     app_row = await session.get(Application, sess.application_id)
     if app_row is None:
         return
+    # Re-check TRONG khoá, hỏi ĐÚNG câu mà truy vấn quét đã hỏi: giữa lúc quét và lúc khoá, ứng viên
+    # có thể vừa chốt xong giờ. Hạ hồ sơ của người vừa giành được khung giờ là lấy mất thứ họ vừa
+    # giành — và không đường nào nhả lại hàng BOOKED đó.
+    if (await session.execute(select(_has_live_booking(sess.application_id)))).scalar():
+        logger.info(
+            "sweep-booking: app=%s có lịch đã chốt — BỎ QUA lượt hạ vì hết hạn", sess.application_id
+        )
+        return
 
     released = await booking_service.release_holds(session, sess.application_id)
-    sess.cancelled_at = _now()
+    # Huỷ MỌI liên kết còn sống, không chỉ phiên đang xử: hồ sơ vừa rời hướng phỏng vấn, mà một
+    # phiên mồ côi (do hai lượt mời chồng nhau) còn sống là còn đường để token cũ lật ngược quyết
+    # định này — đúng lỗi #6 của SCH-2, lần này ở phía hết hạn.
+    await booking_service.cancel_sessions(session, sess.application_id)
+
+    # Quy TRÁCH NHIỆM cho đúng chỗ. Ứng viên đã mở link mà lịch trống rỗng thì họ KHÔNG có gì để
+    # bấm — dán nhãn "không phản hồi" lên họ chính là cái đổ-lỗi-nhầm-người mà FR-BOOK-6 sinh ra để
+    # chặn, và nó xoá luôn nhãn "hết khung giờ" (vì `no_slot_application_ids` lọc `cancelled_at`).
+    blocked_by_us = sess.no_slots_at is not None
+    flag = "booking_no_slots" if blocked_by_us else "booking_no_response"
+    reason = _NO_SLOTS_REASON if blocked_by_us else _NO_RESPONSE_REASON
     app_row.status = ApplicationStatus.PENDING_REVIEW.value
-    app_row.escalation_reason = _NO_RESPONSE_REASON
+    app_row.escalation_reason = reason
+    # Gán LẠI cả danh sách: JSONB mutate tại chỗ không được SQLAlchemy đánh dấu bẩn nên UPDATE sẽ
+    # bỏ qua cột này (cùng bẫy đã gặp với parsed_data).
     flags = list(app_row.uncertainty_flags or [])
-    if "booking_no_response" not in flags:
-        # Gán LẠI cả danh sách: JSONB mutate tại chỗ không được SQLAlchemy đánh dấu bẩn nên UPDATE sẽ
-        # bỏ qua cột này (cùng bẫy đã gặp với parsed_data).
-        app_row.uncertainty_flags = [*flags, "booking_no_response"]
+    if flag not in flags:
+        app_row.uncertainty_flags = [*flags, flag]
 
     await audit_service.record(
         session, application_id=sess.application_id, node="scheduler",
-        action="booking_no_response", uncertainty_flags=["booking_no_response"],
-        escalation_reason=_NO_RESPONSE_REASON,
-        detail={"expires_at": sess.expires_at.isoformat(), "released_holds": released},
+        action=flag, uncertainty_flags=[flag], escalation_reason=reason,
+        detail={"expires_at": sess.expires_at.isoformat(), "released_holds": released,
+                "blocked_by_no_slots": blocked_by_us},
         commit=True,
     )
     logger.warning(
-        "sweep-booking: app=%s hết hạn link đặt lịch → PENDING_REVIEW[booking_no_response] "
-        "(nhả %d chỗ giữ)", sess.application_id, released,
+        "sweep-booking: app=%s hết hạn link đặt lịch → PENDING_REVIEW[%s] (nhả %d chỗ giữ)",
+        sess.application_id, flag, released,
     )
 
 

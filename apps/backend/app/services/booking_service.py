@@ -56,7 +56,9 @@ __all__ = [
     "confirm_booking",
     "create_booking_session",
     "generate_slots",
+    "has_any_session",
     "load_valid_session",
+    "lock_application",
     "mark_session_booked",
     "mark_session_reopened",
     "release_holds",
@@ -107,6 +109,20 @@ class TokenExpired(BookingError):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def lock_application(session: AsyncSession, application_id: int) -> None:
+    """Khoá tư vấn theo hồ sơ — tuần tự hoá mọi cặp "đọc rồi mới ghi" của đặt lịch. KHÔNG commit.
+
+    Rẻ, tự nhả khi transaction kết thúc, và KHÔNG chặn hồ sơ khác. Dùng ở `generate_slots` (giữ chỗ)
+    và `dispatch_booking_invite` (phát liên kết) — cả hai đều từng đo được TOCTOU thật khi hai
+    request chồng nhau. Vì khoá gắn với TRANSACTION, caller phải commit/rollback TRƯỚC khi đi làm
+    I/O chậm (email), nếu không là giữ luôn cả connection.
+    """
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:ns, :app_id)"),
+        {"ns": _ADVISORY_LOCK_NS, "app_id": application_id},
+    )
 
 
 def _as_utc(value: datetime, label: str) -> datetime:
@@ -292,13 +308,9 @@ async def generate_slots(
     # Hai lượt GET chồng nhau trên CÙNG token đều thấy "chưa có hold nào" rồi cùng chèn: 2 lượt →
     # 10 hàng, 8 lượt → 40 hàng (adversarial review đo trên Postgres thật). Bất biến "bấm lại trả
     # slot cũ" chỉ đúng khi tuần tự — mà ứng viên bấm F5 hai lần hoặc trình duyệt gửi lại request
-    # là đủ để phá. Khoá tư vấn theo application_id: rẻ, tự nhả khi transaction kết thúc, và không
-    # chặn các application khác. (Hai application KHÁC NHAU vẫn được cùng giữ một mốc giờ — đó là
-    # thiết kế "HELD = khuyến nghị"; partial unique index xử lý ở bước chốt.)
-    await session.execute(
-        text("SELECT pg_advisory_xact_lock(:ns, :app_id)"),
-        {"ns": _ADVISORY_LOCK_NS, "app_id": application_id},
-    )
+    # là đủ để phá. (Hai application KHÁC NHAU vẫn được cùng giữ một mốc giờ — đó là thiết kế
+    # "HELD = khuyến nghị"; partial unique index xử lý ở bước chốt.)
+    await lock_application(session, application_id)
 
     # ── 1) Đã chốt lịch rồi thì KHÔNG phát thêm slot ─────────────────────────────────────
     booked = (
@@ -640,6 +652,18 @@ async def no_slot_application_ids(session: AsyncSession) -> set[int]:
         BookingSession.booked_at.is_(None),
     )
     return set((await session.execute(stmt)).scalars().all())
+
+
+async def has_any_session(session: AsyncSession, application_id: int) -> bool:
+    """Hồ sơ này đã TỪNG được phát liên kết đặt lịch chưa (kể cả liên kết đã huỷ/hết hạn)?
+
+    Dùng để phân biệt "gửi LẠI" với "mời lần đầu" (SCH-3 §3.4). Cố ý KHÔNG lọc `cancelled_at`: câu
+    hỏi là "đã từng", không phải "đang còn".
+    """
+    stmt = select(BookingSession.id).where(
+        BookingSession.application_id == application_id
+    ).limit(1)
+    return (await session.execute(stmt)).scalar_one_or_none() is not None
 
 
 async def booked_session(

@@ -62,6 +62,9 @@ _RESENDABLE_STATUSES = frozenset(
     {ApplicationStatus.PENDING_REVIEW.value, ApplicationStatus.AWAITING_BOOKING.value}
 )
 
+# Cờ do vòng đời đặt lịch sinh ra — gỡ hết khi hồ sơ được mời LẠI (xem `dispatch_booking_invite`).
+_BOOKING_FLAGS = frozenset({"booking_no_response", "booking_cancelled", "booking_no_slots"})
+
 
 class BookingActionError(Exception):
     """Thao tác lịch của HR không hợp lệ (route dịch thẳng ra `status_code`).
@@ -128,16 +131,33 @@ async def dispatch_booking_invite(
 
     `audit_node`: "gate" (tự động) hoặc "human_review" (HR duyệt) — để đọc audit biết đường nào tới.
     """
+    # KHOÁ theo application trước khi đọc: "tra xem đã có link chưa rồi mới tạo" là TOCTOU y hệt cái
+    # đã vá ở `generate_slots`, và adversarial review đo được thật — hai lượt duyệt chồng nhau tạo
+    # 2 phiên + gửi 2 thư với HAI liên kết khác nhau. Khoá tư vấn tự nhả khi transaction kết thúc
+    # (ngay ở commit bên dưới), nên nó KHÔNG bị giữ qua lượt gửi mail.
+    await booking_service.lock_application(session, application.id)
+
     # Đã có liên kết còn sống thì DÙNG LẠI, đừng phát token thứ hai: HR bấm duyệt ở hai tab (hàng
     # chờ tự làm mới mỗi 5s) hoặc thử lại một request chậm là ra hai email với hai link khác nhau —
     # ứng viên không biết cái nào thật, và ta có một token mồ côi không ai theo dõi.
     session_row = await booking_service.active_session(session, application.id)
-    if session_row is None:
+    if session_row is not None:
+        # Đọc LẠI trạng thái dưới khoá: `application` được nạp trước khi vào đây nên nó giữ giá trị
+        # cũ. Đã có liên kết sống VÀ hồ sơ đã ở AWAITING_BOOKING nghĩa là lượt trước đã gửi xong —
+        # gửi thêm chỉ là một email trùng vào hộp thư ứng viên.
+        await session.refresh(application, ["status"])
+        if application.status == ApplicationStatus.AWAITING_BOOKING.value:
+            await session.commit()  # nhả khoá + connection
+            logger.info("booking_flow: app=%s đã mời rồi — bỏ qua lượt gửi trùng", application.id)
+            return True
+    else:
         session_row = booking_service.create_booking_session(session, application.id)
-        # COMMIT trước khi thư bay đi. `add()` mới chỉ nằm trong bộ nhớ; nếu gửi xong mới ghi mà
-        # tiến trình chết ở giữa (BackgroundTasks KHÔNG bền) thì ứng viên cầm một liên kết trỏ vào
-        # token không tồn tại → 404 ngay sau khi vừa được mời phỏng vấn.
-        await session.commit()
+    # COMMIT trước khi thư bay đi, ở CẢ HAI nhánh. Nhánh tạo mới: `add()` mới chỉ nằm trong bộ nhớ,
+    # tiến trình chết ở giữa (BackgroundTasks KHÔNG bền) là ứng viên cầm liên kết trỏ vào token
+    # không tồn tại → 404 ngay sau khi vừa được mời. Nhánh dùng lại: transaction ĐỌC vẫn đang mở và
+    # đang giữ một connection của pool — giữ nó qua lượt gọi Resend là vi phạm Load boundary (đo
+    # được 1.69s). Commit trần, KHÔNG `refresh()` (refresh mở lại transaction — xem AI_GUIDE).
+    await session.commit()
     url = _booking_url(session_row.token)
 
     result = await scheduler.notify_decision(
@@ -154,12 +174,19 @@ async def dispatch_booking_invite(
     if result.get("email_sent"):
         application.status = ApplicationStatus.AWAITING_BOOKING.value
         application.escalation_reason = None
+        # Gỡ cờ của LƯỢT MỜI TRƯỚC: hồ sơ vừa hết hạn/huỷ rồi được mời lại thì cờ cũ không còn đúng
+        # nữa. Để nguyên thì một ứng viên đã chốt lịch vẫn mang nhãn "không phản hồi" vĩnh viễn, và
+        # `handle_booking_timeout` (khử trùng theo tên cờ) sẽ im lặng bỏ qua lần hết hạn THẬT tiếp theo.
+        application.uncertainty_flags = [
+            f for f in (application.uncertainty_flags or []) if f not in _BOOKING_FLAGS
+        ]
         await audit_service.record(
             session, application_id=application.id, node=audit_node, action="booking_invite_sent",
             detail={"final_status": application.status,
                     "link_expires_at": session_row.expires_at.isoformat()},
             commit=True,
         )
+        await session.commit()  # đóng transaction do refresh() của audit mở lại (gotcha refresh())
         logger.info("booking_flow: app=%s đã gửi thư mời + link đặt lịch", application.id)
         return True
 
@@ -170,6 +197,7 @@ async def dispatch_booking_invite(
         session, application_id=application.id, node=audit_node, action="booking_invite_failed",
         escalation_reason="invite_email_failed", commit=True,
     )
+    await session.commit()
     logger.warning("booking_flow: app=%s gửi thư mời THẤT BẠI → PENDING_REVIEW", application.id)
     return False
 
@@ -287,7 +315,14 @@ async def confirm_and_notify(session: AsyncSession, token: str, booking_id: int)
             "Liên kết này không còn hiệu lực. Bộ phận Tuyển dụng sẽ liên hệ với bạn."
         )
 
-    already_settled = session_row.booked_at is not None
+    # "Đã xong rồi" phải đúng ở CẢ HAI nguồn. Chỉ hỏi `booked_at` của PHIÊN là hỏng khi ứng viên cầm
+    # hai liên kết (đặt bằng link B, huỷ bằng link A): phiên B vẫn mang `booked_at`, nên lượt đặt
+    # THẬT tiếp theo rơi vào nhánh "bỏ qua" — không ai ghi `INTERVIEW_SCHEDULED`, không thư nào được
+    # gửi, mà API vẫn trả `email_sent=True`. Kiểm thêm trạng thái hồ sơ thì ca lệch tự chữa lành.
+    already_settled = (
+        session_row.booked_at is not None
+        and app_row.status == ApplicationStatus.INTERVIEW_SCHEDULED.value
+    )
     booking = await booking_service.confirm_booking(session, application_id, booking_id)
 
     # Giá trị nguyên thuỷ, lấy TRƯỚC mọi thao tác có thể hỏng. Nếu commit cuối thất bại, SQLAlchemy
@@ -359,7 +394,25 @@ _CANDIDATE_CANCEL_FLAG = "Ứng viên đã huỷ lịch và đang tự chọn l�
 _CANDIDATE_CANCEL_EXPIRED_FLAG = (
     "Ứng viên đã huỷ lịch phỏng vấn nhưng liên kết đặt lịch đã hết hạn — cần HR sắp xếp lại."
 )
+_CANDIDATE_CANCEL_LIMIT_FLAG = (
+    "Ứng viên đã đổi lịch quá số lần cho phép — cần HR liên hệ trực tiếp để chốt giờ."
+)
 _HR_CANCEL_FLAG = "HR đã huỷ lịch phỏng vấn — cần sắp xếp lại với ứng viên."
+
+# Số lần ứng viên được TỰ đổi ý (huỷ rồi chọn lại) trên MỘT liên kết. Đủ rộng cho người đổi ý thật,
+# đủ hẹp để vòng đặt-huỷ-đặt không đốt hết quota email của cả hệ thống. Vượt hạn mức KHÔNG phải là
+# từ chối — hồ sơ về `PENDING_REVIEW` để HR gọi điện chốt giờ.
+_MAX_REBOOKS = 3
+
+
+def _with_flag(flags: list | None, flag: str) -> list:
+    """Thêm cờ vào `uncertainty_flags`, trả về DANH SÁCH MỚI.
+
+    Gán lại cả danh sách chứ không `append`: JSONB sửa tại chỗ không được SQLAlchemy đánh dấu bẩn
+    nên câu UPDATE lặng lẽ bỏ qua cột này — cờ "được ghi" mà không bao giờ tới DB.
+    """
+    current = list(flags or [])
+    return current if flag in current else [*current, flag]
 
 
 async def cancel_by_candidate(session: AsyncSession, token: str) -> dict:
@@ -398,29 +451,49 @@ async def cancel_by_candidate(session: AsyncSession, token: str) -> dict:
         await session.rollback()
         return {"cancelled": False, "job_title": job_title, "can_rebook": False, "email_sent": False}
 
-    start_at = booking.start_at  # nguyên thuỷ, lấy TRƯỚC commit
-    can_rebook = _as_utc(session_row.expires_at) > _now()
+    # Nguyên thuỷ, lấy TRƯỚC commit (bẫy expire — lỗi #3 SCH-2).
+    start_at, end_at, booked_id = booking.start_at, booking.end_at, booking.id
+    # Hạn CŨ còn sống VÀ chưa vượt hạn mức đổi ý. Hạn mức là cần thiết dù TTL đã chặn theo thời
+    # gian: mỗi vòng đặt-huỷ phát HAI email (xác nhận + báo huỷ), nên trong 72h một người có thể
+    # đốt hàng trăm lượt gửi — mà Resend là kênh DUY NHẤT của cả hệ thống, hết quota là thư mời,
+    # thư từ chối và magic-link sàng lọc của MỌI ứng viên khác cùng câm.
+    cycles = session_row.rebook_count or 0
+    can_rebook = _as_utc(session_row.expires_at) > _now() and cycles < _MAX_REBOOKS
 
     if can_rebook:
+        session_row.rebook_count = cycles + 1
         booking_service.mark_session_reopened(session_row)
         app_row.status = ApplicationStatus.AWAITING_BOOKING.value
         app_row.escalation_reason = _CANDIDATE_CANCEL_FLAG
     else:
         await booking_service.cancel_sessions(session, application_id)
         app_row.status = ApplicationStatus.PENDING_REVIEW.value
-        app_row.escalation_reason = _CANDIDATE_CANCEL_EXPIRED_FLAG
+        app_row.escalation_reason = (
+            _CANDIDATE_CANCEL_LIMIT_FLAG if cycles >= _MAX_REBOOKS else _CANDIDATE_CANCEL_EXPIRED_FLAG
+        )
+        # Cờ để HR THẤY trên danh sách (PRD §10b.6). Thiếu nó, `review.recommendation` nhìn thấy
+        # `flags=[]` + điểm đạt và gợi ý "mời" cho đúng người vừa huỷ lịch.
+        app_row.uncertainty_flags = _with_flag(app_row.uncertainty_flags, "booking_cancelled")
 
     await audit_service.record(
         session, application_id=application_id, node="scheduler", action="booking_cancelled",
         escalation_reason="booking_cancelled",
         detail={"by": "candidate", "start_at": start_at.isoformat(),
-                "final_status": app_row.status, "can_rebook": can_rebook},
+                "final_status": app_row.status, "can_rebook": can_rebook, "cycles": cycles},
         commit=True,
     )
+    # `record(commit=True)` kết thúc bằng `refresh()` — nó AUTOBEGIN một transaction mới và giữ lại
+    # connection (gotcha refresh(), AI_GUIDE). Đóng nó TRƯỚC khi gọi Resend: đo được 1.59s giữ
+    # connection xuyên lượt gửi mail ở đúng chỗ này (Load boundary cấm).
+    # `commit()` chứ KHÔNG `rollback()`: rollback expire MỌI object bất kể `expire_on_commit=False`,
+    # nên caller đọc `app_row.status` ngay sau đó sẽ nạp lười — vừa mở lại đúng transaction ta vừa
+    # đóng, vừa nổ `MissingGreenlet` nếu đọc từ ngữ cảnh đồng bộ. (Test hồi quy bắt được thật.)
+    await session.commit()
 
     result = await scheduler.notify_booking_cancelled(
         session, application_id=application_id, applicant_email=applicant_email,
         candidate_name=candidate_name, job_title=job_title, start_at=start_at,
+        end_at=end_at, booking_id=booked_id,
         rebook_url=_booking_url(token) if can_rebook else None,
     )
     return {
@@ -454,7 +527,7 @@ async def cancel_by_hr(session: AsyncSession, application_id: int) -> Applicatio
     if booking is None:
         await session.rollback()
         raise BookingActionError("Không tìm thấy lịch phỏng vấn đang chốt cho hồ sơ này.", status_code=409)
-    start_at = booking.start_at
+    start_at, end_at, booked_id = booking.start_at, booking.end_at, booking.id
 
     await booking_service.cancel_sessions(session, application_id)
     app_row.status = ApplicationStatus.PENDING_REVIEW.value
@@ -465,10 +538,12 @@ async def cancel_by_hr(session: AsyncSession, application_id: int) -> Applicatio
         detail={"by": "hr", "start_at": start_at.isoformat(), "final_status": app_row.status},
         commit=True,
     )
+    await session.commit()  # đóng transaction do refresh() mở lại — xem ghi chú ở cancel_by_candidate
 
     await scheduler.notify_booking_cancelled(
         session, application_id=application_id, applicant_email=applicant_email,
-        candidate_name=candidate_name, job_title=job_title, start_at=start_at, by_hr=True,
+        candidate_name=candidate_name, job_title=job_title, start_at=start_at,
+        end_at=end_at, booking_id=booked_id, by_hr=True,
     )
     return app_row
 
@@ -490,6 +565,14 @@ async def resend_booking_link(session: AsyncSession, application_id: int) -> App
         raise BookingActionError(
             f"Chỉ gửi lại link khi hồ sơ đang chờ HR hoặc chờ ứng viên chọn lịch (hiện: {app_row.status}). "
             "Nếu đã có lịch, hãy Huỷ lịch trước.",
+            status_code=409,
+        )
+    # "Gửi LẠI" chỉ có nghĩa với hồ sơ ĐÃ từng được mời. Không có chốt này thì nút gửi-lại trở thành
+    # một đường mời TẮT: một ca `PENDING_REVIEW` chưa ai duyệt vẫn nhận được thư mời phỏng vấn thật,
+    # bỏ qua `/review`, và audit KHÔNG có dòng `approve` nào (PRD §11 bắt buộc ghi quyết định HR).
+    if not await booking_service.has_any_session(session, application_id):
+        raise BookingActionError(
+            "Hồ sơ này chưa từng được mời phỏng vấn — hãy Duyệt ở trang Chờ HR trước.",
             status_code=409,
         )
 
