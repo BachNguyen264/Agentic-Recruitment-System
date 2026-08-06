@@ -1,9 +1,16 @@
-"""scheduler node — STUB (PRD §7.4).
+"""scheduler — điểm thực thi DUY NHẤT mọi email tới ứng viên (PRD §7.4).
 
-Thật: điểm thực thi DUY NHẤT mọi email tới ứng viên. Mời -> gửi thư mời + tạo Google Calendar +
-nhắc lịch. Từ chối -> gửi thư từ chối. (CLAUDE.md: KHÔNG gửi email rải rác ở node khác.)
+Mời/từ chối, thư sàng lọc + nhắc, và bốn loại thư vòng đời lịch (xác nhận, nhắc trước buổi PV,
+nhắc chọn lịch, báo huỷ) — tất cả gửi THẬT qua Resend với template CỐ ĐỊNH. Tệp `.ics` đi qua seam
+`CalendarProvider`. (CLAUDE.md: KHÔNG gửi email rải rác ở node khác.)
 
-Scaffold: pass-through, KHÔNG gửi email/tạo lịch thật.
+`scheduler_node` (cuối file) là phần chạy TRONG graph và chỉ là một marker trạng thái: node không
+có DB session nên không gửi được gì — mọi lượt gửi đều do các hàm `notify_*` ở đây thực hiện, gọi
+từ background task / `booking_flow` / sweep SAU khi graph chạy.
+
+**KHÔNG hàm `notify_*` nào được phép ném.** Mọi caller đều đứng SAU một quyết định đã ghi vào DB
+(đã REJECTED, lịch đã chốt, mốc đã nhắc), nên ném ra ngoài chỉ tạo trạng thái nửa vời. Lỗi gửi →
+log + audit ``email_failed`` + trả ``email_sent=False``.
 """
 
 from __future__ import annotations
@@ -33,6 +40,28 @@ from app.services.email_templates import (
 logger = get_logger("app.agents.scheduler")
 
 Attachments = list[tuple[str, bytes, str]]
+
+_ICS_MIME = "text/calendar; charset=utf-8"
+
+
+async def _interview_ics(
+    booking: InterviewBooking, *, job_title: str, application_id: int, mode: str
+) -> tuple[Attachments | None, str | None]:
+    """Sinh tệp `.ics` MỜI-lịch cho một buổi phỏng vấn → (đính kèm, `calendar_ref`).
+
+    Sinh hỏng KHÔNG được chặn thư — trả `(None, None)` + log: buổi phỏng vấn vẫn diễn ra dù ứng
+    viên có thêm được vào ứng dụng lịch hay không.
+    """
+    try:
+        event = await get_calendar_provider().create_event(
+            booking,
+            summary=f"Phỏng vấn — {job_title}",
+            description=f"Buổi phỏng vấn vị trí {job_title}.",
+        )
+    except Exception:  # noqa: BLE001 — thiếu tệp lịch còn hơn thiếu thư
+        logger.warning("[scheduler] app=%s: không sinh được .ics cho thư %s", application_id, mode)
+        return None, None
+    return ([("phong-van.ics", event.ics, _ICS_MIME)] if event.ics else None), event.ref
 
 
 async def _dispatch(
@@ -108,25 +137,10 @@ async def notify_decision(
     else:
         subject, html = rejection_email(candidate_name, job_title)
 
-    try:
-        await email_service.send_email(to=applicant_email, subject=subject, html=html)
-    except Exception as exc:  # noqa: BLE001 — nuốt có kiểm soát: email lỗi KHÔNG làm sập luồng
-        logger.warning(
-            "[scheduler] app=%s: GỬI EMAIL %s THẤT BẠI tới %s: %s",
-            application_id, mode, applicant_email, exc,
-        )
-        await audit_service.record(
-            session, application_id=application_id, node="scheduler", action="email_failed",
-            detail={"mode": mode, "to": applicant_email, "error": str(exc)}, commit=True,
-        )
-        return {"mode": mode, "email_sent": False, "error": str(exc)}
-
-    logger.info("[scheduler] app=%s: đã gửi email %s tới %s", application_id, mode, applicant_email)
-    await audit_service.record(
-        session, application_id=application_id, node="scheduler", action=f"email_sent:{mode}",
-        detail={"mode": mode, "to": applicant_email}, commit=True,
+    return await _dispatch(
+        session, application_id=application_id, mode=mode,
+        applicant_email=applicant_email, subject=subject, html=html,
     )
-    return {"mode": mode, "email_sent": True}
 
 
 async def notify_screener(
@@ -150,25 +164,10 @@ async def notify_screener(
     subject, html = builder(
         candidate_name, job_title, form_url=form_url, deadline_text=deadline_text
     )
-    try:
-        await email_service.send_email(to=applicant_email, subject=subject, html=html)
-    except Exception as exc:  # noqa: BLE001 — nuốt có kiểm soát: email lỗi KHÔNG làm sập luồng
-        logger.warning(
-            "[scheduler] app=%s: GỬI EMAIL %s THẤT BẠI tới %s: %s",
-            application_id, mode, applicant_email, exc,
-        )
-        await audit_service.record(
-            session, application_id=application_id, node="scheduler", action="email_failed",
-            detail={"mode": mode, "to": applicant_email, "error": str(exc)}, commit=True,
-        )
-        return {"mode": mode, "email_sent": False, "error": str(exc)}
-
-    logger.info("[scheduler] app=%s: đã gửi email %s tới %s", application_id, mode, applicant_email)
-    await audit_service.record(
-        session, application_id=application_id, node="scheduler", action=f"email_sent:{mode}",
-        detail={"mode": mode, "to": applicant_email}, commit=True,
+    return await _dispatch(
+        session, application_id=application_id, mode=mode,
+        applicant_email=applicant_email, subject=subject, html=html,
     )
-    return {"mode": mode, "email_sent": True}
 
 
 async def notify_booking_confirmed(
@@ -200,9 +199,7 @@ async def notify_booking_confirmed(
             summary=f"Phỏng vấn — {job_title}",
             description=f"Buổi phỏng vấn vị trí {job_title}.",
         )
-        attachments = (
-            [("phong-van.ics", event.ics, "text/calendar; charset=utf-8")] if event.ics else None
-        )
+        attachments = [("phong-van.ics", event.ics, _ICS_MIME)] if event.ics else None
         await email_service.send_email(
             to=applicant_email, subject=subject, html=html, attachments=attachments
         )
@@ -251,20 +248,9 @@ async def notify_interview_reminder(
         candidate_name, job_title, start_at=booking.start_at, end_at=booking.end_at,
         manage_url=manage_url,
     )
-    attachments: Attachments | None = None
-    calendar_ref: str | None = None
-    try:
-        event = await get_calendar_provider().create_event(
-            booking,
-            summary=f"Phỏng vấn — {job_title}",
-            description=f"Buổi phỏng vấn vị trí {job_title}.",
-        )
-        calendar_ref = event.ref
-        if event.ics:
-            attachments = [("phong-van.ics", event.ics, "text/calendar; charset=utf-8")]
-    except Exception:  # noqa: BLE001 — thiếu tệp lịch còn hơn thiếu lời nhắc
-        logger.warning("[scheduler] app=%s: không sinh được .ics cho thư nhắc", application_id)
-
+    attachments, calendar_ref = await _interview_ics(
+        booking, job_title=job_title, application_id=application_id, mode="interview_reminder"
+    )
     return await _dispatch(
         session, application_id=application_id, mode="interview_reminder",
         applicant_email=applicant_email, subject=subject, html=html, attachments=attachments,
@@ -330,7 +316,7 @@ async def notify_booking_cancelled(
                 stub, summary=f"Phỏng vấn — {job_title}"
             )
             if event is not None and event.ics:
-                attachments = [("huy-phong-van.ics", event.ics, "text/calendar; charset=utf-8")]
+                attachments = [("huy-phong-van.ics", event.ics, _ICS_MIME)]
         except Exception:  # noqa: BLE001 — thiếu tệp huỷ còn hơn thiếu thư huỷ
             logger.warning("[scheduler] app=%s: không sinh được .ics huỷ", application_id)
 

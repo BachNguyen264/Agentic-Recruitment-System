@@ -7,6 +7,8 @@ import type { BookingCancelResult, BookingConfirmResult, BookingView } from "@ar
 import { SuccessPanel } from "@/components/SuccessPanel";
 import { btn, EmptyState } from "@/components/ui";
 import { BookingApiError, cancelBooking, confirmBooking, getBooking } from "@/lib/api";
+// Cùng hàm với trang chi tiết hồ sơ của HR — hai bên phải đọc ra CÙNG một mốc (lib/datetime).
+import { formatVnDateTime } from "@/lib/datetime";
 
 // Trang ứng viên TỰ CHỌN giờ phỏng vấn (PRD §10b). Ứng viên là KHÁCH: chỉ thấy tên vị trí + các
 // khung giờ — không điểm, không rubric, không trạng thái hồ sơ.
@@ -17,22 +19,6 @@ import { BookingApiError, cancelBooking, confirmBooking, getBooking } from "@/li
 //   3. Thua race (409) → tự làm mới danh sách ngay, không bắt họ tự mò.
 //   4. Huỷ lịch (SCH-3) → nhả khung giờ NGAY; liên kết còn hạn thì quay thẳng về danh sách chọn
 //      giờ, hết hạn thì nói rõ Bộ phận Tuyển dụng sẽ liên hệ (KHÔNG hứa một đường không tồn tại).
-
-const VN_TZ = "Asia/Ho_Chi_Minh";
-
-// LUÔN hiển thị theo giờ Việt Nam, kèm THỨ. Để trình duyệt tự dùng múi giờ của máy là mời gọi tai
-// nạn: một ứng viên đang ở nước ngoài sẽ đọc ra giờ khác với giờ hẹn thật. Có thứ trong chuỗi thì
-// "06/08" không còn cửa bị đọc nhầm thành ngày 8 tháng 6.
-function formatSlot(iso: string): string {
-  const at = new Date(iso);
-  const time = new Intl.DateTimeFormat("vi-VN", {
-    timeZone: VN_TZ, hour: "2-digit", minute: "2-digit", hour12: false,
-  }).format(at);
-  const date = new Intl.DateTimeFormat("vi-VN", {
-    timeZone: VN_TZ, weekday: "long", day: "2-digit", month: "2-digit", year: "numeric",
-  }).format(at);
-  return `${time} · ${date}`;
-}
 
 function useCountdown(deadline: string | null): number | null {
   const target = useMemo(() => (deadline ? new Date(deadline).getTime() : null), [deadline]);
@@ -183,7 +169,7 @@ export default function BookingPage() {
       <main>
         <SuccessPanel title="Đã xác nhận lịch phỏng vấn">
           Buổi phỏng vấn vị trí <strong>{done.job_title}</strong> của bạn diễn ra lúc{" "}
-          <strong>{formatSlot(done.start_at)}</strong> (giờ Việt Nam).
+          <strong>{formatVnDateTime(done.start_at)}</strong> (giờ Việt Nam).
           {/* Nói THẬT về email: hứa một thư xác nhận chưa gửi được đúng là kiểu "trạng thái nói
               dối" mà cả hệ thống này tránh. Lịch đã chốt trong cả hai trường hợp. */}
           {done.email_sent ? (
@@ -222,7 +208,7 @@ export default function BookingPage() {
       {view?.already_booked && view.booked_start_at && (
         <SuccessPanel title="Bạn đã đặt lịch phỏng vấn">
           Buổi phỏng vấn vị trí <strong>{view.job_title}</strong> đã được đặt lúc{" "}
-          <strong>{formatSlot(view.booked_start_at)}</strong> (giờ Việt Nam).
+          <strong>{formatVnDateTime(view.booked_start_at)}</strong> (giờ Việt Nam).
           {cancelBox}
         </SuccessPanel>
       )}
@@ -300,7 +286,7 @@ export default function BookingPage() {
                         onChange={() => setSelected(slot.booking_id)}
                         className="h-4 w-4 accent-ink"
                       />
-                      <span>{formatSlot(slot.start_at)}</span>
+                      <span>{formatVnDateTime(slot.start_at)}</span>
                     </label>
                   ))}
                 </div>

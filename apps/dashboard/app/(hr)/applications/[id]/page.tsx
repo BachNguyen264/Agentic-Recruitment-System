@@ -23,19 +23,8 @@ import {
   applicationStatusTone,
   toBreakdown,
 } from "@/lib/applications";
-
-// Lịch phỏng vấn LUÔN hiển thị theo giờ Việt Nam kèm THỨ — HR và ứng viên phải đọc ra CÙNG một
-// mốc; để trình duyệt tự dùng múi giờ của máy là mở đường cho hai bên hiểu khác nhau.
-function formatInterview(iso: string): string {
-  const at = new Date(iso);
-  const time = new Intl.DateTimeFormat("vi-VN", {
-    timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", hour12: false,
-  }).format(at);
-  const date = new Intl.DateTimeFormat("vi-VN", {
-    timeZone: "Asia/Ho_Chi_Minh", weekday: "long", day: "2-digit", month: "2-digit", year: "numeric",
-  }).format(at);
-  return `${time} · ${date}`;
-}
+// Cùng hàm với trang chọn giờ của ứng viên: HR và ứng viên phải đọc ra CÙNG một mốc (lib/datetime).
+import { formatVnDateTime } from "@/lib/datetime";
 
 function initialsOf(email: string): string {
   const name = email.split("@")[0] ?? "";
@@ -192,8 +181,8 @@ export default function ApplicationDetailPage() {
             </div>
             )}
 
-          {/* Lịch phỏng vấn ứng viên đã TỰ CHỌN (SCH-2 · PRD §10b) — CHỈ ĐỌC ở lát này; dời/huỷ
-              là SCH-3. Đặt trên cùng vì với một hồ sơ đã hẹn thì đây là thông tin HR cần nhất. */}
+          {/* Lịch phỏng vấn ứng viên đã TỰ CHỌN (SCH-2 · PRD §10b) + nút huỷ (SCH-3). Đặt trên
+              cùng vì với một hồ sơ đã hẹn thì đây là thông tin HR cần nhất. */}
           {app.interview && (
             <div className="mt-4 rounded-xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3">
               <p className="flex items-center gap-2 font-heading text-[13px] font-bold text-emerald-900">
@@ -215,7 +204,7 @@ export default function ApplicationDetailPage() {
                 Lịch phỏng vấn đã chốt
               </p>
               <p className="mt-1.5 text-[13px] text-emerald-900">
-                {formatInterview(app.interview.start_at)} (giờ Việt Nam) — ứng viên tự chọn.
+                {formatVnDateTime(app.interview.start_at)} (giờ Việt Nam) — ứng viên tự chọn.
               </p>
 
               {/* Huỷ lịch (SCH-3). Hai bước: huỷ một buổi phỏng vấn đã hẹn là hành động ứng viên

@@ -7,7 +7,9 @@ tại. Đổi cách tạo sự kiện = đổi `CALENDAR_PROVIDER`, KHÔNG sửa
   không gọi mạng, không có trạng thái phía máy chủ.
 - `GoogleCalendarProvider` (PRD §17, CHƯA làm): sẽ đọc lịch bận + tạo event thật.
 
-⚠️ SCH-1 chỉ dựng seam — **chưa ai gọi tới**. SCH-2 mới đính `.ics` vào email xác nhận.
+Đang được gọi từ `scheduler`: thư xác nhận + thư nhắc trước buổi PV (`create_event`) và thư báo huỷ
+(`cancel_event`, tệp `METHOD:CANCEL`). Sinh tệp hỏng KHÔNG bao giờ được chặn thư — xem
+`scheduler._interview_ics`.
 """
 
 from __future__ import annotations

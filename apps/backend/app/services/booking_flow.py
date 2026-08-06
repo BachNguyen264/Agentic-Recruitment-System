@@ -33,12 +33,16 @@ from app.services.booking_config import load_booking_config
 logger = get_logger("app.services.booking_flow")
 
 __all__ = [
+    "booking_url",
     "booking_view",
     "cancel_by_candidate",
     "cancel_by_hr",
+    "candidate_name_of",
     "confirm_and_notify",
     "dispatch_booking_invite",
+    "job_title_of",
     "resend_booking_link",
+    "with_flag",
 ]
 
 _EMAIL_FAILED_FLAG = (
@@ -83,8 +87,14 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _as_utc(value: datetime) -> datetime:
-    """Mốc đọc từ DB → aware UTC. asyncpg trả timestamptz đã aware; hàng dựng trong test có thể naive."""
+def _assume_utc(value: datetime) -> datetime:
+    """Mốc đọc từ DB → aware UTC, COI naive là UTC.
+
+    Cố ý KHÁC `booking_service._as_utc`, thứ TỪ CHỐI naive: ở đây đầu vào là hàng đã nằm trong DB
+    (asyncpg trả timestamptz aware; chỉ hàng dựng tay trong test mới naive), còn ở kia là tham số
+    do caller truyền vào — nơi một naive lọt qua sẽ lệch 7 tiếng trong im lặng. Tên khác nhau để
+    không ai đọc nhầm hai chính sách này là một.
+    """
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
@@ -94,15 +104,22 @@ def _deadline_text() -> str:
     return f"{int(hours)} giờ" if float(hours).is_integer() else f"{hours:g} giờ"
 
 
-def _booking_url(token: str) -> str:
+# ── Dựng nội dung thư: DÙNG CHUNG với `booking_lifecycle` ────────────────────────────────
+# Ba hàm dưới đây quyết định ứng viên đọc thấy gì (tên gọi, tên vị trí, liên kết). Chúng từng bị
+# chép sang `booking_lifecycle` — mà chuỗi dự phòng ("Ứng viên", "vị trí ứng tuyển") là VĂN BẢN
+# GỬI RA NGOÀI, nên hai bản lệch nhau nghĩa là hai lá thư về cùng một buổi phỏng vấn xưng hô khác
+# nhau. Một nguồn duy nhất, cả hai module gọi vào.
+
+
+def booking_url(token: str) -> str:
     return f"{settings.frontend_base_url.rstrip('/')}/booking/{token}"
 
 
-def _candidate_name(app_row: Application) -> str:
+def candidate_name_of(app_row: Application) -> str:
     return (app_row.parsed_data or {}).get("full_name") or "Ứng viên"
 
 
-async def _job_title(session: AsyncSession, app_row: Application) -> str:
+async def job_title_of(session: AsyncSession, app_row: Application) -> str:
     if app_row.job_id is None:
         return "vị trí ứng tuyển"
     job = await session.get(JobPosting, app_row.job_id)
@@ -158,7 +175,7 @@ async def dispatch_booking_invite(
     # đang giữ một connection của pool — giữ nó qua lượt gọi Resend là vi phạm Load boundary (đo
     # được 1.69s). Commit trần, KHÔNG `refresh()` (refresh mở lại transaction — xem AI_GUIDE).
     await session.commit()
-    url = _booking_url(session_row.token)
+    url = booking_url(session_row.token)
 
     result = await scheduler.notify_decision(
         session,
@@ -218,8 +235,8 @@ async def booking_view(session: AsyncSession, token: str) -> dict:
     if app_row is None:  # FK CASCADE nên gần như không xảy ra; vẫn xử lý êm thay vì 500.
         raise booking_service.TokenNotFound("Liên kết không hợp lệ.")
 
-    job_title = await _job_title(session, app_row)
-    base = {"job_title": job_title, "candidate_name": _candidate_name(app_row)}
+    job_title = await job_title_of(session, app_row)
+    base = {"job_title": job_title, "candidate_name": candidate_name_of(app_row)}
     had_no_slots = session_row.no_slots_at is not None
 
     try:
@@ -304,8 +321,8 @@ async def confirm_and_notify(session: AsyncSession, token: str, booking_id: int)
     # Gom dữ liệu email TRƯỚC khi confirm commit (tránh lazy-load sau commit — gotcha refresh()).
     application_id = app_row.id
     applicant_email = app_row.applicant_email
-    candidate_name = _candidate_name(app_row)
-    job_title = await _job_title(session, app_row)
+    candidate_name = candidate_name_of(app_row)
+    job_title = await job_title_of(session, app_row)
 
     # Hồ sơ đã rẽ sang hướng KHÔNG còn phỏng vấn (HR từ chối, hoặc SCH-3 hạ vì hết hạn) thì token cũ
     # KHÔNG được phép lật ngược quyết định đó. `load_valid_session` cố ý không kiểm trạng thái (để
@@ -344,7 +361,7 @@ async def confirm_and_notify(session: AsyncSession, token: str, booking_id: int)
             candidate_name=candidate_name, job_title=job_title, booking=booking,
             # SCH-3: liên kết HUỶ nằm trong thư xác nhận, và nó là CHÍNH token này (§10b.6) — mở ra
             # thấy lịch đã chốt kèm nút huỷ. Không phát token thứ hai chỉ để huỷ.
-            manage_url=_booking_url(token),
+            manage_url=booking_url(token),
         )
         email_sent = bool(result.get("email_sent"))
     except Exception:  # noqa: BLE001 — lịch ĐÃ chốt; thư hỏng không được phép làm hỏng lượt đặt
@@ -405,8 +422,8 @@ _HR_CANCEL_FLAG = "HR đã huỷ lịch phỏng vấn — cần sắp xếp lạ
 _MAX_REBOOKS = 3
 
 
-def _with_flag(flags: list | None, flag: str) -> list:
-    """Thêm cờ vào `uncertainty_flags`, trả về DANH SÁCH MỚI.
+def with_flag(flags: list | None, flag: str) -> list:
+    """Thêm cờ vào `uncertainty_flags`, trả về DANH SÁCH MỚI. Dùng chung với `booking_lifecycle`.
 
     Gán lại cả danh sách chứ không `append`: JSONB sửa tại chỗ không được SQLAlchemy đánh dấu bẩn
     nên câu UPDATE lặng lẽ bỏ qua cột này — cờ "được ghi" mà không bao giờ tới DB.
@@ -437,8 +454,8 @@ async def cancel_by_candidate(session: AsyncSession, token: str) -> dict:
     # Gom TRƯỚC mọi commit (gotcha refresh()/expire — lỗi #3 SCH-2).
     application_id = app_row.id
     applicant_email = app_row.applicant_email
-    candidate_name = _candidate_name(app_row)
-    job_title = await _job_title(session, app_row)
+    candidate_name = candidate_name_of(app_row)
+    job_title = await job_title_of(session, app_row)
 
     if app_row.status != ApplicationStatus.INTERVIEW_SCHEDULED.value:
         await session.rollback()  # nhả connection ngay, đừng ôm transaction đọc suốt phần còn lại
@@ -458,7 +475,7 @@ async def cancel_by_candidate(session: AsyncSession, token: str) -> dict:
     # đốt hàng trăm lượt gửi — mà Resend là kênh DUY NHẤT của cả hệ thống, hết quota là thư mời,
     # thư từ chối và magic-link sàng lọc của MỌI ứng viên khác cùng câm.
     cycles = session_row.rebook_count or 0
-    can_rebook = _as_utc(session_row.expires_at) > _now() and cycles < _MAX_REBOOKS
+    can_rebook = _assume_utc(session_row.expires_at) > _now() and cycles < _MAX_REBOOKS
 
     if can_rebook:
         session_row.rebook_count = cycles + 1
@@ -473,7 +490,7 @@ async def cancel_by_candidate(session: AsyncSession, token: str) -> dict:
         )
         # Cờ để HR THẤY trên danh sách (PRD §10b.6). Thiếu nó, `review.recommendation` nhìn thấy
         # `flags=[]` + điểm đạt và gợi ý "mời" cho đúng người vừa huỷ lịch.
-        app_row.uncertainty_flags = _with_flag(app_row.uncertainty_flags, "booking_cancelled")
+        app_row.uncertainty_flags = with_flag(app_row.uncertainty_flags, "booking_cancelled")
 
     await audit_service.record(
         session, application_id=application_id, node="scheduler", action="booking_cancelled",
@@ -494,7 +511,7 @@ async def cancel_by_candidate(session: AsyncSession, token: str) -> dict:
         session, application_id=application_id, applicant_email=applicant_email,
         candidate_name=candidate_name, job_title=job_title, start_at=start_at,
         end_at=end_at, booking_id=booked_id,
-        rebook_url=_booking_url(token) if can_rebook else None,
+        rebook_url=booking_url(token) if can_rebook else None,
     )
     return {
         "cancelled": True,
@@ -520,8 +537,8 @@ async def cancel_by_hr(session: AsyncSession, application_id: int) -> Applicatio
         )
 
     applicant_email = app_row.applicant_email
-    candidate_name = _candidate_name(app_row)
-    job_title = await _job_title(session, app_row)
+    candidate_name = candidate_name_of(app_row)
+    job_title = await job_title_of(session, app_row)
 
     booking = await booking_service.cancel_booked(session, application_id)
     if booking is None:
@@ -577,8 +594,8 @@ async def resend_booking_link(session: AsyncSession, application_id: int) -> App
         )
 
     applicant_email = app_row.applicant_email
-    candidate_name = _candidate_name(app_row)
-    job_title = await _job_title(session, app_row)
+    candidate_name = candidate_name_of(app_row)
+    job_title = await job_title_of(session, app_row)
 
     await booking_service.cancel_sessions(session, application_id)
     await session.commit()

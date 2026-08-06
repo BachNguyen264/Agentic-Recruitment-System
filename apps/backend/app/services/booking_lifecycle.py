@@ -27,12 +27,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.nodes import scheduler
-from app.core.config import settings
 from app.core.logging import get_logger
 from app.models.application import Application, ApplicationStatus
 from app.models.booking import BookingSession, BookingStatus, InterviewBooking
-from app.models.job_posting import JobPosting
-from app.services import audit_service, booking_service
+from app.services import audit_service, booking_flow, booking_service
 from app.services.booking_config import BookingConfig, load_booking_config
 
 logger = get_logger("app.services.booking_lifecycle")
@@ -58,19 +56,9 @@ def _remaining_text(expires_at: datetime, now: datetime) -> str:
     return "ít phút tới"
 
 
-def _booking_url(token: str) -> str:
-    return f"{settings.frontend_base_url.rstrip('/')}/booking/{token}"
-
-
-async def _job_title(session: AsyncSession, app_row: Application) -> str:
-    if app_row.job_id is None:
-        return "vị trí ứng tuyển"
-    job = await session.get(JobPosting, app_row.job_id)
-    return job.title if job is not None else "vị trí ứng tuyển"
-
-
-def _candidate_name(app_row: Application) -> str:
-    return (app_row.parsed_data or {}).get("full_name") or "Ứng viên"
+# Tên gọi / tên vị trí / liên kết: DÙNG CHUNG `booking_flow` (`booking_url`, `candidate_name_of`,
+# `job_title_of`). Đây là văn bản gửi ra ngoài, nên hai bản chép tay lệch nhau nghĩa là hai lá thư
+# về cùng một buổi phỏng vấn xưng hô khác nhau.
 
 
 # ── Truy vấn "đến hạn" (đọc, KHÔNG khoá) ─────────────────────────────────────────────────
@@ -181,11 +169,11 @@ async def send_interview_reminder(session: AsyncSession, booking: InterviewBooki
     app_row = await session.get(Application, booking.application_id)
     if app_row is None:  # hồ sơ đã bị xoá — bỏ qua an toàn
         return
-    job_title = await _job_title(session, app_row)
-    name = _candidate_name(app_row)
+    job_title = await booking_flow.job_title_of(session, app_row)
+    name = booking_flow.candidate_name_of(app_row)
     applicant_email = app_row.applicant_email
     link_row = await booking_service.booked_session(session, booking.application_id)
-    manage_url = _booking_url(link_row.token) if link_row is not None else None
+    manage_url = booking_flow.booking_url(link_row.token) if link_row is not None else None
 
     booking.reminder_sent_at = _now()
     await session.commit()
@@ -205,10 +193,10 @@ async def send_booking_reminder(session: AsyncSession, sess: BookingSession) -> 
     app_row = await session.get(Application, sess.application_id)
     if app_row is None:
         return
-    job_title = await _job_title(session, app_row)
-    name = _candidate_name(app_row)
+    job_title = await booking_flow.job_title_of(session, app_row)
+    name = booking_flow.candidate_name_of(app_row)
     applicant_email = app_row.applicant_email
-    url = _booking_url(sess.token)
+    url = booking_flow.booking_url(sess.token)
     deadline = _remaining_text(sess.expires_at, _now())
 
     sess.reminded_at = _now()  # once-only: chốt TRƯỚC khi gửi
@@ -260,11 +248,7 @@ async def handle_booking_timeout(session: AsyncSession, sess: BookingSession) ->
     reason = _NO_SLOTS_REASON if blocked_by_us else _NO_RESPONSE_REASON
     app_row.status = ApplicationStatus.PENDING_REVIEW.value
     app_row.escalation_reason = reason
-    # Gán LẠI cả danh sách: JSONB mutate tại chỗ không được SQLAlchemy đánh dấu bẩn nên UPDATE sẽ
-    # bỏ qua cột này (cùng bẫy đã gặp với parsed_data).
-    flags = list(app_row.uncertainty_flags or [])
-    if flag not in flags:
-        app_row.uncertainty_flags = [*flags, flag]
+    app_row.uncertainty_flags = booking_flow.with_flag(app_row.uncertainty_flags, flag)
 
     await audit_service.record(
         session, application_id=sess.application_id, node="scheduler",

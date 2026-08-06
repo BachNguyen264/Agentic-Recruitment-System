@@ -1,7 +1,8 @@
 """booking_service — sinh slot lười, giữ chỗ, xác nhận (SCH-1 · PRD §10b, FR-BOOK-1/2/5).
 
-**Tầng nghiệp vụ thuần: CHƯA ai gọi tới.** Nối vào pipeline + trang công khai = SCH-2; nhắc/hết
-hạn/hủy = SCH-3.
+**Tầng DB/slot thuần** — không biết email, không biết trạng thái `Application`. Ai nối nó vào
+nghiệp vụ: `booking_flow` (mời/xác nhận/huỷ) và `booking_lifecycle` (nhắc/hết hạn). Mọi thao tác
+trên khung giờ phải đi QUA đây, đừng truy vấn thẳng `interview_booking`.
 
 Ba hàm, ba bất biến phải giữ:
 
@@ -51,16 +52,19 @@ __all__ = [
     "TokenExpired",
     "TokenNotFound",
     "active_session",
+    "booked_session",
     "cancel_booked",
     "cancel_sessions",
     "confirm_booking",
     "create_booking_session",
     "generate_slots",
     "has_any_session",
+    "latest_booking",
     "load_valid_session",
     "lock_application",
     "mark_session_booked",
     "mark_session_reopened",
+    "no_slot_application_ids",
     "release_holds",
 ]
 
@@ -328,7 +332,7 @@ async def generate_slots(
         await session.commit()  # nhả khoá tư vấn trước khi ném
         raise AlreadyBooked("Hồ sơ này đã đặt lịch phỏng vấn.", booked)
 
-    # ── 1) BẤM LẠI: đang giữ chỗ còn hạn → trả ĐÚNG các slot đó (bất biến chống rò slot) ──
+    # ── 2) BẤM LẠI: đang giữ chỗ còn hạn → trả ĐÚNG các slot đó (bất biến chống rò slot) ──
     existing = list(
         (
             await session.execute(
@@ -353,7 +357,7 @@ async def generate_slots(
         await session.commit()  # nhả khoá tư vấn (và transaction) trước khi trả về
         return existing
 
-    # ── 2) Sinh mới ──────────────────────────────────────────────────────────────────────
+    # ── 3) Sinh mới ──────────────────────────────────────────────────────────────────────
     taken, per_day = await _occupied(session, cfg, now)
     candidates = [s for s in _candidate_starts(cfg, now) if s not in taken]
     chosen = _pick_mixed(candidates, cfg, per_day)
@@ -601,7 +605,11 @@ async def cancel_booked(
 async def latest_booking(
     session: AsyncSession, application_id: int
 ) -> InterviewBooking | None:
-    """Lịch phỏng vấn ĐÃ chốt của một hồ sơ — cho HR xem ở trang chi tiết (CHỈ ĐỌC; dời/huỷ = SCH-3)."""
+    """Lịch phỏng vấn ĐÃ chốt của một hồ sơ — cho HR xem ở trang chi tiết. CHỈ ĐỌC.
+
+    Huỷ/gửi lại link đi qua `booking_flow.cancel_by_hr`/`resend_booking_link` (có nhả slot, gửi thư
+    và ghi audit) — đừng sửa hàng lấy từ đây.
+    """
     stmt = (
         select(InterviewBooking)
         .where(
