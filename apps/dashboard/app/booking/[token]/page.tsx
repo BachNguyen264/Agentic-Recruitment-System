@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { BookingConfirmResult, BookingView } from "@ars/shared-types";
+import type { BookingCancelResult, BookingConfirmResult, BookingView } from "@ars/shared-types";
 import { SuccessPanel } from "@/components/SuccessPanel";
 import { btn, EmptyState } from "@/components/ui";
-import { BookingApiError, confirmBooking, getBooking } from "@/lib/api";
+import { BookingApiError, cancelBooking, confirmBooking, getBooking } from "@/lib/api";
 
 // Trang ứng viên TỰ CHỌN giờ phỏng vấn (PRD §10b). Ứng viên là KHÁCH: chỉ thấy tên vị trí + các
 // khung giờ — không điểm, không rubric, không trạng thái hồ sơ.
@@ -15,6 +15,8 @@ import { BookingApiError, confirmBooking, getBooking } from "@/lib/api";
 //   1. `already_booked` — mở lại link sau khi đã đặt (token KHÔNG one-time) → hiện lịch đã đặt.
 //   2. Hết chỗ giữ (BOOKING_HOLD_MINUTES, KHÔNG gia hạn) → nói rõ + nút tải danh sách mới, đừng đổ lỗi người dùng.
 //   3. Thua race (409) → tự làm mới danh sách ngay, không bắt họ tự mò.
+//   4. Huỷ lịch (SCH-3) → nhả khung giờ NGAY; liên kết còn hạn thì quay thẳng về danh sách chọn
+//      giờ, hết hạn thì nói rõ Bộ phận Tuyển dụng sẽ liên hệ (KHÔNG hứa một đường không tồn tại).
 
 const VN_TZ = "Asia/Ho_Chi_Minh";
 
@@ -100,8 +102,82 @@ export default function BookingPage() {
     await query.refetch();
   }
 
+  // Huỷ lịch (SCH-3 · FR-BOOK-4) — cùng token, không có link thứ hai. Hai bước có chủ ý: huỷ một
+  // buổi phỏng vấn không được là chuyện lỡ tay chạm phải trên điện thoại.
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const cancel = useMutation<BookingCancelResult, Error, void>({
+    mutationFn: () => cancelBooking(token),
+    onSuccess: async (res) => {
+      setConfirmingCancel(false);
+      if (!res.can_rebook) return; // hết hạn → giữ màn kết quả ("Bộ phận Tuyển dụng sẽ liên hệ")
+      // Còn hạn → đưa họ thẳng về danh sách chọn giờ (backend đã hạ về AWAITING_BOOKING và khung
+      // giờ vừa nhả đã khả dụng lại). Xoá cả hai mutation để màn hình không còn dấu vết lượt trước.
+      mutation.reset();
+      await refresh();
+      cancel.reset();
+    },
+  });
+
+  // Hộp huỷ dùng chung cho hai màn "đã có lịch" (vừa đặt xong / mở lại link) — cùng một hành động
+  // thì phải cùng một giao diện, và người vừa bấm nhầm giờ cần đường lùi ngay tại chỗ.
+  const cancelBox = (
+    <div className="mt-4 border-t-2 border-divider pt-4">
+      {cancel.isError && (
+        <p role="alert" className="mb-2 text-[13px] text-red-700">
+          {String((cancel.error as Error)?.message) || "Không huỷ được lịch. Vui lòng thử lại."}
+        </p>
+      )}
+      {confirmingCancel ? (
+        <>
+          <p className="text-[13px] text-ink/70">
+            Huỷ buổi phỏng vấn này? Khung giờ sẽ được nhả lại cho ứng viên khác.
+          </p>
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={cancel.isPending}
+              onClick={() => cancel.mutate()}
+              className={btn("primary")}
+            >
+              {cancel.isPending ? "Đang huỷ…" : "Xác nhận huỷ lịch"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmingCancel(false)}
+              className={btn("secondary")}
+            >
+              Giữ lịch hiện tại
+            </button>
+          </div>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirmingCancel(true)}
+          className={btn("secondary")}
+        >
+          Huỷ hoặc chọn giờ khác
+        </button>
+      )}
+    </div>
+  );
+
+  // ── Vừa huỷ xong mà KHÔNG chọn lại được (liên kết đã hết hạn) ────────────
+  // Đặt TRƯỚC nhánh `mutation.isSuccess`: người vừa đặt rồi đổi ý huỷ trong cùng một lượt xem sẽ
+  // vẫn đang ở màn "đã xác nhận", và để họ nhìn tiếp màn đó sau khi bấm huỷ là nói dối họ.
+  if (cancel.isSuccess && !cancel.data.can_rebook) {
+    return (
+      <main>
+        <SuccessPanel title={cancel.data.cancelled ? "Đã huỷ lịch phỏng vấn" : "Lịch đã được huỷ"}>
+          Buổi phỏng vấn vị trí <strong>{cancel.data.job_title}</strong> không còn hiệu lực. Liên kết
+          tự chọn giờ đã hết hạn, nên Bộ phận Tuyển dụng sẽ liên hệ trực tiếp với bạn để sắp xếp lại.
+        </SuccessPanel>
+      </main>
+    );
+  }
+
   // ── Đặt xong ─────────────────────────────────────────────────────────────
-  if (mutation.isSuccess) {
+  if (mutation.isSuccess && !cancel.isSuccess) {
     const done = mutation.data;
     return (
       <main>
@@ -115,6 +191,7 @@ export default function BookingPage() {
           ) : (
             <> Lịch đã được ghi nhận. Bộ phận Tuyển dụng sẽ liên hệ lại với bạn để xác nhận.</>
           )}
+          {cancelBox}
         </SuccessPanel>
       </main>
     );
@@ -145,8 +222,8 @@ export default function BookingPage() {
       {view?.already_booked && view.booked_start_at && (
         <SuccessPanel title="Bạn đã đặt lịch phỏng vấn">
           Buổi phỏng vấn vị trí <strong>{view.job_title}</strong> đã được đặt lúc{" "}
-          <strong>{formatSlot(view.booked_start_at)}</strong> (giờ Việt Nam). Nếu cần thay đổi, vui
-          lòng trả lời email xác nhận chúng tôi đã gửi.
+          <strong>{formatSlot(view.booked_start_at)}</strong> (giờ Việt Nam).
+          {cancelBox}
         </SuccessPanel>
       )}
 

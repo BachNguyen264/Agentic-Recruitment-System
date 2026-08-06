@@ -65,6 +65,10 @@ export interface ApplicationListItem {
   confidence: number | null;
   uncertainty_flags: string[];
   created_at: string;
+  // SCH-3 (FR-BOOK-6): ứng viên ĐÃ mở link nhưng kho khung giờ trống rỗng. Trường RIÊNG chứ không
+  // suy từ status, vì "chưa bấm link" và "bấm rồi mà hết lịch" đều đứng ở AWAITING_BOOKING — gộp
+  // hai cái thành một nhãn là đổ lỗi cho người không có lỗi.
+  booking_no_slots?: boolean;
 }
 
 // Một tiêu chí rubric đã chấm (khớp ranker._reconcile_criteria: tên+trọng số từ JD, điểm từ LLM).
@@ -98,8 +102,7 @@ export interface ApplicationDetail extends ApplicationListItem {
   escalation_reason: string | null;
   recommendation: Recommendation;
   screener_answers: ScreenerAnswer[]; // [] khi chưa/không sàng lọc (08b)
-  // Lịch phỏng vấn ứng viên đã tự chọn (SCH-2 · PRD §10b). null = chưa chọn. HR chỉ ĐỌC ở lát này
-  // (dời/huỷ = SCH-3).
+  // Lịch phỏng vấn ứng viên đã tự chọn (SCH-2 · PRD §10b). null = chưa chọn.
   interview: BookedInterview | null;
   // Có file CV gốc để tải không (slice 06). Bytes lấy qua GET /api/applications/{id}/cv (require_hr).
   has_cv: boolean;
@@ -330,5 +333,16 @@ export interface BookingConfirmResult {
   start_at: string;
   end_at: string;
   // Để UI nói THẬT thay vì hứa một email có thể chưa gửi được.
+  email_sent: boolean;
+}
+
+// Kết quả huỷ lịch của ứng viên (SCH-3 · PRD §10b.6, FR-BOOK-4).
+export interface BookingCancelResult {
+  // false = không có gì để huỷ (bấm hai lần / HR đã huỷ trước). TRẠNG THÁI, không phải lỗi.
+  cancelled: boolean;
+  job_title: string;
+  // Liên kết cũ còn hạn → mời chọn giờ khác NGAY. Hết hạn → "Bộ phận Tuyển dụng sẽ liên hệ".
+  // Hai câu dẫn tới hai hành vi hoàn toàn khác nhau nên UI không được đoán bừa.
+  can_rebook: boolean;
   email_sent: boolean;
 }

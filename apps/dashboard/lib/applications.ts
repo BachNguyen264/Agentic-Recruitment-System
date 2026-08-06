@@ -49,6 +49,30 @@ export function statusLabel(status: ApplicationStatus): string {
   return STATUS_LABEL[status] ?? status;
 }
 
+// SCH-3 (FR-BOOK-6): "chờ ứng viên chọn lịch" và "hết khung giờ" là HAI chuyện khác nhau, dù hồ sơ
+// đứng ở cùng một trạng thái. Cái đầu là quả bóng ở sân ứng viên; cái sau là LỊCH CỦA CÔNG TY đang
+// chặn — HR phải mở thêm khung giờ thì ứng viên mới đặt được. Dùng chung một nhãn cho cả hai là để
+// HR ngồi chờ một người vốn đang không có gì để bấm.
+export function applicationStatusLabel(app: {
+  status: ApplicationStatus;
+  booking_no_slots?: boolean;
+}): string {
+  if (app.status === "AWAITING_BOOKING" && app.booking_no_slots) {
+    return "Hết khung giờ — cần mở thêm lịch";
+  }
+  return statusLabel(app.status);
+}
+
+// Hết khung giờ là việc CẦN HR LÀM (mở thêm lịch), nên tô như rổ "chờ HR" chứ không phải như một
+// hồ sơ đang chạy êm.
+export function applicationStatusTone(app: {
+  status: ApplicationStatus;
+  booking_no_slots?: boolean;
+}): "accent" | "warn" | "ok" | "danger" {
+  if (app.status === "AWAITING_BOOKING" && app.booking_no_slots) return "warn";
+  return statusTone(app.status);
+}
+
 // UI redesign: tông thẻ trạng thái theo rổ — đang xử lý (nhấn cobalt) · chờ HR (hổ phách, cần
 // hành động) · đạt (xanh) · từ chối (đỏ). Dùng với <Tag tone=…> của components/ui.
 const BUCKET_TONE = {

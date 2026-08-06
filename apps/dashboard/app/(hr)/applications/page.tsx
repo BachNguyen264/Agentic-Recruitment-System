@@ -9,8 +9,8 @@ import { getApplications, getJobs } from "@/lib/api";
 import {
   BUCKET_FILTERS,
   statusBucket,
-  statusLabel,
-  statusTone,
+  applicationStatusLabel,
+  applicationStatusTone,
   type StatusBucket,
 } from "@/lib/applications";
 
@@ -133,7 +133,7 @@ export default function ApplicationsPage() {
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Tag tone={statusTone(a.status)}>{statusLabel(a.status)}</Tag>
+                        <Tag tone={applicationStatusTone(a)}>{applicationStatusLabel(a)}</Tag>
                         {/* Cờ "cần chú ý" chỉ là chỉ báo HÀNH ĐỘNG cho HR → CHỈ hiện khi còn chờ
                             quyết. Hồ sơ đã quyết chỉ hiện trạng thái cuối. */}
                         {a.status === "PENDING_REVIEW" && a.uncertainty_flags.length > 0 && (
