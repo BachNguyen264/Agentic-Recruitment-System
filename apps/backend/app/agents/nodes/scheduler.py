@@ -24,6 +24,7 @@ from app.agents.state import RecruitmentState
 from app.core.logging import get_logger
 from app.models.application import ApplicationStatus
 from app.models.booking import InterviewBooking
+from app.models.email_delivery import DeliveryStatus, EmailDelivery
 from app.services import audit_service, email_service
 from app.services.calendar import get_calendar_provider
 from app.services.email_templates import (
@@ -85,7 +86,7 @@ async def _dispatch(
     trạng thái nửa vời chứ không cứu được gì.
     """
     try:
-        await email_service.send_email(
+        email_id = await email_service.send_email(
             to=applicant_email, subject=subject, html=html, attachments=attachments
         )
     except Exception as exc:  # noqa: BLE001 — nuốt có kiểm soát: email lỗi KHÔNG làm sập luồng
@@ -100,9 +101,24 @@ async def _dispatch(
         return {"mode": mode, "email_sent": False, "error": str(exc)}
 
     logger.info("[scheduler] app=%s: đã gửi email %s tới %s", application_id, mode, applicant_email)
+    # Lưu vết GIAO HÀNG (EMAIL-1). Cùng transaction với audit bên dưới: hai bản ghi này nói về cùng
+    # một sự kiện, tách ra là mở cửa cho "có audit mà không có vết giao hàng". Thiếu `email_id`
+    # (Resend không trả) → BỎ QUA: một hàng không có khoá đối chiếu thì webhook chẳng bao giờ tìm
+    # thấy, giữ lại chỉ là rác. `mode` đi thẳng vào `kind` — MỘT từ vựng, xem models/email_delivery.
+    if email_id:
+        session.add(
+            EmailDelivery(
+                resend_email_id=email_id,
+                application_id=application_id,
+                kind=mode,
+                recipient=applicant_email,
+                status=DeliveryStatus.SENT.value,
+            )
+        )
     await audit_service.record(
         session, application_id=application_id, node="scheduler", action=f"email_sent:{mode}",
-        detail={"mode": mode, "to": applicant_email, **(detail or {})}, commit=True,
+        detail={"mode": mode, "to": applicant_email, "email_id": email_id, **(detail or {})},
+        commit=True,
     )
     return {"mode": mode, "email_sent": True}
 

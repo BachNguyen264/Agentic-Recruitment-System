@@ -81,8 +81,9 @@ async def test_send_email_success_passes_params(monkeypatch) -> None:
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
     captured: dict = {}
 
-    def fake_send(to: str, subject: str, html: str, attachments) -> None:
+    def fake_send(to: str, subject: str, html: str, attachments) -> dict:
         captured.update(to=to, subject=subject, html=html, attachments=attachments)
+        return {"id": "email_test"}
 
     monkeypatch.setattr(email_service, "_send_sync", fake_send)
     await email_service.send_email(to="a@e.com", subject="Mời", html="<p>xin chào</p>")
@@ -98,8 +99,9 @@ async def test_send_email_encodes_attachment_base64(monkeypatch) -> None:
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
     captured: dict = {}
 
-    def fake_send(to: str, subject: str, html: str, attachments) -> None:
+    def fake_send(to: str, subject: str, html: str, attachments) -> dict:
         captured["attachments"] = attachments
+        return {"id": "email_test"}
 
     monkeypatch.setattr(email_service, "_send_sync", fake_send)
     await email_service.send_email(
@@ -110,6 +112,20 @@ async def test_send_email_encodes_attachment_base64(monkeypatch) -> None:
     assert att["filename"] == "phong-van.ics"
     assert att["content_type"] == "text/calendar"
     assert base64.b64decode(att["content"]) == b"BEGIN:VCALENDAR\r\n"
+
+
+async def test_send_email_returns_resend_id(monkeypatch) -> None:
+    """ID trả về là KHOÁ ĐỐI CHIẾU với webhook — mất nó là mất khả năng phát hiện bounce."""
+    monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(email_service, "_send_sync", lambda *a: {"id": "email_xyz"})
+    assert await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>") == "email_xyz"
+
+
+async def test_send_email_tolerates_missing_id(monkeypatch) -> None:
+    """Resend không trả id → thư VẪN coi là đã gửi (nó đã bay đi), chỉ mất đường theo dõi."""
+    monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(email_service, "_send_sync", lambda *a: {})
+    assert await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>") is None
 
 
 async def test_send_email_builds_resend_payload(monkeypatch) -> None:
