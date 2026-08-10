@@ -12,10 +12,17 @@ from pydantic import ValidationError
 
 from app.api.deps import DBSession
 from app.schemas.application import ApplicationCreate, PublicSubmitResponse
+from app.schemas.booking import (
+    BookingCancelResponse,
+    BookingConfirm,
+    BookingConfirmResponse,
+    PublicBookingRead,
+    PublicSlot,
+)
 from app.schemas.job_posting import PublicJobRead
 from app.core.logging import get_logger
 from app.schemas.screening import PublicScreeningRead, ScreeningSubmit, ScreeningSubmitResponse
-from app.services import application_service, job_service, screening
+from app.services import application_service, booking_flow, booking_service, job_service, screening
 from app.services.storage import StorageError, build_cv_key, content_type_for, get_storage
 from app.tasks.background import process_application
 from app.tools import cv_storage
@@ -108,6 +115,86 @@ async def get_screening(token: str, session: DBSession) -> PublicScreeningRead:
     except screening.ScreeningError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
     return PublicScreeningRead(job_title=job_title, questions=questions)
+
+
+@router.get(
+    "/booking/{token}",
+    response_model=PublicBookingRead,
+    summary="Khung giờ phỏng vấn theo link đặt lịch (PRD §10b, FR-BOOK-1)",
+)
+async def get_booking(token: str, session: DBSession) -> PublicBookingRead:
+    """Validate token → **sinh slot LƯỜI** (chỉ lúc này, không phải lúc gửi mail — §10b.2) + giữ chỗ.
+
+    Mở lại link → trả ĐÚNG các slot đang giữ (KHÔNG phát thêm). Đã đặt xong → `already_booked=True`
+    kèm giờ đã đặt, **200 chứ không phải lỗi**. Token sai → 404; hết hạn/đã huỷ → 410.
+    KHÔNG lộ rubric/điểm/gate/parsed_data (projection ở `schemas/booking.py`).
+    """
+    try:
+        view = await booking_flow.booking_view(session, token)
+    except booking_service.BookingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+    return PublicBookingRead(
+        job_title=view["job_title"],
+        candidate_name=view["candidate_name"],
+        already_booked=view["already_booked"],
+        booked_start_at=view["booked_start_at"],
+        booked_end_at=view["booked_end_at"],
+        slots=[
+            PublicSlot(booking_id=b.id, start_at=b.start_at, end_at=b.end_at)
+            for b in view["slots"]
+        ],
+        hold_expires_at=view["hold_expires_at"],
+    )
+
+
+@router.post(
+    "/booking/{token}/confirm",
+    response_model=BookingConfirmResponse,
+    summary="Chốt khung giờ phỏng vấn → INTERVIEW_SCHEDULED + thư xác nhận kèm .ics (FR-BOOK-2)",
+)
+async def confirm_booking_slot(
+    token: str, payload: BookingConfirm, session: DBSession
+) -> BookingConfirmResponse:
+    """`HELD → BOOKED` (chống race bằng partial unique index) → thư xác nhận + `.ics` →
+    `INTERVIEW_SCHEDULED`.
+
+    Thua race → **409** ("giờ này vừa có người đặt"); UI tải lại danh sách ngay — chỗ giữ vừa thua
+    đã được huỷ nên lần tải mới KHÔNG trả lại đúng khung giờ đó. Hold hết hạn → 409 (mời chọn lại).
+    """
+    try:
+        result = await booking_flow.confirm_and_notify(session, token, payload.booking_id)
+    except booking_service.BookingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+    return BookingConfirmResponse(
+        job_title=result["job_title"],
+        start_at=result["start_at"],
+        end_at=result["end_at"],
+        email_sent=result["email_sent"],
+    )
+
+
+@router.post(
+    "/booking/{token}/cancel",
+    response_model=BookingCancelResponse,
+    summary="Ứng viên huỷ lịch phỏng vấn qua chính link đặt lịch (SCH-3, FR-BOOK-4)",
+)
+async def cancel_booking_slot(token: str, session: DBSession) -> BookingCancelResponse:
+    """Huỷ lịch đã chốt → **nhả khung giờ NGAY** → chọn lại được nếu liên kết còn hạn.
+
+    Không có gì để huỷ (bấm hai lần, HR vừa huỷ trước) → `cancelled=false` + **200**, không phải
+    lỗi: người vừa bấm huỷ xong mà nhận màn hình lỗi sẽ tưởng thao tác của mình hỏng.
+    Token sai → 404; liên kết đã bị huỷ → 410.
+    """
+    try:
+        result = await booking_flow.cancel_by_candidate(session, token)
+    except booking_service.BookingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+    return BookingCancelResponse(
+        cancelled=result["cancelled"],
+        job_title=result["job_title"],
+        can_rebook=result["can_rebook"],
+        email_sent=result["email_sent"],
+    )
 
 
 @router.post(

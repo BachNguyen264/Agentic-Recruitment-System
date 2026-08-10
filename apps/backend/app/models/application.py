@@ -31,6 +31,8 @@ class ApplicationStatus(str, enum.Enum):
     AWAITING_SCREENER = "AWAITING_SCREENER"
     REMINDED = "REMINDED"
     SCHEDULING = "SCHEDULING"
+    # SCH-2 (PRD §10b, §13): thư mời + link đặt lịch ĐÃ gửi, đang chờ ứng viên tự chọn giờ.
+    AWAITING_BOOKING = "AWAITING_BOOKING"
     PENDING_REVIEW = "PENDING_REVIEW"
     INTERVIEW_SCHEDULED = "INTERVIEW_SCHEDULED"
     REJECTED = "REJECTED"
@@ -44,6 +46,8 @@ class ApplicationStatus(str, enum.Enum):
 #                                   409 và mất bài dự tuyển (họ là guest, không có gì để khiếu nại).
 #   SCHEDULING                    — "đã quyết mời, thư mời CÓ THỂ đã gửi" (CLAUDE.md) → kéo về hàng
 #                                   chờ HR là mở đường cho "mời xong lại từ chối".
+#   AWAITING_BOOKING              — thư mời + LINK ĐẶT LỊCH đã tới tay ứng viên (SCH-2). Hạ trạng thái
+#                                   là họ mở link ra thấy hỏng, sau khi vừa được mời phỏng vấn.
 IN_FLIGHT_STATUSES = frozenset(
     {
         ApplicationStatus.SUBMITTED.value,

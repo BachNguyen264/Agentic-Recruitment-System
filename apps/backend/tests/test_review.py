@@ -17,6 +17,22 @@ from app.models.job_posting import JobPosting
 from app.services import review
 
 
+class _EmptyResult:
+    """Kết quả rỗng cho `session.execute` trong mock: SCH-2 tra "đã có link đặt lịch còn sống chưa"
+    (active_session) và huỷ link khi từ chối (cancel_sessions). Mặc định: chưa có, không huỷ gì."""
+
+    rowcount = 0
+
+    def scalar_one_or_none(self):  # noqa: ANN201
+        return None
+
+    def scalars(self):  # noqa: ANN201
+        return self
+
+    def all(self) -> list:
+        return []
+
+
 class FakeSession:
     """AsyncSession tối thiểu cho review_decision: get/add/flush/commit/refresh."""
 
@@ -33,6 +49,9 @@ class FakeSession:
 
     async def flush(self) -> None:
         pass
+
+    async def execute(self, *_a, **_kw):  # noqa: ANN201
+        return _EmptyResult()
 
     async def commit(self) -> None:
         self.commits += 1
@@ -88,10 +107,37 @@ async def test_review_approve_sets_interview_and_audits(monkeypatch) -> None:
 
     out = await review.review_decision(session, 1, "approve", "hồ sơ tốt")
 
-    assert out.status == ApplicationStatus.INTERVIEW_SCHEDULED.value
+    # SCH-2: HR duyệt KHÔNG còn ra thẳng "đã hẹn phỏng vấn" — ứng viên phải tự chọn giờ trước
+    # (PRD §10b). Đường HR và đường gate đi CHUNG một hàm dispatch nên không thể lệch nhau.
+    assert out.status == ApplicationStatus.AWAITING_BOOKING.value
     assert captured["mode"] == "invite"  # delegate scheduler đúng mode
+    assert "/booking/" in captured["booking_url"], "thư mời từ đường HR cũng phải kèm link"
     assert ("human_review", "approve") in _audit_actions(session)
-    assert session.commits == 1
+    assert ("human_review", "booking_invite_sent") in _audit_actions(session)
+    # Bốn commit, theo đúng thứ tự an toàn: (1) quyết định HR, (2) phiên đặt lịch BỀN trước khi thư
+    # rời máy chủ — gửi xong mới ghi mà tiến trình chết ở giữa là ứng viên cầm link 404, (3) thư đã
+    # gửi → AWAITING_BOOKING, (4) đóng transaction mà `refresh()` của audit vừa mở lại (gotcha
+    # refresh(): không đóng thì route ôm một connection của pool tới hết request — Load boundary).
+    assert session.commits == 4
+
+
+async def test_review_approve_email_fail_stays_pending_review(monkeypatch) -> None:
+    """HR duyệt nhưng thư mời gửi TRƯỢT → ca Ở LẠI hàng chờ để HR bấm lại.
+
+    Đây là điểm khác đường gate: ca này VỐN đã ở PENDING_REVIEW. Nếu đặt một trạng thái trung gian
+    rồi mới gửi thư, lúc gửi hỏng ca sẽ biến mất khỏi hàng chờ mà chẳng ai gửi thư mời cả."""
+    async def fake_notify(_session, mode, **kw):  # noqa: ANN001
+        return {"mode": mode, "email_sent": False, "error": "resend down"}
+
+    monkeypatch.setattr(review.scheduler, "notify_decision", fake_notify)
+    app_row = _app()
+    session = FakeSession(app_row)
+
+    out = await review.review_decision(session, 1, "approve", None)
+
+    assert out.status == ApplicationStatus.PENDING_REVIEW.value
+    assert out.escalation_reason and "thư mời" in out.escalation_reason
+    assert ("human_review", "booking_invite_failed") in _audit_actions(session)
 
 
 async def test_review_reject_sets_rejected_and_keeps_note(monkeypatch) -> None:

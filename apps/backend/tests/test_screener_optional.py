@@ -164,6 +164,22 @@ async def test_has_questions_resume_no_regression() -> None:
 # ── 3) background.process_application: ca bỏ-qua ──────────────────────────────
 
 
+class _EmptyResult:
+    """Kết quả rỗng cho `session.execute` trong mock: SCH-2 tra "đã có link đặt lịch còn sống chưa"
+    (active_session) và huỷ link khi từ chối (cancel_sessions). Mặc định: chưa có, không huỷ gì."""
+
+    rowcount = 0
+
+    def scalar_one_or_none(self):  # noqa: ANN201
+        return None
+
+    def scalars(self):  # noqa: ANN201
+        return self
+
+    def all(self) -> list:
+        return []
+
+
 class _FakeSession:
     def __init__(self, rows: dict) -> None:
         self._rows = rows
@@ -178,6 +194,9 @@ class _FakeSession:
 
     async def flush(self) -> None:
         pass
+
+    async def execute(self, *_a, **_kw):  # noqa: ANN201
+        return _EmptyResult()
 
     async def commit(self) -> None:
         self.commits += 1
@@ -226,7 +245,9 @@ def _no_q_out(branch: str, status: str) -> dict:
 
 
 async def test_process_no_questions_auto_invite_sends_invite(monkeypatch) -> None:
-    """No-questions + auto_invite ON: ca sạch → thư mời THẬT (INTERVIEW_SCHEDULED) NGAY lần chạy đầu."""
+    """No-questions + auto_invite ON: ca sạch → thư mời THẬT kèm link đặt lịch NGAY lần chạy đầu.
+
+    SCH-2: đích đến là AWAITING_BOOKING (chờ ứng viên chọn giờ), không phải INTERVIEW_SCHEDULED."""
     from app.agents.nodes import scheduler
     from app.tasks import background
 
@@ -249,11 +270,12 @@ async def test_process_no_questions_auto_invite_sends_invite(monkeypatch) -> Non
 
     await background.process_application(20)
 
-    assert app_row.status == ApplicationStatus.INTERVIEW_SCHEDULED.value  # chỉ đặt khi thư mời đã gửi
+    assert app_row.status == ApplicationStatus.AWAITING_BOOKING.value  # chỉ đặt khi thư mời đã gửi
     assert captured["mode"] == "invite" and captured["applicant_email"] == "me@e.com"
     assert captured["candidate_name"] == "Nguyễn Văn A" and captured["job_title"] == "Backend Intern"
+    assert "/booking/" in captured["booking_url"]
     audits = [(a.node, a.action) for a in session.added if isinstance(a, AuditLog)]
-    assert ("gate", "auto_invite") in audits
+    assert ("gate", "booking_invite_sent") in audits
     assert ("screener", "screener_skipped") in audits  # audit ghi rõ đã BỎ QUA
 
 

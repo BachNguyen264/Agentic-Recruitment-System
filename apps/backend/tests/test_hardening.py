@@ -386,3 +386,71 @@ async def test_disabled_limiter_lets_everything_through(path: str) -> None:
     async with _client(app) as c:
         codes = [(await c.post(path)).status_code for _ in range(5)]
     assert codes == [200] * 5
+
+
+# ── 3) Kiểm nguồn (CSRF) — SCH-3, sau adversarial review ──────────────
+#
+# Vì sao lớp này tồn tại: phiên HR là cookie `SameSite=None` (bắt buộc khi frontend và backend khác
+# domain), nên trình duyệt gửi kèm nó cả khi request đến từ trang lạ. CORS KHÔNG chặn được: một POST
+# KHÔNG THÂN là "simple request", không preflight — Starlette chạy xong handler rồi mới quyết định
+# có trả header CORS hay không, tức TÁC DỤNG PHỤ ĐÃ XẢY RA. Trước SCH-3 mọi mutation HR đều nhận
+# thân JSON nên bị ép preflight và an toàn một cách TÌNH CỜ; lát này thêm hai endpoint không-thân
+# (huỷ lịch / gửi lại link) nên sự tình cờ đó hết hiệu lực.
+
+
+def _origin_app() -> FastAPI:
+    from app.core.hardening import OriginCheckMiddleware
+
+    app = FastAPI()
+
+    @app.post("/api/applications/1/booking/cancel")
+    async def cancel() -> dict:
+        return {"cancelled": True}
+
+    @app.get("/api/applications")
+    async def listing() -> dict:
+        return {"ok": True}
+
+    app.add_middleware(
+        OriginCheckMiddleware,
+        allowed=frozenset({"https://hr.example.com"}),
+        allow_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    )
+    return app
+
+
+async def test_origin_check_blocks_cross_site_state_change() -> None:
+    """Trang lạ POST kèm cookie phiên → 403, và handler KHÔNG được chạy."""
+    async with _client(_origin_app()) as c:
+        r = await c.post(
+            "/api/applications/1/booking/cancel",
+            headers={"origin": "https://evil.example", "content-type": "application/x-www-form-urlencoded"},
+        )
+    assert r.status_code == 403
+    assert "cancelled" not in r.text  # tác dụng phụ KHÔNG xảy ra, không chỉ bị giấu phản hồi
+
+
+@pytest.mark.parametrize("origin", ["https://hr.example.com", "http://localhost:3000"])
+async def test_origin_check_allows_own_frontend(origin: str) -> None:
+    """Cùng danh sách với CORS: đăng nhập chạy được thì kiểm này không thể chặn nhầm frontend thật."""
+    async with _client(_origin_app()) as c:
+        r = await c.post("/api/applications/1/booking/cancel", headers={"origin": origin})
+    assert r.status_code == 200
+
+
+async def test_origin_check_allows_non_browser_clients() -> None:
+    """Thiếu `Origin` = không phải trình duyệt (curl, script vận hành, load test).
+
+    Không có cookie ambient để lợi dụng, nên chặn ở đây chỉ giết công cụ của chính mình mà không
+    chặn được cuộc tấn công nào.
+    """
+    async with _client(_origin_app()) as c:
+        r = await c.post("/api/applications/1/booking/cancel")
+    assert r.status_code == 200
+
+
+async def test_origin_check_leaves_reads_alone() -> None:
+    """GET không đổi trạng thái → không kiểm. Siết cả đường đọc là tự chuốc lấy sự cố vặt."""
+    async with _client(_origin_app()) as c:
+        r = await c.get("/api/applications", headers={"origin": "https://evil.example"})
+    assert r.status_code == 200

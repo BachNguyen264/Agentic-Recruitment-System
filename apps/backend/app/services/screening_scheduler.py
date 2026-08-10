@@ -15,7 +15,7 @@ from typing import Protocol
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.logging import get_logger
-from app.services import screening_timeout, stuck_applications
+from app.services import booking_lifecycle, screening_timeout, stuck_applications
 
 logger = get_logger("app.services.screening_scheduler")
 
@@ -69,6 +69,11 @@ class InProcessScheduler:
                 # gián đoạn là hai chuyện khác nhau). Một vòng lỗi ở sweep trên chỉ hoãn lưới này tới
                 # vòng sau — cả hai đều idempotent nên hoãn là vô hại.
                 await stuck_applications.sweep_stuck_once(AsyncSessionLocal)
+                # Lưới THỨ BA (SCH-3): vòng đời lịch phỏng vấn — nhắc trước buổi PV, nhắc chọn lịch,
+                # liên kết hết hạn → PENDING_REVIEW[booking_no_response]. Đi chung vòng quét vì cùng
+                # nhịp + cùng cơ chế; nghiệp vụ nằm ở module RIÊNG (`booking_lifecycle`) đúng seam
+                # 08c. KHÔNG dựng cơ chế nền thứ hai chỉ vì có thêm một loại deadline.
+                await booking_lifecycle.sweep_once(AsyncSessionLocal)
             except asyncio.CancelledError:
                 raise  # dừng sạch khi stop()
             except Exception:  # noqa: BLE001 — một vòng lỗi KHÔNG giết loop (sweep vòng sau)

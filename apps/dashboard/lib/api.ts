@@ -12,6 +12,9 @@ import type {
   RubricSuggestResult,
   ScreenerForm,
   ScreenerSubmitResult,
+  BookingView,
+  BookingCancelResult,
+  BookingConfirmResult,
 } from "@ars/shared-types";
 
 // Base URL backend.
@@ -283,4 +286,82 @@ export async function parseCv(file: File): Promise<ParseCvResponse> {
   }
   if (!res.ok) throw new Error(`HTTP ${res.status} khi phân tích CV`);
   return (await res.json()) as ParseCvResponse;
+}
+
+// ── Đặt lịch phỏng vấn (công khai, SCH-2 · PRD §10b) ──────────────────────────
+// Lỗi mang theo HTTP status vì trang chọn giờ phải PHÂN BIỆT được: 409 = thua race
+// (làm mới danh sách rồi mời chọn lại) vs 404/410 = link hỏng/hết hạn (hiện thông báo).
+export class BookingApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "BookingApiError";
+    this.status = status;
+  }
+}
+
+async function bookingFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { credentials: CREDENTIALS, ...init });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new BookingApiError(body?.detail ?? `HTTP ${res.status}`, res.status);
+  }
+  return (await res.json()) as T;
+}
+
+// Mở link đặt lịch: backend sinh slot LƯỜI ngay lúc này + giữ chỗ vài phút. Mở lại → ĐÚNG slot cũ.
+export async function getBooking(token: string): Promise<BookingView> {
+  return bookingFetch<BookingView>(`/api/public/booking/${encodeURIComponent(token)}`);
+}
+
+// Chốt một khung giờ. 409 = giờ vừa bị người khác đặt HOẶC chỗ giữ đã hết hạn → tải lại danh sách.
+export async function confirmBooking(
+  token: string,
+  bookingId: number,
+): Promise<BookingConfirmResult> {
+  return bookingFetch<BookingConfirmResult>(
+    `/api/public/booking/${encodeURIComponent(token)}/confirm`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ booking_id: bookingId }),
+    },
+  );
+}
+
+// Ứng viên tự huỷ lịch qua CHÍNH link đặt lịch (SCH-3 · FR-BOOK-4). Khung giờ nhả NGAY.
+// `cancelled=false` là kết quả HỢP LỆ (bấm hai lần / HR đã huỷ trước), không phải lỗi.
+export async function cancelBooking(token: string): Promise<BookingCancelResult> {
+  return bookingFetch<BookingCancelResult>(
+    `/api/public/booking/${encodeURIComponent(token)}/cancel`,
+    { method: "POST" },
+  );
+}
+
+// ── HR quản lý lịch (SCH-3 §3.4) — cần đăng nhập (require_hr) ────────────────
+// Hai hàm này GHÉP LẠI chính là "đổi lịch": huỷ rồi gửi lại link. Không có luồng dời-lịch riêng.
+//
+// Không dùng `postJson`: nó nuốt `detail` của backend thành "HTTP 409 khi POST /api/…". Ở đây
+// backend nói CHÍNH XÁC vì sao thao tác không hợp lệ ("Nếu đã có lịch, hãy Huỷ lịch trước") — mất
+// câu đó thì HR nhìn màn hình mà không biết phải làm gì tiếp.
+async function scheduleAction(path: string): Promise<ApplicationDetail> {
+  const res = await fetch(`${API_BASE}${path}`, { method: "POST", credentials: CREDENTIALS });
+  if (res.status === 401) {
+    redirectToLogin();
+    throw new Error("Chưa đăng nhập");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? `HTTP ${res.status} khi POST ${path}`);
+  }
+  return (await res.json()) as ApplicationDetail;
+}
+
+export async function cancelInterview(id: number): Promise<ApplicationDetail> {
+  return scheduleAction(`/api/applications/${id}/booking/cancel`);
+}
+
+export async function resendBookingLink(id: number): Promise<ApplicationDetail> {
+  return scheduleAction(`/api/applications/${id}/booking/resend`);
 }

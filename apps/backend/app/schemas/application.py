@@ -36,6 +36,15 @@ class PublicSubmitResponse(BaseModel):
     message: str = "Đã nhận hồ sơ. Chúng tôi sẽ liên hệ với bạn qua email."
 
 
+class BookedInterview(BaseModel):
+    """Khung giờ phỏng vấn ứng viên đã tự chọn (SCH-2). Chỉ mốc thời gian — HR không cần id nội bộ."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    start_at: datetime
+    end_at: datetime
+
+
 class ApplicationRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -60,6 +69,18 @@ class ApplicationRead(BaseModel):
     # Câu trả lời sàng lọc [{question, answer}] — hiện cho HR (PRD §7.3, §11). Rỗng nếu chưa/không
     # sàng lọc. CHỈ populate ở endpoint chi tiết (list để rỗng, tránh N+1).
     screener_answers: list = Field(default_factory=list)
+    # Lịch phỏng vấn ĐÃ chốt (SCH-2 · PRD §10b) — None nếu ứng viên chưa chọn giờ. CHỈ populate ở
+    # endpoint chi tiết (như screener_answers, tránh N+1 ở danh sách).
+    interview: BookedInterview | None = None
+    # SCH-3 (FR-BOOK-6): ứng viên ĐÃ mở link nhưng kho khung giờ trống rỗng. Cần một trường RIÊNG
+    # chứ không suy từ `status`, vì cả hai tình huống "chưa bấm link" và "bấm rồi mà hết lịch" đều
+    # đứng ở `AWAITING_BOOKING` — gộp lại thành một nhãn là đổ lỗi cho người không có lỗi.
+    booking_no_slots: bool = False
+    # Hồ sơ này đã TỪNG được phát liên kết đặt lịch chưa (SCH-3). Gương của điều kiện
+    # `has_any_session` mà `resend_booking_link` dùng để chặn: thiếu nó, dashboard hiện nút "Gửi
+    # lại link" cho MỌI ca `PENDING_REVIEW` — kể cả ca chưa ai duyệt — và HR chỉ biết mình bấm nhầm
+    # sau khi nhận 409. CHỈ populate ở endpoint chi tiết (như `interview`, tránh N+1 ở danh sách).
+    has_booking_link: bool = False
     created_at: datetime
     updated_at: datetime
 

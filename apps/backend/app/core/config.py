@@ -107,6 +107,42 @@ class Settings(BaseSettings):
     # hồ sơ đang chạy khoẻ mạnh. float để verify đặt ngưỡng nhỏ; <= 0 = TẮT lưới.
     stuck_application_timeout_minutes: float = 30.0
 
+    # ── Đặt lịch phỏng vấn (SCH-1 — PRD §10b.7, FR-BOOK-5) ───────────
+    # Khả dụng là TOÀN CỤC (không theo từng JD) — đúng mô hình single-tenant. Đọc/validate qua
+    # `services/booking_config.load_booking_config()`; nghiệp vụ KHÔNG đọc thẳng mấy biến này.
+    booking_timezone: str = "Asia/Ho_Chi_Minh"
+    # Ngày làm việc theo ISO weekday (1=Thứ Hai … 7=Chủ Nhật). Nhận "1-5", "1,3,5", "1-5,7".
+    booking_work_days: str = "1-5"
+    booking_work_start: str = "08:00"
+    booking_work_end: str = "17:30"
+    # Nghỉ trưa "HH:MM-HH:MM"; để RỖNG = không nghỉ trưa.
+    booking_lunch: str = "12:00-13:30"
+    booking_duration_minutes: int = 60
+    booking_buffer_minutes: int = 15
+    # KHÔNG mời giờ sớm hơn ngần này kể từ lúc ứng viên bấm link (ứng viên cần thời gian thu xếp).
+    booking_lead_time_hours: float = 24
+    # SỨC CHỨA (chỉnh ở SCH-3 sau khi đo). Ba số này quyết định "bao nhiêu ứng viên xem link cùng lúc
+    # thì lịch cạn": mỗi lượt xem giữ `slots_offered` khung trong `hold_minutes`, tổng kho là
+    # max_per_day × số ngày làm trong window. 4×14 ngày (~36 khung) chỉ đủ ~7 người xem đồng thời —
+    # đo ở SCH-2. 6×21 ngày ≈ 90 khung ⇒ ~18 người, và hold 5 phút trả khung về kho nhanh gấp đôi.
+    booking_max_per_day: int = 6
+    booking_window_days: int = 21
+    booking_slots_offered: int = 5
+    # Hai đồng hồ KHÁC NHAU (PRD §10b.3): HOLD = giữ chỗ trong MỘT phiên chọn; LINK_TTL = ứng viên
+    # có bao lâu để BẮT ĐẦU đặt lịch. float để verify đặt ngưỡng nhỏ (như screener_deadline_hours).
+    booking_hold_minutes: float = 5
+    booking_link_ttl_hours: float = 72
+    # ── Vòng đời lịch (SCH-3 — PRD §10b.6, FR-BOOK-3/4) ──
+    # Nhắc TRƯỚC BUỔI PHỎNG VẤN: gửi một lần khi buổi PV còn cách ngần này giờ (email + .ics).
+    booking_interview_reminder_hours: float = 24
+    # Nhắc CHỌN LỊCH: gửi một lần khi liên kết đặt lịch còn ngần này giờ nữa là hết hạn. Đo theo
+    # thời gian CÒN LẠI (khác `screener_reminder_hours` — cái đó đo từ lúc gửi). Hết hạn mà chưa đặt
+    # → PENDING_REVIEW[booking_no_response], TUYỆT ĐỐI không auto-reject (im lặng ≠ từ chối).
+    booking_reminder_hours: float = 24
+    # Seam lịch ngoài (PRD §10b.8): `ics` = đính kèm .ics vào email (không cần OAuth).
+    # Chừa đường cho `google` (PRD §17) mà KHÔNG phải sửa nghiệp vụ.
+    calendar_provider: str = "ics"
+
     # ── Screener magic-link (08b — PRD §7.3, §10, §12.2) ─────────────
     # Gốc URL frontend công khai để dựng magic-link trong email Screener:
     # {frontend_base_url}/screening/{token}. Dev: dashboard Next chạy :3000. Đổi khi deploy.

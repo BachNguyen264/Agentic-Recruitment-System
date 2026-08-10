@@ -16,7 +16,11 @@ from app.api.deps import require_hr
 from app.api.routes import agents, applications, auth, health, jobs, public
 from app.core.config import settings
 from app.core.database import engine
-from app.core.hardening import BodySizeLimitMiddleware, RateLimitMiddleware
+from app.core.hardening import (
+    BodySizeLimitMiddleware,
+    OriginCheckMiddleware,
+    RateLimitMiddleware,
+)
 from app.core.logging import get_logger, setup_logging
 from app.core.qdrant_client import qdrant_client
 from app.core.redis_client import redis_client
@@ -76,6 +80,17 @@ app.add_middleware(
     enabled=settings.rate_limit_enabled,
 )
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
+
+# CSRF (SCH-3, sau adversarial review). Nằm NGOÀI rate-limit/body-size (thêm SAU = ngoài hơn) nhưng
+# TRONG CORS, để phản hồi 403 vẫn có header CORS và frontend đọc được thông điệp.
+# Cùng danh sách với CORS: nếu đăng nhập đang chạy được thì kiểm này không thể chặn nhầm frontend
+# thật. Thiếu header `Origin` (curl/script vận hành/load test) → CHO QUA: không phải trình duyệt thì
+# không có cookie ambient để lợi dụng.
+app.add_middleware(
+    OriginCheckMiddleware,
+    allowed=frozenset(_CORS_ORIGINS),
+    allow_regex="" if _CORS_ORIGINS else r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+)
 
 app.add_middleware(
     CORSMiddleware,
