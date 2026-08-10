@@ -155,3 +155,160 @@ async def test_dispatch_uses_mode_verbatim_as_kind(monkeypatch) -> None:
     actions = [a.action for a in session.added if isinstance(a, AuditLog)]
     assert f"email_sent:{kind}" in actions
     assert kind == EmailKind.SCREENER_REMINDER.value
+
+
+# ── Giữ nhịp + retry (EMAIL-1 §3.3) ──────────────────────────────────────────
+from app.services import email_service
+
+
+@pytest.fixture
+def paced(monkeypatch):
+    """Thời gian + sleep được TIÊM VÀO (như RateLimiter của hardening) — test không ngủ thật."""
+    clock = {"t": 1000.0}
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+        clock["t"] += seconds
+
+    monkeypatch.setattr(email_service, "_monotonic", lambda: clock["t"])
+    monkeypatch.setattr(email_service, "_sleep", fake_sleep)
+    monkeypatch.setattr(email_service, "_last_send_at", 0.0)
+    monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(email_service.settings, "email_min_interval_ms", 550)
+    monkeypatch.setattr(email_service.settings, "email_max_retries", 3)
+    return slept
+
+
+async def test_consecutive_sends_keep_min_interval(paced, monkeypatch) -> None:
+    """Ba lượt gửi liên tiếp phải cách nhau ≥ EMAIL_MIN_INTERVAL_MS — sweep bắn cả cụm là chuyện thường."""
+    monkeypatch.setattr(email_service, "_send_sync", lambda *a: {"id": "e"})
+    for _ in range(3):
+        await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>")
+    # lượt đầu không phải chờ; hai lượt sau mỗi lượt ngủ đúng 0.55s
+    assert [round(s, 3) for s in paced if s > 0] == [0.55, 0.55]
+
+
+def _resend_error(code, error_type):  # noqa: ANN001, ANN202
+    from resend.exceptions import ResendError
+
+    return ResendError(code=code, error_type=error_type, message="x", suggested_action="")
+
+
+async def test_retries_on_burst_rate_limit_then_succeeds(paced, monkeypatch) -> None:
+    calls = {"n": 0}
+
+    def flaky(*_a):  # noqa: ANN002, ANN202
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _resend_error("429", "rate_limit_exceeded")
+        return {"id": "e_ok"}
+
+    monkeypatch.setattr(email_service, "_send_sync", flaky)
+    assert await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>") == "e_ok"
+    assert calls["n"] == 2
+
+
+async def test_does_not_retry_permanent_error(paced, monkeypatch) -> None:
+    """400 = địa chỉ sai định dạng. Thử lại 3 lần chỉ tốn 3 lượt gọi và vẫn hỏng y hệt."""
+    calls = {"n": 0}
+
+    def bad(*_a):  # noqa: ANN002, ANN202
+        calls["n"] += 1
+        raise _resend_error("400", "validation_error")
+
+    monkeypatch.setattr(email_service, "_send_sync", bad)
+    with pytest.raises(email_service.EmailError):
+        await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>")
+    assert calls["n"] == 1
+
+
+async def test_daily_quota_is_distinguishable_and_not_retried(paced, monkeypatch) -> None:
+    """Cạn quota ngày là tài nguyên DÙNG CHUNG cạn: mọi ứng viên khác cũng câm. Phải phân biệt được."""
+    calls = {"n": 0}
+
+    def quota(*_a):  # noqa: ANN002, ANN202
+        calls["n"] += 1
+        raise _resend_error("429", "daily_quota_exceeded")
+
+    monkeypatch.setattr(email_service, "_send_sync", quota)
+    with pytest.raises(email_service.EmailQuotaExhausted):
+        await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>")
+    assert calls["n"] == 1
+
+
+async def test_gives_up_after_max_retries(paced, monkeypatch) -> None:
+    calls = {"n": 0}
+
+    def always_429(*_a):  # noqa: ANN002, ANN202
+        calls["n"] += 1
+        raise _resend_error("429", "rate_limit_exceeded")
+
+    monkeypatch.setattr(email_service, "_send_sync", always_429)
+    with pytest.raises(email_service.EmailError):
+        await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>")
+    assert calls["n"] == 4  # 1 lượt đầu + 3 lần thử lại
+
+
+async def test_dispatch_does_not_touch_db_before_sending(monkeypatch) -> None:
+    """Retry kéo dài lượt gửi tới ~8s. Nếu `_dispatch` chạm DB TRƯỚC khi gửi thì nó mở một
+    transaction và ôm một connection của pool suốt ngần ấy — Load boundary cấm (pool chỉ 15).
+    Khoá bằng test vì đây là loại lỗi không có triệu chứng cho tới lúc tải cao."""
+    touched_before_send: list[str] = []
+    sent = {"done": False}
+
+    class TrackingSession(FakeSession):
+        def add(self, obj) -> None:
+            if not sent["done"]:
+                touched_before_send.append(type(obj).__name__)
+            super().add(obj)
+
+        async def flush(self) -> None:
+            if not sent["done"]:
+                touched_before_send.append("flush")
+
+    async def fake_send(*, to, subject, html, attachments=None):  # noqa: ANN001, ANN003
+        sent["done"] = True
+        return "e_1"
+
+    monkeypatch.setattr(scheduler.email_service, "send_email", fake_send)
+    await scheduler.notify_decision(
+        TrackingSession(), "reject", application_id=1, applicant_email="a@e.com",
+        candidate_name="A", job_title="B",
+    )
+    assert touched_before_send == []
+
+
+async def test_dispatch_commits_exactly_once_after_adding_delivery_row(monkeypatch) -> None:
+    """Bất biến "hàng EmailDelivery và dòng AuditLog nằm CÙNG MỘT transaction" (Task 2) không có
+    test nào canh trực tiếp: `FakeSession.commit()` gốc không đếm số lần gọi, nên một cài đặt lỡ
+    tách delivery-row và audit ra HAI lượt commit riêng vẫn pass y hệt các test khác ở trên. Test
+    này khoá bất biến đó: một lượt gửi thành công phải ⇒ đúng MỘT lần `commit()`, và hàng
+    `EmailDelivery` phải được `add()` TRƯỚC lần commit đó (không phải add sau, hoặc add rồi commit
+    hai lần)."""
+    commit_count = {"n": 0}
+    added_before_commit: list[str] = []
+
+    class TrackingSession(FakeSession):
+        def add(self, obj) -> None:
+            if commit_count["n"] == 0:
+                added_before_commit.append(type(obj).__name__)
+            super().add(obj)
+
+        async def commit(self) -> None:
+            commit_count["n"] += 1
+            await super().commit()
+
+    async def fake_send(*, to, subject, html, attachments=None):  # noqa: ANN001, ANN003
+        return "e_commit"
+
+    monkeypatch.setattr(scheduler.email_service, "send_email", fake_send)
+    session = TrackingSession()
+    out = await scheduler.notify_decision(
+        session, "reject", application_id=1, applicant_email="a@e.com",
+        candidate_name="A", job_title="B",
+    )
+
+    assert out["email_sent"] is True
+    assert commit_count["n"] == 1
+    assert "EmailDelivery" in added_before_commit

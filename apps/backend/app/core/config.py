@@ -228,6 +228,16 @@ class Settings(BaseSettings):
     resend_api_key: str | None = None
     email_from: str = "onboarding@resend.dev"
 
+    # ── Giữ nhịp + retry khi gọi Resend (EMAIL-1) ────────────────────
+    # Resend giới hạn 2 req/s. Sweep loop (08c + SCH-3) có thể bắn nhiều thư trong MỘT vòng, nên
+    # lượt gửi được NỐI TIẾP HOÁ và cách nhau ít nhất ngần này — tự đâm giới hạn của chính mình là
+    # lỗi ta gây ra, không phải lỗi ngoại cảnh. 550ms > 500ms để có biên an toàn.
+    email_min_interval_ms: int = 550
+    # Số lần thử lại tối đa cho lỗi TẠM THỜI (429 do bùng nổ, 5xx, lỗi mạng). KHÔNG áp cho lỗi
+    # vĩnh viễn (400/422 — địa chỉ sai định dạng) và KHÔNG áp cho cạn quota ngày/tháng: thử lại
+    # một hạn mức đã cạn chỉ làm chậm mọi lá thư khác đang xếp hàng sau.
+    email_max_retries: int = 3
+
     # ── Langfuse (observability — phase sau) ─────────────────────────
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None

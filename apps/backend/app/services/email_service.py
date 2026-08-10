@@ -9,15 +9,66 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import random
+import time
 
 from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger("app.services.email")
 
+# Điểm TIÊM cho test (cùng triết lý `now` của core/hardening.RateLimiter): thời gian và giấc ngủ đi
+# qua hai tên module-level, nên test đo được nhịp mà không phải ngủ thật.
+_sleep = asyncio.sleep
+_monotonic = time.monotonic
+
+# Nối tiếp hoá MỌI lượt gọi Resend trong tiến trình. Không có nó thì sweep loop (08c + SCH-3) bắn
+# cả cụm thư trong một vòng và tự đâm giới hạn 2 req/s của chính mình — rồi vì lá thư đó không có
+# đường thử lại, nó mất luôn. Giữ khoá QUA CẢ vòng retry là CÓ CHỦ Ý: 429 nghĩa là "chậm lại", nên
+# để lượt gửi khác chen vào giữa lúc đang lùi là làm hỏng đúng thứ ta đang sửa.
+_send_lock = asyncio.Lock()
+_last_send_at: float = 0.0
+
+# Mã HTTP mà thử lại chắc chắn vô ích: sai định dạng / sai khoá / không tồn tại.
+_PERMANENT_CODES = frozenset({"400", "401", "403", "404", "422"})
+# Hai loại 429 KHÁC NHAU về bản chất: bùng nổ (chậm lại là qua) vs cạn hạn mức ngày/tháng (chờ tới
+# ngày mai mới qua). Gộp chung là biến "hệ thống câm cả ngày" thành một dòng log lẫn vào lỗi mạng.
+_QUOTA_TYPES = frozenset({"daily_quota_exceeded", "monthly_quota_exceeded"})
+
+_MAX_BACKOFF_SECONDS = 8.0
+
 
 class EmailError(Exception):
     """Gửi email thất bại (thiếu cấu hình / lỗi Resend)."""
+
+
+class EmailQuotaExhausted(EmailError):
+    """Cạn hạn mức Resend (ngày/tháng).
+
+    Tách khỏi `EmailError` vì đây KHÔNG phải sự cố của một lá thư mà của **tài nguyên dùng chung**:
+    Resend là kênh duy nhất của cả hệ thống, nên cạn quota nghĩa là thư mời, thư từ chối và
+    magic-link sàng lọc của MỌI ứng viên khác cũng câm. Nó phải nhìn ra được ngay trong log.
+    """
+
+
+def _classify(exc: Exception) -> str:
+    """-> "retry" | "quota" | "permanent". Mặc định "retry" cho lỗi lạ/lỗi mạng (hỏng-mở)."""
+    from resend.exceptions import ResendError
+
+    if isinstance(exc, ResendError):
+        if getattr(exc, "error_type", "") in _QUOTA_TYPES:
+            return "quota"
+        if str(getattr(exc, "code", "")) in _PERMANENT_CODES:
+            return "permanent"
+        return "retry"  # 429 bùng nổ + 5xx + mã chưa biết
+    return "retry"  # timeout / lỗi mạng của tầng requests
+
+
+def _backoff_seconds(attempt: int) -> float:
+    """Luỹ thừa + jitter. Jitter để nhiều tiến trình (nếu sau này chạy nhiều instance) không cùng
+    thức dậy một lúc rồi lại cùng đâm vào giới hạn."""
+    base = min(_MAX_BACKOFF_SECONDS, 0.5 * (2 ** (attempt - 1)))
+    return base * (1.0 + random.random() * 0.25)
 
 
 def _send_sync(to: str, subject: str, html: str, attachments: list[dict] | None) -> dict | None:
@@ -29,6 +80,44 @@ def _send_sync(to: str, subject: str, html: str, attachments: list[dict] | None)
     if attachments:
         payload["attachments"] = attachments
     return resend.Emails.send(payload)
+
+
+async def _paced_send(
+    to: str, subject: str, html: str, attachments: list[dict] | None
+) -> dict | None:
+    """Gọi Resend đúng nhịp + thử lại lỗi tạm thời. Đây là chỗ DUY NHẤT chạm `_send_sync`."""
+    global _last_send_at
+
+    async with _send_lock:
+        attempt = 0
+        while True:
+            wait = (settings.email_min_interval_ms / 1000.0) - (_monotonic() - _last_send_at)
+            if wait > 0:
+                await _sleep(wait)
+            try:
+                response = await asyncio.to_thread(_send_sync, to, subject, html, attachments)
+            except Exception as exc:  # noqa: BLE001 — phân loại rồi mới quyết thử lại hay không
+                # Lượt HỎNG vẫn tính là đã chạm Resend: nó vẫn tiêu một lượt của hạn mức 2 req/s.
+                _last_send_at = _monotonic()
+                kind = _classify(exc)
+                if kind == "quota":
+                    logger.error(
+                        "email: CẠN HẠN MỨC RESEND — mọi thư của MỌI ứng viên sẽ câm cho tới khi "
+                        "hạn mức đặt lại. Chi tiết: %s", exc,
+                    )
+                    raise EmailQuotaExhausted(f"Cạn hạn mức Resend: {exc}") from exc
+                if kind == "permanent" or attempt >= settings.email_max_retries:
+                    raise EmailError(f"Resend gửi email thất bại: {exc}") from exc
+                attempt += 1
+                delay = _backoff_seconds(attempt)
+                logger.warning(
+                    "email: lỗi tạm thời (%s) — thử lại lần %s/%s sau %.2fs",
+                    exc, attempt, settings.email_max_retries, delay,
+                )
+                await _sleep(delay)
+                continue
+            _last_send_at = _monotonic()
+            return response
 
 
 async def send_email(
@@ -59,10 +148,7 @@ async def send_email(
         }
         for name, data, content_type in (attachments or [])
     ]
-    try:
-        response = await asyncio.to_thread(_send_sync, to, subject, html, encoded)
-    except Exception as exc:  # noqa: BLE001 — gói mọi lỗi Resend/mạng thành EmailError rõ ràng
-        raise EmailError(f"Resend gửi email thất bại: {exc}") from exc
+    response = await _paced_send(to, subject, html, encoded)
 
     # ID của Resend là KHOÁ ĐỐI CHIẾU duy nhất với webhook (EMAIL-1). Thiếu nó thì lá thư này không
     # theo dõi được nữa — vẫn coi là gửi THÀNH CÔNG (Resend đã nhận), chỉ mất khả năng đối soát;
