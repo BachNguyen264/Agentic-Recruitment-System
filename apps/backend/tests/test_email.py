@@ -68,13 +68,18 @@ async def test_send_email_requires_api_key(monkeypatch) -> None:
 
 async def test_send_email_wraps_resend_error(monkeypatch) -> None:
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
+    calls = {"n": 0}
 
     def boom(to: str, subject: str, html: str, attachments, idempotency_key: str) -> None:
+        calls["n"] += 1
         raise RuntimeError("network down")
 
     monkeypatch.setattr(email_service, "_send_sync", boom)
     with pytest.raises(email_service.EmailError):
         await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>")
+    # RuntimeError KHÔNG phải ResendError nên `_classify` hỏng-mở về "retry" — lỗi không rõ hình
+    # dạng thì thử lại là hành vi MONG MUỐN, không phải tai nạn. 4 = 1 lượt đầu + 3 lần thử lại.
+    assert calls["n"] == 4
 
 
 async def test_send_email_success_passes_params(monkeypatch) -> None:
