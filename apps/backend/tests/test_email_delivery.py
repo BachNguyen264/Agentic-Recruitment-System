@@ -290,7 +290,7 @@ async def test_retry_reuses_same_idempotency_key(paced, monkeypatch) -> None:
     keys_seen: list[str] = []
     calls = {"n": 0}
 
-    def flaky(to, subject, html, attachments, idempotency_key):  # noqa: ANN001, ANN202
+    def flaky(to, subject, html, text, attachments, idempotency_key):  # noqa: ANN001, ANN202
         keys_seen.append(idempotency_key)
         calls["n"] += 1
         if calls["n"] == 1:
@@ -309,7 +309,7 @@ async def test_separate_sends_get_different_idempotency_keys(paced, monkeypatch)
     Resend sẽ coi lượt gửi thứ hai là bản lặp của lượt thứ nhất và từ chối gửi nó."""
     keys_seen: list[str] = []
 
-    def ok(to, subject, html, attachments, idempotency_key):  # noqa: ANN001, ANN202
+    def ok(to, subject, html, text, attachments, idempotency_key):  # noqa: ANN001, ANN202
         keys_seen.append(idempotency_key)
         return {"id": "e"}
 

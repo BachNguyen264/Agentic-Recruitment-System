@@ -14,6 +14,7 @@ import time
 from uuid import uuid4
 
 from app.core.config import settings
+from app.core.html_text import html_to_text
 from app.core.logging import get_logger
 
 logger = get_logger("app.services.email")
@@ -77,25 +78,38 @@ def _backoff_seconds(attempt: int) -> float:
 
 
 def _send_sync(
-    to: str, subject: str, html: str, attachments: list[dict] | None, idempotency_key: str
+    to: str,
+    subject: str,
+    html: str,
+    text: str,
+    attachments: list[dict] | None,
+    idempotency_key: str,
 ) -> dict | None:
     """Gọi Resend SDK (đồng bộ) — chạy trong thread riêng qua asyncio.to_thread. Trả phản hồi thô.
 
     `idempotency_key` đi vào header `Idempotency-Key` (resend/request.py) — BẮT BUỘC, không có
     mặc định: gọi hàm này mà quên truyền khoá là lỗi lập trình, phải nổ ngay chứ không âm thầm gửi
     thư không chống-trùng được.
+
+    `text` (EMAIL-1): bản thuần văn bản đi kèm `html`. Rỗng thì KHÔNG đặt khoá `text` — tránh gửi
+    một khoá rỗng vô nghĩa lên Resend. `reply_to`: rỗng (`EMAIL_REPLY_TO` chưa cấu hình) thì KHÔNG
+    đặt khoá, giữ nguyên hành vi cũ (Resend tự dùng `from` làm nơi nhận reply).
     """
     import resend
 
     resend.api_key = settings.resend_api_key
     payload: dict = {"from": settings.email_from, "to": [to], "subject": subject, "html": html}
+    if text:
+        payload["text"] = text
+    if settings.email_reply_to:
+        payload["reply_to"] = settings.email_reply_to
     if attachments:
         payload["attachments"] = attachments
     return resend.Emails.send(payload, options={"idempotency_key": idempotency_key})
 
 
 async def _paced_send(
-    to: str, subject: str, html: str, attachments: list[dict] | None
+    to: str, subject: str, html: str, text: str, attachments: list[dict] | None
 ) -> dict | None:
     """Gọi Resend đúng nhịp + thử lại lỗi tạm thời. Đây là chỗ DUY NHẤT chạm `_send_sync`."""
     global _last_send_at
@@ -116,7 +130,7 @@ async def _paced_send(
                 await _sleep(wait)
             try:
                 response = await asyncio.to_thread(
-                    _send_sync, to, subject, html, attachments, idempotency_key
+                    _send_sync, to, subject, html, text, attachments, idempotency_key
                 )
             except Exception as exc:  # noqa: BLE001 — phân loại rồi mới quyết thử lại hay không
                 # Lượt HỎNG vẫn tính là đã chạm Resend: nó vẫn tiêu một lượt của hạn mức 2 req/s.
@@ -147,6 +161,7 @@ async def send_email(
     to: str,
     subject: str,
     html: str,
+    text: str | None = None,
     attachments: list[tuple[str, bytes, str]] | None = None,
 ) -> str | None:
     """Gửi một email, trả về `resend_email_id` (EMAIL-1 — khoá đối chiếu với webhook bounce/delivered).
@@ -159,6 +174,9 @@ async def send_email(
     `attachments`: danh sách `(tên tệp, nội dung bytes, content-type)` — SCH-2 dùng để đính `.ics`
     vào thư xác nhận lịch (PRD §12.4 FR-NOTI-1). Resend nhận nội dung dạng **base64**, nên mã hoá ở
     đây; nơi gọi chỉ việc đưa bytes thô.
+
+    `text`: bản THUẦN VĂN BẢN đi kèm `html` (EMAIL-1) — để `None` thì TỰ dẫn xuất từ `html` (caller
+    hiện tại, `scheduler._dispatch`, không tự truyền).
     """
     if not settings.resend_api_key:
         raise EmailError("RESEND_API_KEY chưa cấu hình — không gửi được email.")
@@ -170,7 +188,12 @@ async def send_email(
         }
         for name, data, content_type in (attachments or [])
     ]
-    response = await _paced_send(to, subject, html, encoded)
+    # Bản THUẦN VĂN BẢN đi kèm HTML (multipart): thư chỉ-HTML là một tín hiệu spam kinh điển, và
+    # một số ứng dụng mail vẫn hiển thị bản text. Dùng lại `html_to_text` (JD-1, 0-dependency).
+    # ⚠ `html_to_text` chỉ giữ TEXT-NODE, không giữ href — nên mọi template có liên kết đều in cả
+    # URL thô ra thân thư (xem email_templates); mất bất biến đó là bản text mất luôn link.
+    body_text = text if text is not None else html_to_text(html)
+    response = await _paced_send(to, subject, html, body_text, encoded)
 
     # ID của Resend là KHOÁ ĐỐI CHIẾU duy nhất với webhook (EMAIL-1). Thiếu nó thì lá thư này không
     # theo dõi được nữa — vẫn coi là gửi THÀNH CÔNG (Resend đã nhận), chỉ mất khả năng đối soát;

@@ -227,6 +227,10 @@ class Settings(BaseSettings):
     # Đổi sang địa chỉ thuộc domain đã xác thực khi demo public.
     resend_api_key: str | None = None
     email_from: str = "onboarding@resend.dev"
+    # Địa chỉ nhận thư trả lời (EMAIL-1). Vừa là UX (ứng viên bấm Reply là tới HR thật), vừa là tín
+    # hiệu deliverability: địa chỉ gửi kiểu `noreply@` không có hòm thư bị nhà cung cấp trừ điểm.
+    # Rỗng = không đặt `reply_to` (giữ nguyên hành vi cũ).
+    email_reply_to: str | None = None
 
     # ── Giữ nhịp + retry khi gọi Resend (EMAIL-1) ────────────────────
     # Resend giới hạn 2 req/s. Sweep loop (08c + SCH-3) có thể bắn nhiều thư trong MỘT vòng, nên
