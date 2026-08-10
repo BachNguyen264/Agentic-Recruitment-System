@@ -11,6 +11,7 @@ import asyncio
 import base64
 import random
 import time
+from uuid import uuid4
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -21,6 +22,10 @@ logger = get_logger("app.services.email")
 # qua hai tên module-level, nên test đo được nhịp mà không phải ngủ thật.
 _sleep = asyncio.sleep
 _monotonic = time.monotonic
+
+# Điểm TIÊM cho test (cùng khuôn `_sleep`/`_monotonic`): sinh khoá idempotency cho MỖI lượt gửi
+# LOGIC. Resend dùng khoá này để khử bản trùng khi cùng một request tới hai lần (xem `_paced_send`).
+_new_idempotency_key = lambda: uuid4().hex  # noqa: E731 — điểm tiêm module-level, không phải hàm nghiệp vụ
 
 # Nối tiếp hoá MỌI lượt gọi Resend trong tiến trình. Không có nó thì sweep loop (08c + SCH-3) bắn
 # cả cụm thư trong một vòng và tự đâm giới hạn 2 req/s của chính mình — rồi vì lá thư đó không có
@@ -71,15 +76,22 @@ def _backoff_seconds(attempt: int) -> float:
     return base * (1.0 + random.random() * 0.25)
 
 
-def _send_sync(to: str, subject: str, html: str, attachments: list[dict] | None) -> dict | None:
-    """Gọi Resend SDK (đồng bộ) — chạy trong thread riêng qua asyncio.to_thread. Trả phản hồi thô."""
+def _send_sync(
+    to: str, subject: str, html: str, attachments: list[dict] | None, idempotency_key: str
+) -> dict | None:
+    """Gọi Resend SDK (đồng bộ) — chạy trong thread riêng qua asyncio.to_thread. Trả phản hồi thô.
+
+    `idempotency_key` đi vào header `Idempotency-Key` (resend/request.py) — BẮT BUỘC, không có
+    mặc định: gọi hàm này mà quên truyền khoá là lỗi lập trình, phải nổ ngay chứ không âm thầm gửi
+    thư không chống-trùng được.
+    """
     import resend
 
     resend.api_key = settings.resend_api_key
     payload: dict = {"from": settings.email_from, "to": [to], "subject": subject, "html": html}
     if attachments:
         payload["attachments"] = attachments
-    return resend.Emails.send(payload)
+    return resend.Emails.send(payload, options={"idempotency_key": idempotency_key})
 
 
 async def _paced_send(
@@ -88,6 +100,14 @@ async def _paced_send(
     """Gọi Resend đúng nhịp + thử lại lỗi tạm thời. Đây là chỗ DUY NHẤT chạm `_send_sync`."""
     global _last_send_at
 
+    # Sinh MỘT khoá cho cả lượt gửi LOGIC — TRƯỚC vòng retry, dùng lại NGUYÊN VẸN qua mọi lần thử.
+    # Đây là điều Resend cần để khử được bản trùng: SDK gói MỌI lỗi transport (timeout đọc, mất kết
+    # nối — resend/request.py) thành lỗi được `_classify` xếp loại "retry được". Nếu timeout xảy ra
+    # SAU KHI Resend đã nhận thư, thử lại mà KHÔNG cùng khoá sẽ tạo ra một lá thư THỨ HAI — ứng viên
+    # nhận hai thư mời/từ chối, và mỗi bản trùng còn đốt thêm quota của kênh email DUY NHẤT của cả
+    # hệ thống. Sinh khoá TRONG vòng lặp (mỗi lần thử một khoá riêng) sẽ vô hiệu hoá toàn bộ ý nghĩa.
+    idempotency_key = _new_idempotency_key()
+
     async with _send_lock:
         attempt = 0
         while True:
@@ -95,7 +115,9 @@ async def _paced_send(
             if wait > 0:
                 await _sleep(wait)
             try:
-                response = await asyncio.to_thread(_send_sync, to, subject, html, attachments)
+                response = await asyncio.to_thread(
+                    _send_sync, to, subject, html, attachments, idempotency_key
+                )
             except Exception as exc:  # noqa: BLE001 — phân loại rồi mới quyết thử lại hay không
                 # Lượt HỎNG vẫn tính là đã chạm Resend: nó vẫn tiêu một lượt của hạn mức 2 req/s.
                 _last_send_at = _monotonic()

@@ -69,7 +69,7 @@ async def test_send_email_requires_api_key(monkeypatch) -> None:
 async def test_send_email_wraps_resend_error(monkeypatch) -> None:
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
 
-    def boom(to: str, subject: str, html: str, attachments) -> None:
+    def boom(to: str, subject: str, html: str, attachments, idempotency_key: str) -> None:
         raise RuntimeError("network down")
 
     monkeypatch.setattr(email_service, "_send_sync", boom)
@@ -81,7 +81,7 @@ async def test_send_email_success_passes_params(monkeypatch) -> None:
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
     captured: dict = {}
 
-    def fake_send(to: str, subject: str, html: str, attachments) -> dict:
+    def fake_send(to: str, subject: str, html: str, attachments, idempotency_key: str) -> dict:
         captured.update(to=to, subject=subject, html=html, attachments=attachments)
         return {"id": "email_test"}
 
@@ -99,7 +99,7 @@ async def test_send_email_encodes_attachment_base64(monkeypatch) -> None:
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
     captured: dict = {}
 
-    def fake_send(to: str, subject: str, html: str, attachments) -> dict:
+    def fake_send(to: str, subject: str, html: str, attachments, idempotency_key: str) -> dict:
         captured["attachments"] = attachments
         return {"id": "email_test"}
 
@@ -130,15 +130,18 @@ async def test_send_email_tolerates_missing_id(monkeypatch) -> None:
 
 async def test_send_email_builds_resend_payload(monkeypatch) -> None:
     # Chạy _send_sync THẬT (chỉ mock resend.Emails.send) → khoá đúng shape payload Resend:
-    # key `from`, `to` bọc thành list. Bắt lỗi sai key ('from_') / to chưa bọc list.
+    # key `from`, `to` bọc thành list, VÀ `options.idempotency_key` có mặt (EMAIL-1 — chống thư
+    # trùng khi retry, xem `_paced_send`). Bắt lỗi sai key ('from_') / to chưa bọc list / thiếu khoá.
     import resend
 
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
     monkeypatch.setattr(email_service.settings, "email_from", "onboarding@resend.dev")
     captured: dict = {}
+    captured_options: dict = {}
 
-    def fake_resend_send(params: dict) -> dict:
+    def fake_resend_send(params: dict, options: dict | None = None) -> dict:
         captured.update(params)
+        captured_options.update(options or {})
         return {"id": "email_123"}
 
     monkeypatch.setattr(resend.Emails, "send", fake_resend_send)
@@ -148,3 +151,4 @@ async def test_send_email_builds_resend_payload(monkeypatch) -> None:
     assert captured["to"] == ["a@e.com"]  # phải là list
     assert captured["subject"] == "Mời"
     assert captured["html"] == "<p>hi</p>"
+    assert captured_options["idempotency_key"]  # non-rỗng — chống thư trùng khi retry

@@ -209,6 +209,32 @@ async def test_retries_on_burst_rate_limit_then_succeeds(paced, monkeypatch) -> 
     assert calls["n"] == 2
 
 
+async def test_failed_attempt_still_paces_next_retry(paced, monkeypatch) -> None:
+    """Khoá bất biến "mốc thời gian phải cập nhật ở nhánh LỖI" (review độc lập bắt bằng mutation:
+    xoá dòng `_last_send_at = _monotonic()` trong `except` của `_paced_send` → test cũ vẫn xanh hết,
+    vì backoff của lượt lỗi đầu tiên thường ĐÃ đủ dài để lấn hết khoảng giữ nhịp một cách tình cờ).
+
+    Ép `_backoff_seconds` về một giá trị CỐ ĐỊNH NHỎ HƠN khoảng giữ nhịp (0.1s < 0.55s) để hai cơ
+    chế — "chờ backoff" và "chờ đủ giữ nhịp kể từ lượt chạm Resend gần nhất" — tách bạch được trong
+    danh sách `slept`: đúng thì có CẢ HAI (backoff 0.1s RỒI giữ-nhịp 0.45s còn thiếu, vì lượt lỗi
+    ĐÃ tính là "chạm Resend" lúc 1000.0 + 0.0, backoff xong đồng hồ mới ở 1000.1, còn thiếu 0.45s
+    mới đủ 0.55s kể từ lượt lỗi). Mất dòng cập nhật mốc thì `_last_send_at` bị đóng băng ở giá trị
+    trước lượt gọi này (do `paced` đặt = 0.0), nên `wait` ở vòng lặp kế tiếp âm rất sâu → CHỈ còn
+    một khoảng ngủ (0.1s backoff), thiếu hẳn khoảng giữ-nhịp 0.45s — assertion dưới đây ĐỎ."""
+    monkeypatch.setattr(email_service, "_backoff_seconds", lambda attempt: 0.1)
+    calls = {"n": 0}
+
+    def flaky(*_a):  # noqa: ANN002, ANN202
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _resend_error("429", "rate_limit_exceeded")
+        return {"id": "e_ok"}
+
+    monkeypatch.setattr(email_service, "_send_sync", flaky)
+    assert await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>") == "e_ok"
+    assert [round(s, 3) for s in paced] == [0.1, 0.45]
+
+
 async def test_does_not_retry_permanent_error(paced, monkeypatch) -> None:
     """400 = địa chỉ sai định dạng. Thử lại 3 lần chỉ tốn 3 lượt gọi và vẫn hỏng y hệt."""
     calls = {"n": 0}
@@ -248,6 +274,50 @@ async def test_gives_up_after_max_retries(paced, monkeypatch) -> None:
     with pytest.raises(email_service.EmailError):
         await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>")
     assert calls["n"] == 4  # 1 lượt đầu + 3 lần thử lại
+
+
+# ── Idempotency key khi retry (review độc lập I3) ────────────────────────────
+# Resend gói MỌI lỗi transport (timeout đọc, mất kết nối — resend/request.py) thành lỗi được
+# `_classify` xếp "retry được". Nếu timeout xảy ra SAU KHI Resend đã nhận thư, thử lại KHÔNG
+# idempotency key sẽ tạo ra một lá thư THỨ HAI — ứng viên nhận hai thư mời/từ chối, và mỗi bản
+# trùng còn đốt thêm quota của kênh email DUY NHẤT của cả hệ thống. Rủi ro này KHÔNG tồn tại trước
+# khi task này thêm retry (trước đây một lượt lỗi là lỗi luôn, không có lượt hai).
+
+
+async def test_retry_reuses_same_idempotency_key(paced, monkeypatch) -> None:
+    """Mọi lần thử của CÙNG một lượt gửi LOGIC (429 rồi thành công) phải mang ĐÚNG MỘT khoá —
+    khoá sinh MỘT LẦN trước vòng retry, không phải mỗi lần thử một khoá riêng."""
+    keys_seen: list[str] = []
+    calls = {"n": 0}
+
+    def flaky(to, subject, html, attachments, idempotency_key):  # noqa: ANN001, ANN202
+        keys_seen.append(idempotency_key)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _resend_error("429", "rate_limit_exceeded")
+        return {"id": "e_ok"}
+
+    monkeypatch.setattr(email_service, "_send_sync", flaky)
+    assert await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>") == "e_ok"
+    assert calls["n"] == 2
+    assert len(keys_seen) == 2
+    assert keys_seen[0] == keys_seen[1]  # cùng khoá cho cả hai lần thử của MỘT lượt gửi
+
+
+async def test_separate_sends_get_different_idempotency_keys(paced, monkeypatch) -> None:
+    """Hai lượt gửi LOGIC riêng biệt (hai email khác nhau) phải mang khoá KHÁC nhau — nếu không,
+    Resend sẽ coi lượt gửi thứ hai là bản lặp của lượt thứ nhất và từ chối gửi nó."""
+    keys_seen: list[str] = []
+
+    def ok(to, subject, html, attachments, idempotency_key):  # noqa: ANN001, ANN202
+        keys_seen.append(idempotency_key)
+        return {"id": "e"}
+
+    monkeypatch.setattr(email_service, "_send_sync", ok)
+    await email_service.send_email(to="a@e.com", subject="s1", html="<p>h1</p>")
+    await email_service.send_email(to="a@e.com", subject="s2", html="<p>h2</p>")
+    assert len(keys_seen) == 2
+    assert keys_seen[0] != keys_seen[1]
 
 
 async def test_dispatch_does_not_touch_db_before_sending(monkeypatch) -> None:
