@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
+from app.core.config import settings
 from app.services.review import recommendation as _recommendation
+
+# Dev: chỉ đòi "có @, hai bên không rỗng, domain có dấu chấm, không khoảng trắng". Nới ≠ tắt — rác
+# hiển nhiên vẫn phải chết ở đây, chứ không phải chết ở lượt gọi Resend sau khi đã tốn hai lượt LLM
+# chấm hồ sơ (~34s, xem CLAUDE.md mục "Hardening tải").
+_DEV_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
 
 
 class ApplicationCreate(BaseModel):
@@ -16,10 +23,32 @@ class ApplicationCreate(BaseModel):
     KHÔNG có `cv_file_ref`: ref/key do SERVER sinh (`storage.build_cv_key`) sau khi có application_id.
     (Slice 06 gỡ bỏ — trường này client đặt được sẽ thành lỗ đọc file tùy ý nếu có endpoint JSON nào
     nhận thẳng schema này; thực tế nó luôn None vì cả hai route đều ghi đè sau khi lưu.)
+
+    **Email: chặt ở prod, nới ở dev (EMAIL-1).** Prod dùng `email-validator` chuẩn — nó từ chối cả
+    domain dùng-riêng (`.local`, `localhost`), thứ mà thư gửi tới chắc chắn không tới ai. Nhưng
+    chính vì thế mà chạy thử end-to-end trên máy dev với domain nội bộ là không thể, nên dev nới
+    xuống một kiểm tra hình thức (cùng lý do slice 09 nới email ĐĂNG NHẬP — xem `docs/AI_GUIDE.md`
+    mục "Login email = `str`, NOT `EmailStr`"). Đọc `settings.app_env` lúc VALIDATE chứ không phải
+    lúc import: nếu không, test không đổi được môi trường và cả hai chiều đều không khoá được.
     """
 
     job_id: int | None = None
-    applicant_email: EmailStr
+    applicant_email: str
+
+    @field_validator("applicant_email")
+    @classmethod
+    def _check_email(cls, value: str) -> str:
+        value = (value or "").strip()
+        if settings.app_env == "local":
+            if not _DEV_EMAIL_RE.fullmatch(value):
+                raise ValueError("Email không hợp lệ.")
+            return value
+        from email_validator import EmailNotValidError, validate_email
+
+        try:
+            return validate_email(value, check_deliverability=False).normalized
+        except EmailNotValidError as exc:
+            raise ValueError("Email không hợp lệ.") from exc
 
 
 class ReviewRequest(BaseModel):
