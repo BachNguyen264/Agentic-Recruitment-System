@@ -19,7 +19,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 from app.models.application import Application, ApplicationStatus
-from app.models.booking import BookingStatus, InterviewBooking
+from app.models.booking import BookingSession, BookingStatus, InterviewBooking
 from app.models.email_delivery import DeliveryStatus, EmailDelivery, EmailKind
 from app.models.job_posting import JobPosting
 from app.models.screening_session import ScreeningSession
@@ -232,3 +232,81 @@ async def test_later_delivery_to_same_address_clears_the_flag(Session, app_id) -
 async def test_unknown_email_id_is_silent_noop(Session) -> None:  # noqa: N803
     async with Session() as s:
         await svc.handle_event(s, _event("bounced", "e_khong_ton_tai"))  # KHÔNG được ném
+
+
+# ── Vòng sửa sau adversarial review (opus, "Not approved" — 1 Critical + 5 Important) ───────
+#
+# C1 (Critical) đã khoá bằng 2 test THUẦN ở test_webhook_resend.py (email_id_of/bounce_reason_of
+# không ném với data/bounce sai kiểu) — không cần lặp lại trên DB thật vì hai hàm đó không chạm DB.
+# I3/I4 dưới đây cần DB thật vì đang kiểm hành vi ĐỌC-GHI thật (bảng InterviewBooking/BookingSession/
+# ScreeningSession) — đúng lý do file này tồn tại.
+
+
+async def test_complained_only_flags_never_demotes(Session, app_id) -> None:  # noqa: N803
+    """I3 (chốt của người dùng): complaint là bằng chứng thư ĐÃ TỚI TAY — không có gì "hỏng" để cứu
+    bằng cách hạ trạng thái. CHỈ gắn cờ + audit, GIỮ NGUYÊN AWAITING_BOOKING."""
+    await _delivery(Session, app_id, EmailKind.INVITE.value, "e_cmp_1")
+    async with Session() as s:
+        await svc.handle_event(s, _event("complained", "e_cmp_1"))
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        assert row.status == ApplicationStatus.AWAITING_BOOKING.value  # KHÔNG hạ
+        assert svc.EMAIL_BOUNCED_FLAG in row.uncertainty_flags
+        d = (await s.execute(
+            select(EmailDelivery).where(EmailDelivery.resend_email_id == "e_cmp_1")
+        )).scalar_one()
+        assert d.status == DeliveryStatus.COMPLAINED.value  # thứ bậc vẫn ghi nhận đúng
+
+
+async def test_invite_bounce_demotion_cancels_booking_session(Session, app_id) -> None:  # noqa: N803
+    """I4 (chốt của người dùng): hạ vì invite bounce phải HUỶ liên kết đặt lịch còn sống — không thì
+    ứng viên vẫn mở được một link mà hồ sơ đã rời AWAITING_BOOKING (confirm_and_notify sẽ ghi đè
+    PENDING_REVIEW thành INTERVIEW_SCHEDULED sau lưng HR)."""
+    async with Session() as s:
+        s.add(BookingSession(
+            application_id=app_id, token=f"{_MARK}-book-tok",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=72),
+        ))
+        await s.commit()
+    await _delivery(Session, app_id, EmailKind.INVITE.value, "e_inv_close")
+    async with Session() as s:
+        await svc.handle_event(s, _event("bounced", "e_inv_close"))
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        assert row.status == ApplicationStatus.PENDING_REVIEW.value
+        sess = (await s.execute(
+            select(BookingSession).where(BookingSession.token == f"{_MARK}-book-tok")
+        )).scalar_one()
+        assert sess.cancelled_at is not None  # I4: liên kết đã bị huỷ, KHÔNG còn mở được
+    async with Session() as s:
+        await s.execute(delete(BookingSession).where(BookingSession.application_id == app_id))
+        await s.commit()
+
+
+async def test_screener_bounce_demotion_closes_screening_session(Session, app_id) -> None:  # noqa: N803
+    """I4 (chốt của người dùng): hạ vì screener bounce phải ĐÓNG phiên sàng lọc đang mở
+    (`timed_out_at`) — không thì hàng screening_session sống mãi MẬP MỜ (không dùng, không hết hạn)
+    trong khi hồ sơ đã rời AWAITING_SCREENER. KHÔNG resume graph (giới hạn đã biết, xem docstring
+    `_abandon_in_flight_session`)."""
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        row.status = ApplicationStatus.AWAITING_SCREENER.value
+        s.add(ScreeningSession(
+            application_id=app_id, token=f"{_MARK}-close-tok", questions=[],
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        ))
+        await s.commit()
+    await _delivery(Session, app_id, EmailKind.SCREENER.value, "e_scr_close")
+    async with Session() as s:
+        await svc.handle_event(s, _event("bounced", "e_scr_close"))
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        assert row.status == ApplicationStatus.PENDING_REVIEW.value
+        sess = (await s.execute(
+            select(ScreeningSession).where(ScreeningSession.token == f"{_MARK}-close-tok")
+        )).scalar_one()
+        assert sess.timed_out_at is not None  # I4: phiên đã đóng, sweep KHÔNG còn săn nó
+        assert sess.used_at is None  # đóng vì bounce, KHÔNG phải vì ứng viên đã trả lời
+    async with Session() as s:
+        await s.execute(delete(ScreeningSession).where(ScreeningSession.application_id == app_id))
+        await s.commit()

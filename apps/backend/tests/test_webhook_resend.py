@@ -167,6 +167,7 @@ def test_signature_built_for_different_timestamp_fails() -> None:
 
 
 # ── Ánh xạ sự kiện → trạng thái giao hàng ───────────────────────────────────
+from app.models.application import Application
 from app.models.email_delivery import DeliveryStatus
 from app.services import email_delivery as svc
 
@@ -208,3 +209,75 @@ def test_single_channel_map_excludes_reject() -> None:
     tới hậu quả sai (mời một người đã bị từ chối / bounce vòng hai vào đúng địa chỉ chết)."""
     assert "reject" not in svc._SINGLE_CHANNEL
     assert set(svc._SINGLE_CHANNEL) == {"invite", "screener", "screener_reminder"}
+
+
+def test_demotable_excludes_complained() -> None:
+    """Quyết định #I3 (adversarial review, người dùng đã chốt): complaint là bằng chứng thư ĐÃ TỚI
+    — không có gì "hỏng" để cứu bằng cách hạ trạng thái. Chỉ BOUNCED mới được phép hạ."""
+    assert svc._DEMOTABLE == {"BOUNCED"}
+
+
+# ── C1 (adversarial review): payload rác KHÔNG được làm mất tín hiệu bounce ─────────────────
+# Trước vòng sửa này, `bounce` là chuỗi thay vì object khiến `.get()` ném AttributeError NGAY GIỮA
+# `_process` — bị `except Exception` trần nuốt cùng rollback, nên CẢ sự kiện bounce biến mất trong
+# im lặng. Hai test dưới khoá lại: hình dạng payload rác không được ném, phải trả None êm.
+
+
+def test_email_id_of_rejects_non_dict_data() -> None:
+    assert svc.email_id_of({"data": "khong-phai-dict"}) is None
+    assert svc.email_id_of({"data": ["a", "b"]}) is None
+    assert svc.email_id_of({"data": None}) is None
+    assert svc.email_id_of({}) is None
+
+
+def test_bounce_reason_of_rejects_non_dict_data_or_bounce() -> None:
+    assert svc.bounce_reason_of("khong-phai-dict") is None
+    assert svc.bounce_reason_of(None) is None
+    assert svc.bounce_reason_of({"bounce": "hard bounce"}) is None  # C1: repro CHÍNH XÁC của reviewer
+    assert svc.bounce_reason_of({"bounce": ["type", "Permanent"]}) is None
+
+
+async def test_handle_event_lets_infra_errors_surface(monkeypatch) -> None:  # noqa: ANN001
+    """C1 phần 2: `handle_event` chỉ nuốt lỗi HÌNH DẠNG payload — lỗi HẠ TẦNG (mất kết nối DB giữa
+    chừng, deadlock...) phải NỔI LÊN cho route xử lý, vì Resend thử lại LÀ đúng hướng cho loại lỗi
+    này (khác payload rác, thử lại sẽ hỏng y hệt). Mô phỏng bằng cách làm `status_for_event` ném một
+    lỗi KHÔNG nằm trong `_PAYLOAD_ERRORS` — nếu `handle_event` nuốt luôn cả lỗi này thì assertion
+    `pytest.raises` dưới đây sẽ đỏ."""
+    import pytest
+
+    class _FakeSession:
+        async def rollback(self) -> None:
+            pass
+
+    def boom(_event_type: str) -> str | None:
+        raise RuntimeError("mất kết nối Neon giữa chừng (mô phỏng)")
+
+    monkeypatch.setattr(svc, "status_for_event", boom)
+    with pytest.raises(RuntimeError):
+        await svc.handle_event(_FakeSession(), {"type": "email.bounced", "data": {}})
+
+
+# ── I2 (adversarial review): hai guard của `_clear_bounce` từng KHÔNG có test canh riêng —
+# mutation của reviewer xoá CẢ HAI guard mà 34/34 test vẫn xanh. Mỗi test dưới đây khoá MỘT guard.
+
+
+def test_clear_bounce_keeps_flag_when_delivered_to_different_address() -> None:
+    """Guard 1 (`recipient != app_row.applicant_email`): một địa chỉ KHÁC gửi thành công không được
+    phép gỡ cờ bounce của địa chỉ đã hỏng — hai email khác nhau là hai chuyện khác nhau."""
+    app_row = Application(applicant_email="that-su@e.com")
+    app_row.uncertainty_flags = [svc.EMAIL_BOUNCED_FLAG]
+    app_row.escalation_reason = svc._REASON_INVITE
+    svc._clear_bounce(app_row, recipient="dia-chi-khac@e.com")
+    assert svc.EMAIL_BOUNCED_FLAG in app_row.uncertainty_flags
+    assert app_row.escalation_reason == svc._REASON_INVITE
+
+
+def test_clear_bounce_keeps_unrelated_escalation_reason() -> None:
+    """Guard 2 (`escalation_reason in _BOUNCE_REASONS`): lý do escalation do MỘT chuyện KHÁC đặt
+    (vd HR huỷ lịch) không được xoá dù cờ bounce vẫn gỡ đúng khi cùng địa chỉ."""
+    app_row = Application(applicant_email="a@e.com")
+    app_row.uncertainty_flags = [svc.EMAIL_BOUNCED_FLAG]
+    app_row.escalation_reason = "HR đã huỷ lịch phỏng vấn — cần sắp xếp lại với ứng viên."
+    svc._clear_bounce(app_row, recipient="a@e.com")  # CÙNG địa chỉ → cờ ĐƯỢC gỡ
+    assert svc.EMAIL_BOUNCED_FLAG not in app_row.uncertainty_flags
+    assert app_row.escalation_reason == "HR đã huỷ lịch phỏng vấn — cần sắp xếp lại với ứng viên."
