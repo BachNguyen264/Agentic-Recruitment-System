@@ -320,6 +320,49 @@ async def test_invite_bounce_demotion_cancels_booking_session(Session, app_id) -
         await s.commit()
 
 
+async def test_application_detail_exposes_separate_bounce_and_complaint_reasons(
+    Session, app_id  # noqa: N803
+) -> None:
+    """Task 9: HR phải thấy LÝ DO bounce/complaint ở endpoint chi tiết — hai cột RIÊNG cho hai loại
+    sự kiện, KHÔNG trộn lẫn (gộp `status.in_([BOUNCED, COMPLAINED])` vào MỘT truy vấn sẽ khiến lý do
+    của loại này lấn qua nhãn của loại kia). Dựng hai message KHÁC NHAU cho bounce/complaint rồi xác
+    nhận `get_application` gắn đúng lý do vào đúng cột — không chỉ "có giá trị" mà phải "đúng giá
+    trị của đúng sự kiện"."""
+    from app.api.routes.applications import get_application
+
+    bounce_event = {
+        "type": "email.bounced",
+        "data": {
+            "email_id": "e_reason_bounce",
+            "bounce": {"type": "Permanent", "message": "LY-DO-BOUNCE-RIENG"},
+        },
+    }
+    complain_event = {
+        "type": "email.complained",
+        "data": {
+            "email_id": "e_reason_complain",
+            "bounce": {"type": "Complaint", "message": "LY-DO-COMPLAIN-RIENG"},
+        },
+    }
+    await _delivery(Session, app_id, EmailKind.BOOKING_CONFIRMED.value, "e_reason_bounce")
+    await _delivery(Session, app_id, EmailKind.INTERVIEW_REMINDER.value, "e_reason_complain")
+    async with Session() as s:
+        await svc.handle_event(s, bounce_event)
+    async with Session() as s:
+        await svc.handle_event(s, complain_event)
+
+    async with Session() as s:
+        result = await get_application(app_id, s)
+        assert result.email_bounced is True
+        assert result.email_complained is True
+        assert result.email_bounce_reason is not None
+        assert "LY-DO-BOUNCE-RIENG" in result.email_bounce_reason
+        assert "LY-DO-COMPLAIN-RIENG" not in result.email_bounce_reason
+        assert result.email_complaint_reason is not None
+        assert "LY-DO-COMPLAIN-RIENG" in result.email_complaint_reason
+        assert "LY-DO-BOUNCE-RIENG" not in result.email_complaint_reason
+
+
 async def test_screener_bounce_demotion_closes_screening_session(Session, app_id) -> None:  # noqa: N803
     """I4 (chốt của người dùng): hạ vì screener bounce phải ĐÓNG phiên sàng lọc đang mở
     (`timed_out_at`) — không thì hàng screening_session sống mãi MẬP MỜ (không dùng, không hết hạn)

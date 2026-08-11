@@ -134,6 +134,14 @@ export default function ApplicationsPage() {
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <Tag tone={applicationStatusTone(a)}>{applicationStatusLabel(a)}</Tag>
+                        {/* EMAIL-1: KHÁC cờ "cần chú ý" bên dưới ở chỗ nó hiện với MỌI trạng thái.
+                            Ca đáng lo nhất chính là ca đã quyết xong: "Đã từ chối" / "Đã hẹn phỏng
+                            vấn" mà thư không tới nơi thì dòng trạng thái đó đang nói dối, và nếu
+                            giấu nhãn đi vì hồ sơ "đã xong" thì không ai phát hiện ra nữa. Bounce và
+                            complaint là HAI nhãn riêng — gộp lại thì HR không biết phải liên hệ lại
+                            (bounce) hay ngừng gửi hẳn (complaint). */}
+                        {a.email_bounced && <Tag tone="danger">⚠ Email không gửi được</Tag>}
+                        {a.email_complained && <Tag tone="danger">🚫 Đã báo cáo spam</Tag>}
                         {/* Cờ "cần chú ý" chỉ là chỉ báo HÀNH ĐỘNG cho HR → CHỈ hiện khi còn chờ
                             quyết. Hồ sơ đã quyết chỉ hiện trạng thái cuối. */}
                         {a.status === "PENDING_REVIEW" && a.uncertainty_flags.length > 0 && (

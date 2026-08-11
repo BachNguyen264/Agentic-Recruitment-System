@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.core.config import settings
+from app.services.email_delivery import EMAIL_BOUNCED_FLAG, EMAIL_COMPLAINED_FLAG
 from app.services.review import recommendation as _recommendation
 
 # Dev: chỉ đòi "có @, hai bên không rỗng, domain có dấu chấm, không khoảng trắng". Nới ≠ tắt — rác
@@ -110,6 +111,12 @@ class ApplicationRead(BaseModel):
     # lại link" cho MỌI ca `PENDING_REVIEW` — kể cả ca chưa ai duyệt — và HR chỉ biết mình bấm nhầm
     # sau khi nhận 409. CHỈ populate ở endpoint chi tiết (như `interview`, tránh N+1 ở danh sách).
     has_booking_link: bool = False
+    # Lý do bounce/complaint rút gọn (từ `email_delivery.bounce_reason` của sự kiện XẤU GẦN NHẤT của
+    # ĐÚNG loại đó) — hai cột RIÊNG, KHÔNG trộn: bounce cần "tìm địa chỉ đúng rồi liên hệ lại", complaint
+    # cần "ngừng gửi cho người này", nên HR phải biết đang đọc cái nào. CHỈ populate ở endpoint chi
+    # tiết (như `interview`/`has_booking_link`, tránh N+1 ở danh sách).
+    email_bounce_reason: str | None = None
+    email_complaint_reason: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -117,6 +124,21 @@ class ApplicationRead(BaseModel):
     @property
     def recommendation(self) -> str:
         return _recommendation(self.score, self.uncertainty_flags)
+
+    # EMAIL-1: thư MỜI/SÀNG LỌC không tới được ứng viên (webhook Resend báo bounce). Dẫn xuất từ
+    # `uncertainty_flags` nên CÓ ở CẢ danh sách lẫn chi tiết mà không tốn thêm truy vấn nào (giống
+    # nếp `booking_no_slots`) — `uncertainty_flags` đã có sẵn trên cả hai endpoint.
+    @computed_field
+    @property
+    def email_bounced(self) -> bool:
+        return EMAIL_BOUNCED_FLAG in (self.uncertainty_flags or [])
+
+    # Ứng viên đã bấm "đây là spam" trên một lá thư ĐÃ TỚI NƠI — cờ RIÊNG, KHÔNG gộp chung nhãn với
+    # bounce: bounce và complaint đòi hai cách xử TRÁI NGƯỢC nhau (xem docstring `services/email_delivery`).
+    @computed_field
+    @property
+    def email_complained(self) -> bool:
+        return EMAIL_COMPLAINED_FLAG in (self.uncertainty_flags or [])
 
     @computed_field  # có file CV để tải không (slice 06) — thay cho việc lộ key/path ra client.
     @property

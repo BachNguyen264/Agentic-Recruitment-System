@@ -152,6 +152,44 @@ export default function ApplicationDetailPage() {
             )}
           </div>
 
+          {/* EMAIL-1: thư gửi ra không tới được ứng viên. Đặt TRÊN mọi khối khác vì nó phủ định giá
+              trị của chúng — "Đã hẹn phỏng vấn" mà thư mời bounce thì buổi phỏng vấn đó không tồn
+              tại với ứng viên. Hiện với MỌI trạng thái (không chỉ PENDING_REVIEW) — ca đáng lo nhất
+              chính là ca đã quyết xong mà không ai còn nhìn lại. Bounce và complaint là HAI banner
+              RIÊNG vì đòi hai cách xử TRÁI NGƯỢC: bounce ⇒ tìm địa chỉ đúng rồi liên hệ lại; complaint
+              ⇒ NGỪNG gửi cho người này (complaint hiện TRƯỚC vì hành động cấp bách hơn). */}
+          {app.email_complained && (
+            <div className="mt-4 rounded-xl border-2 border-red-500 bg-red-100 px-4 py-3">
+              <p className="font-heading text-[13px] font-bold text-red-900">
+                🚫 Ứng viên đã báo cáo thư này là spam
+              </p>
+              <p className="mt-1.5 text-[13px] text-red-900">
+                <strong>{app.applicant_email}</strong> đã đánh dấu một lá thư của chúng ta là spam
+                trên hộp thư của họ. Tiếp tục gửi thêm thư vào địa chỉ này có thể làm hỏng danh tiếng
+                gửi email của CẢ hệ thống — hãy NGỪNG gửi email cho ứng viên này, liên hệ qua kênh
+                khác (điện thoại trong CV) nếu vẫn cần trao đổi.
+                {app.email_complaint_reason ? (
+                  <> Chi tiết: <code>{app.email_complaint_reason}</code></>
+                ) : null}
+              </p>
+            </div>
+          )}
+          {app.email_bounced && (
+            <div className="mt-4 rounded-xl border-2 border-red-300 bg-red-50 px-4 py-3">
+              <p className="font-heading text-[13px] font-bold text-red-900">
+                ⚠ Email không gửi được — cần liên hệ thủ công
+              </p>
+              <p className="mt-1.5 text-[13px] text-red-900">
+                Nhà cung cấp email báo thư gửi tới <strong>{app.applicant_email}</strong> không tới
+                nơi. Hãy liên hệ ứng viên bằng kênh khác (điện thoại trong CV) hoặc xác nhận lại địa
+                chỉ.
+                {app.email_bounce_reason ? (
+                  <> Lý do: <code>{app.email_bounce_reason}</code></>
+                ) : null}
+              </p>
+            </div>
+          )}
+
           {/* Lý do cần HR xem xét (PRD §11) — chỉ báo HÀNH ĐỘNG. Hiện ở BA trạng thái, mỗi cái một
               lý do: còn chờ quyết; đã hẹn nhưng có cờ (SCH-2: thư xác nhận gửi hỏng → HR gọi thủ
               công); và đang chờ chọn lịch sau khi ứng viên HUỶ (SCH-3 — họ tự chọn lại được, HR chỉ
