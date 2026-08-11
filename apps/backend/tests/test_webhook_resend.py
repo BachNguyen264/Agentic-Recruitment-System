@@ -425,3 +425,104 @@ async def test_webhook_passes_origin_check_without_origin_header() -> None:
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as c:
         assert (await c.post("/api/webhooks/resend", json={})).status_code == 200
+
+
+# ── Important-1 (audit sau commit 1a51c27): router THẬT (`app.main.app`) phải KHÔNG bị `require_hr`
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# Mọi test ở trên tự dựng `FastAPI()` rồi mount CHỈ `webhooks.router` — không test nào từng chạm
+# `app.main.app` thật, nên một mutation thêm `dependencies=_HR_ONLY` vào dòng
+# `app.include_router(webhooks.router, ...)` ở main.py lọt qua TOÀN BỘ 424 test cũ mà không bị bắt
+# (reviewer đã chạy mutation này và xác nhận: tất cả xanh). Hậu quả prod: Resend nhận 401 cho MỌI sự
+# kiện, bounce mất IM LẶNG — đúng chế độ hỏng Task 6 sinh ra để ngăn. Test dưới đây chạm app thật.
+async def test_webhook_route_on_real_app_is_not_gated_by_require_hr(monkeypatch) -> None:
+    """Gửi request có chữ ký HỢP LỆ, KHÔNG kèm cookie phiên nào, tới `app.main.app` THẬT (không phải
+    app tự dựng của các test khác) — phải 204. Nếu router lỡ bị gắn `require_hr`, thiếu cookie sẽ bị
+    chặn NGAY Ở TẦNG DEPENDENCY (trước khi vào thân handler) → 401, và test này bắt được ngay."""
+    from app.api.routes import webhooks
+    from app.core.database import get_session
+    from app.main import app as main_app
+
+    async def fake_handle(_session, event: dict) -> None:  # noqa: ANN001
+        pass
+
+    monkeypatch.setattr(webhooks.settings, "resend_webhook_secret", _SECRET)
+    monkeypatch.setattr(webhooks.settings, "resend_webhook_tolerance_seconds", 300.0)
+    monkeypatch.setattr(webhooks, "_now", lambda: _NOW)
+    monkeypatch.setattr(webhooks, "_handle", fake_handle)
+
+    main_app.dependency_overrides[get_session] = lambda: object()
+    try:
+        # KHÔNG chạy lifespan (ASGITransport mặc định không gọi lifespan) → không chạm
+        # checkpointer/Neon thật, dù import nguyên `app.main.app`.
+        transport = httpx.ASGITransport(app=main_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            r = await c.post("/api/webhooks/resend", content=_BODY, headers=_headers(_BODY))
+        assert r.status_code == 204  # KHÔNG cookie mà vẫn qua — chốt chặn là CHỮ KÝ, không phải cookie.
+    finally:
+        main_app.dependency_overrides.clear()
+
+
+# ── Important-2 (audit sau commit 1a51c27): trần thân RIÊNG cho webhook ─────────────────────────
+# `/api/webhooks/*` là path công khai DUY NHẤT không có xô rate-limit (miễn trừ có chủ ý). Trần
+# CHUNG `max_request_bytes` (12MB, cỡ CV) áp cho MỌI POST khác biến nó thành đường khuếch đại KHÔNG
+# hạn mức: không cần chữ ký đúng, gửi lặp lại body cỡ chục MB vẫn ép server đệm hết + chạy trọn
+# HMAC-SHA256 trước khi bị từ chối. `resend_webhook_max_bytes` (mặc định 64KB) đóng khe này.
+async def test_oversized_declared_content_length_rejected_413_before_business(
+    client, monkeypatch
+) -> None:
+    """Content-Length KHAI vượt trần riêng của webhook → 413, và KHÔNG chạm nghiệp vụ (kiểm ở Bước 0,
+    trước cả kiểm secret/verify chữ ký — không cần chữ ký hợp lệ để bắt được ca này)."""
+    from app.api.routes import webhooks
+
+    async def boom(*_a):  # noqa: ANN002, ANN202
+        raise AssertionError("nghiệp vụ KHÔNG được chạy khi body vượt trần khai báo")
+
+    monkeypatch.setattr(webhooks, "_handle", boom)
+    oversized = b"x" * (webhooks.settings.resend_webhook_max_bytes + 1)
+    async with client as c:
+        r = await c.post("/api/webhooks/resend", content=oversized)
+    assert r.status_code == 413
+
+
+async def test_content_length_at_exactly_the_cap_is_accepted(client, monkeypatch) -> None:
+    """Biên: ĐÚNG bằng trần (không vượt) phải KHÔNG bị 413 — kiểm dùng `>`, không phải `>=`. Chữ ký
+    tính trên đúng body gửi nên vẫn hợp lệ, và trần mặc định lớn hơn payload thật rất nhiều nên request
+    hợp lệ bình thường (`test_valid_signature_accepted`) không bao giờ va trần này."""
+    from app.api.routes import webhooks
+
+    async def fake_handle(_session, event: dict) -> None:  # noqa: ANN001
+        pass
+
+    monkeypatch.setattr(webhooks, "_handle", fake_handle)
+    # Đệm bằng khoảng trắng: `json.loads` BỎ QUA whitespace ở đuôi (xem `decode()` trong stdlib
+    # `json/decoder.py`) nên body vẫn parse ra đúng dict gốc, đi tới tận `_handle` — test chạm đúng
+    # nhánh "được CHẤP NHẬN", không dừng sớm ở 400.
+    at_cap = _BODY + b" " * (webhooks.settings.resend_webhook_max_bytes - len(_BODY))
+    assert len(at_cap) == webhooks.settings.resend_webhook_max_bytes
+    async with client as c:
+        r = await c.post("/api/webhooks/resend", content=at_cap, headers=_headers(at_cap))
+    assert r.status_code == 204
+
+
+async def test_missing_content_length_is_not_blocked_by_webhook_size_check(
+    client, monkeypatch
+) -> None:
+    """THIẾU `Content-Length` (Transfer-Encoding: chunked — proxy CÓ QUYỀN chuyển tiếp kiểu này)
+    KHÔNG bị chặn ở Bước 0: chặn cứng khi thiếu header sẽ giết mọi lượt Resend đi qua proxy chunked
+    trên bản live trong khi dev vẫn chạy ngon (đúng bài học đã có ở `BodySizeLimitMiddleware`)."""
+    from app.api.routes import webhooks
+
+    seen: list[dict] = []
+
+    async def fake_handle(_session, event: dict) -> None:  # noqa: ANN001
+        seen.append(event)
+
+    monkeypatch.setattr(webhooks, "_handle", fake_handle)
+
+    async def _chunks():
+        yield _BODY
+
+    async with client as c:
+        r = await c.post("/api/webhooks/resend", content=_chunks(), headers=_headers(_BODY))
+    assert r.status_code == 204
+    assert seen and seen[0]["type"] == "email.bounced"

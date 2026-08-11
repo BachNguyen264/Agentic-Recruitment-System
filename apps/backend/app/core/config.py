@@ -250,6 +250,14 @@ class Settings(BaseSettings):
     # Cửa sổ chống replay theo `svix-timestamp`. Chữ ký đúng mà không có hạn thì một request hợp lệ
     # bị chặn lại sẽ phát lại được mãi mãi.
     resend_webhook_tolerance_seconds: float = 300.0
+    # Trần thân body RIÊNG cho webhook (audit sau Task 6, Important-2) — KHÔNG dùng chung
+    # `max_request_bytes` (12MB, cỡ dành cho upload CV). `/api/webhooks/*` là path công khai DUY NHẤT
+    # không có xô rate-limit (miễn trừ có chủ ý — mục 4, xem `api/routes/webhooks.py`), nên trần 12MB
+    # biến nó thành đường khuếch đại KHÔNG hạn mức: không cần chữ ký đúng, chỉ cần gửi lặp lại một
+    # body cỡ chục MB vẫn ép server đệm hết vào RAM rồi chạy trọn HMAC-SHA256 trước khi bị từ chối.
+    # Payload Resend thật chỉ cỡ 1–2KB; 64KB đã rộng rãi gấp hàng chục lần mà vẫn nhỏ hơn nhiều so
+    # với 12MB.
+    resend_webhook_max_bytes: int = 65_536
 
     # ── Langfuse (observability — phase sau) ─────────────────────────
     langfuse_public_key: str | None = None

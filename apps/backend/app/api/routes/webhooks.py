@@ -19,6 +19,19 @@ công khác nhau:
    nên đã miễn trừ sẵn; `tests/test_webhook_resend.py` khoá lại để lần sửa `_bucket()` sau không
    âm thầm nuốt mất. Cùng lý do với `OriginCheckMiddleware`: request không có header `Origin`
    (server-to-server) được cho qua — đó là hành vi hiện có, nay có test giữ.
+4. **Trần thân RIÊNG (`resend_webhook_max_bytes`, mặc định 64KB) — audit sau Task 6.** Miễn trừ #3
+   nghĩa là `/api/webhooks/*` là path công khai DUY NHẤT không có xô quota; trần chung
+   `max_request_bytes` (12MB, cỡ dành cho CV) áp cho MỌI POST khác biến nơi đây thành đường khuếch
+   đại KHÔNG hạn mức: không cần chữ ký đúng, chỉ cần lặp lại gửi body cỡ chục MB vẫn ép server đệm
+   hết vào RAM rồi chạy trọn HMAC-SHA256 trước khi bị từ chối. Kiểm NGAY ĐẦU route, TRƯỚC
+   `await request.body()`, và CHỈ khi có `Content-Length` — thiếu header (proxy có quyền chuyển
+   tiếp chunked) vẫn phải cho qua, để `BodySizeLimitMiddleware` (đọc-có-đếm, tầng global) lo như cũ;
+   chặn cứng khi THIẾU header sẽ giết mọi lượt Resend đi qua proxy chunked trên bản live.
+
+**Router này KHÔNG được gắn `require_hr`** (xem `main.py`, khối `_HR_ONLY`) — mọi test trong
+`tests/test_webhook_resend.py` tự dựng `FastAPI()` rồi mount router này, nên KHÔNG test nào từng
+canh trực tiếp dòng đăng ký router thật; `test_webhook_route_on_real_app_is_not_gated_by_require_hr`
+là test DUY NHẤT chạm `app.main.app` thật để giữ bất biến này.
 """
 
 from __future__ import annotations
@@ -50,6 +63,23 @@ _handle = email_delivery.handle_event
     summary="Sự kiện giao hàng từ Resend — verify chữ ký rồi cập nhật trạng thái (EMAIL-1)",
 )
 async def resend_webhook(request: Request, session: DBSession) -> Response:
+    # Bước 0 (Important-2, audit sau Task 6): chặn NGAY khi Content-Length khai VƯỢT trần riêng của
+    # webhook — TRƯỚC cả kiểm secret, để không đọc một byte nào vào RAM khi đã biết chắc sẽ từ chối.
+    # CHỈ kiểm khi CÓ header (thiếu → im lặng cho qua, nhường `BodySizeLimitMiddleware` đọc-có-đếm ở
+    # tầng global lo — xem docstring module, mục 4).
+    declared_length = request.headers.get("content-length")
+    if declared_length is not None:
+        try:
+            declared_bytes = int(declared_length)
+        except ValueError:
+            declared_bytes = None
+        if declared_bytes is not None and declared_bytes > settings.resend_webhook_max_bytes:
+            logger.warning(
+                "Webhook Resend: Content-Length=%s vượt trần %s byte — từ chối trước khi đọc body.",
+                declared_length, settings.resend_webhook_max_bytes,
+            )
+            raise HTTPException(status_code=413, detail="Nội dung gửi lên quá lớn.")
+
     if not settings.resend_webhook_secret:
         logger.error("Webhook Resend: RESEND_WEBHOOK_SECRET chưa cấu hình — từ chối mọi sự kiện.")
         raise HTTPException(status_code=503, detail="Webhook chưa được cấu hình.")
