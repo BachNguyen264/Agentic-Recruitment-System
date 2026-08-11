@@ -52,7 +52,7 @@ Past scaffold — building real logic slice by slice. Node REAL vs STUB:
 | `parser`       | ✅ REAL  | CV→JSON via OpenAI `gpt-4.1-mini` (structured output) + certificates/languages/awards/other |
 | `ranker`       | ✅ REAL  | reasoned rubric scoring via `gpt-5-mini` (reasoning_effort=low); embedding = SIDE signal only |
 | `screener`     | ✅ REAL  | **08a–08d DONE (GĐ3 hết):** suspend/resume (`interrupt()` + AsyncPostgresSaver/Neon) + **magic-link form** (token/hết hạn/one-time/row-lock → resume BẰNG câu trả lời) + **timeout/nhắc** (in-process sweep sau seam `ScreeningTimeoutScheduler`/`InProcessScheduler`: nhắc 1 lần → hết hạn resume `no_response` → human_review, KHÔNG auto-reject; trả lời trễ báo êm) + **gate auto-mời 08d** (sau resume: ca sạch + JD `auto_invite` ON → thư mời THẬT qua scheduler → **AWAITING_BOOKING** (SCH-2 đổi: kèm link tự đặt lịch); no_response/cờ/low-conf/OFF → human_review; "cờ thắng gate"). Answers hiện cho HR (PRD §9, §10) |
-| `scheduler`    | ✅ REAL  | điểm phát email DUY NHẤT qua **Resend** (template VN cố định): mời/từ chối/sàng lọc + **6 loại thư đặt lịch** (mời có link, xác nhận kèm `.ics` + link huỷ, nhắc trước PV, nhắc chọn lịch, báo huỷ). Google Calendar deferred (seam `IcsProvider`) |
+| `scheduler`    | ✅ REAL  | điểm phát email DUY NHẤT qua **Resend** (template VN cố định): mời/từ chối/sàng lọc + **6 loại thư đặt lịch** (mời có link, xác nhận kèm `.ics` + link huỷ, nhắc trước PV, nhắc chọn lịch, báo huỷ). Google Calendar deferred (seam `IcsProvider`). **EMAIL-1 XONG:** giao hàng có theo dõi (webhook Resend đã ký) + giữ nhịp/retry + `reply_to`/bản text + cờ bounce/complaint hiện cho HR |
 | `human_review` | ✅ REAL  | ReviewCard + approve/reject → delegates to scheduler; audit-logged (PRD §11) |
 
 Also REAL: JD management (create/edit/close) + embedding to Qdrant (`text-embedding-3-small`, 1536-dim);
@@ -134,6 +134,13 @@ là HỢP LỆ); khả dụng TOÀN CỤC qua 14 env `BOOKING_*` → `services/b
 0-dependency, giờ UTC trong `.ics`). Test: 49 trong `make test` + 33 gated `RUN_BOOKING_IT=1`
 (**race thật 2 transaction**, huỷ nhả slot tức thì, sweep không đụng người vừa đặt).
 Ranh giới + bẫy → `docs/AI_GUIDE.md` *Booking boundary*.
+
+**Email hardening (EMAIL-1) XONG:** bảng `email_delivery` (1 hàng/lá thư, khoá đối chiếu
+`resend_email_id`) theo dõi giao hàng qua webhook Resend đã ký (`/api/webhooks/resend`, HMAC +
+chống replay); giữ nhịp 2 req/s + retry lỗi tạm thời (không retry lỗi vĩnh viễn/cạn quota);
+`EMAIL_REPLY_TO` + bản text đủ link. Bounce hạ trạng thái có điều kiện (không auto-reject); complaint
+CHỈ gắn cờ (dừng gửi, không hạ). Cờ `email_bounced`/`email_complained` hiện cho HR ở mọi trạng thái.
+Chi tiết + gotcha → `docs/AI_GUIDE.md` *Email boundary*.
 
 **NOT yet done:** analytics; observability; anti-prompt-injection; **runbook + verify live của 13**;
 UI redesign; learning loop. Hardening tải còn nợ: semaphore chặn số pipeline song song, parser dùng
@@ -241,7 +248,7 @@ kết quả XANH GIẢ, đúng thứ nguy hiểm nhất ngay trước lúc commi
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Agentic-Recruitment-System** (3203 symbols, 5961 relationships, 131 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Agentic-Recruitment-System** (3597 symbols, 6659 relationships, 146 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
