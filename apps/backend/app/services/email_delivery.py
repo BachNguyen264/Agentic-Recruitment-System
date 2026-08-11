@@ -233,10 +233,13 @@ async def _process(session: AsyncSession, event: dict) -> None:
         await session.get(Application, application_id) if application_id is not None else None
     )
     final_status = app_row.status if app_row is not None else None
+    # F3 (final review): cờ dùng cho audit PHẢI là cờ `_apply_bounce` THẬT SỰ đã chọn/gắn — KHÔNG suy
+    # luận lại bằng hằng số cứng ở đây (đó là lý do cũ audit của complaint ghi nhầm "email_bounced").
+    audit_flag: str | None = None
 
     if app_row is not None:
         if new_status in _NEGATIVE:
-            final_status = await _apply_bounce(
+            final_status, audit_flag = await _apply_bounce(
                 session, app_row, kind=kind, new_status=new_status, bounce_data=event.get("data"),
             )
         elif new_status == DeliveryStatus.DELIVERED.value:
@@ -247,7 +250,7 @@ async def _process(session: AsyncSession, event: dict) -> None:
         application_id=application_id,
         node="scheduler",
         action=f"email_{new_status.lower()}",
-        escalation_reason=EMAIL_BOUNCED_FLAG if new_status in _NEGATIVE else None,
+        escalation_reason=audit_flag,
         detail={
             "kind": kind, "email_id": email_id, "reason": reason_text,
             "final_status": final_status,
@@ -267,8 +270,14 @@ async def _process(session: AsyncSession, event: dict) -> None:
 async def _apply_bounce(
     session: AsyncSession, app_row: Application, *, kind: str, new_status: str,
     bounce_data: dict | None = None,
-) -> str:
-    """Gắn cờ + (có điều kiện) hạ về PENDING_REVIEW. Trả trạng thái CUỐI của hồ sơ.
+) -> tuple[str, str]:
+    """Gắn cờ + (có điều kiện) hạ về PENDING_REVIEW. Trả `(trạng thái CUỐI, cờ ĐÃ gắn)`.
+
+    **F3 (final review):** trả thêm cờ đã chọn để `_process` dùng ĐÚNG biến này cho dòng audit —
+    trước đây `_process` tự đặt `escalation_reason=EMAIL_BOUNCED_FLAG` cho CẢ bounce lẫn complaint
+    (hằng số cứng, không hỏi hàm này chọn gì), nên audit của một complaint ghi sai thành
+    `"email_bounced"`. Suy luận lại cùng một quyết định ở HAI nơi là nguồn drift — trả ra thay vì
+    đoán lại.
 
     `new_status` quyết cờ nào được gắn (fix vòng 3 — xem định nghĩa `EMAIL_COMPLAINED_FLAG`) VÀ có
     được hạ hay không (I3, adversarial review — xem `_DEMOTABLE`): complaint KHÔNG được hạ, chỉ
@@ -288,31 +297,31 @@ async def _apply_bounce(
     app_row.uncertainty_flags = with_flag(app_row.uncertainty_flags, flag)
 
     if new_status not in _DEMOTABLE:
-        return app_row.status  # complaint: thư ĐÃ TỚI tay ứng viên — chỉ cờ, không hạ
+        return app_row.status, flag  # complaint: thư ĐÃ TỚI tay ứng viên — chỉ cờ, không hạ
 
     if new_status == DeliveryStatus.BOUNCED.value and _is_transient_bounce(bounce_data):
-        return app_row.status  # Transient: địa chỉ vẫn sống, liên kết vẫn sống — chỉ cờ, không hạ
+        return app_row.status, flag  # Transient: địa chỉ vẫn sống, liên kết vẫn sống — chỉ cờ, không hạ
 
     mapping = _SINGLE_CHANNEL.get(kind)
     if mapping is None:
-        return app_row.status  # thư biên nhận / thư từ chối → chỉ cờ
+        return app_row.status, flag  # thư biên nhận / thư từ chối → chỉ cờ
 
     expected_status, reason = mapping
     if app_row.status != expected_status:
         # Hồ sơ đã đi tiếp trong lúc webhook đang trên đường. KHÔNG kéo ngược.
-        return app_row.status
+        return app_row.status, flag
     if await _already_moved_on(session, app_row.id, kind=kind):
         # Cờ trạng thái nói một đằng, BẢNG nói một nẻo. Tin bảng (bài học SCH-3).
         logger.warning(
             "Webhook Resend: app=%s trạng thái %s nhưng bảng cho thấy đã đi tiếp — chỉ gắn cờ.",
             app_row.id, app_row.status,
         )
-        return app_row.status
+        return app_row.status, flag
 
     app_row.status = ApplicationStatus.PENDING_REVIEW.value
     app_row.escalation_reason = reason
     await _abandon_in_flight_session(session, app_row.id, kind=kind)
-    return app_row.status
+    return app_row.status, flag
 
 
 async def _abandon_in_flight_session(

@@ -19,6 +19,7 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 from app.models.application import Application, ApplicationStatus
+from app.models.audit_log import AuditLog
 from app.models.booking import BookingSession, BookingStatus, InterviewBooking
 from app.models.email_delivery import DeliveryStatus, EmailDelivery, EmailKind
 from app.models.job_posting import JobPosting
@@ -261,6 +262,16 @@ async def test_complained_only_flags_never_demotes(Session, app_id) -> None:  # 
             select(EmailDelivery).where(EmailDelivery.resend_email_id == "e_cmp_1")
         )).scalar_one()
         assert d.status == DeliveryStatus.COMPLAINED.value  # thứ bậc vẫn ghi nhận đúng
+        # F3 (final review): dòng audit của MỘT COMPLAINT phải ghi ĐÚNG loại — trước fix,
+        # `_process` gắn cứng `EMAIL_BOUNCED_FLAG` cho cả bounce lẫn complaint, nên bản ghi pháp y
+        # (PRD §16, NFR-3) của complaint nói dối là "email_bounced".
+        audit = (await s.execute(
+            select(AuditLog)
+            .where(AuditLog.application_id == app_id, AuditLog.action == "email_complained")
+            .order_by(AuditLog.id.desc())
+            .limit(1)
+        )).scalar_one()
+        assert audit.escalation_reason == svc.EMAIL_COMPLAINED_FLAG
 
 
 async def test_later_delivery_does_not_clear_complained_flag(Session, app_id) -> None:  # noqa: N803
