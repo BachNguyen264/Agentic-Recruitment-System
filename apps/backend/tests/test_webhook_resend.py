@@ -164,3 +164,47 @@ def test_signature_built_for_different_timestamp_fails() -> None:
     """Tương tự test trên nhưng cho `timestamp` — bắt mutation bỏ `timestamp` khỏi `signed_content`."""
     sig_for_other_ts = sign_svix_payload(secret=_SECRET, msg_id=_ID, timestamp="1786000001", body=_BODY)
     assert _verify(signature_header=sig_for_other_ts) is False
+
+
+# ── Ánh xạ sự kiện → trạng thái giao hàng ───────────────────────────────────
+from app.models.email_delivery import DeliveryStatus
+from app.services import email_delivery as svc
+
+
+def test_event_type_mapping() -> None:
+    assert svc.status_for_event("email.sent") == DeliveryStatus.SENT.value
+    assert svc.status_for_event("email.delivered") == DeliveryStatus.DELIVERED.value
+    assert svc.status_for_event("email.bounced") == DeliveryStatus.BOUNCED.value
+    assert svc.status_for_event("email.complained") == DeliveryStatus.COMPLAINED.value
+
+
+def test_unknown_event_type_ignored() -> None:
+    """Resend còn gửi `email.opened`/`email.clicked`/`email.delivery_delayed` — không phải sự kiện
+    của ta, và cũng KHÔNG được coi là lỗi (trả 204, đừng bắt Resend thử lại)."""
+    assert svc.status_for_event("email.opened") is None
+    assert svc.status_for_event("") is None
+
+
+def test_bounce_reason_extracted_and_truncated() -> None:
+    reason = svc.bounce_reason_of({"bounce": {"type": "Permanent", "subType": "General",
+                                              "message": "x" * 900}})
+    assert reason is not None and len(reason) <= svc._MAX_REASON
+    assert "Permanent" in reason
+
+
+def test_bounce_reason_none_when_absent() -> None:
+    assert svc.bounce_reason_of({}) is None
+
+
+def test_email_id_read_from_either_field() -> None:
+    """Payload Resend đã đổi hình dạng giữa các phiên bản tài liệu — đọc cả hai, đừng đoán một."""
+    assert svc.email_id_of({"data": {"email_id": "e_1"}}) == "e_1"
+    assert svc.email_id_of({"data": {"id": "e_2"}}) == "e_2"
+    assert svc.email_id_of({"data": {}}) is None
+
+
+def test_single_channel_map_excludes_reject() -> None:
+    """Quyết định #4: bounce thư TỪ CHỐI chỉ gắn cờ. Hàng chờ HR chỉ có hai nút, và cả hai đều dẫn
+    tới hậu quả sai (mời một người đã bị từ chối / bounce vòng hai vào đúng địa chỉ chết)."""
+    assert "reject" not in svc._SINGLE_CHANNEL
+    assert set(svc._SINGLE_CHANNEL) == {"invite", "screener", "screener_reminder"}
