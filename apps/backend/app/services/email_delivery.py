@@ -31,9 +31,20 @@ from app.services.booking_flow import with_flag
 
 logger = get_logger("app.services.email_delivery")
 
-__all__ = ["EMAIL_BOUNCED_FLAG", "handle_event"]
+__all__ = ["EMAIL_BOUNCED_FLAG", "EMAIL_COMPLAINED_FLAG", "handle_event"]
 
 EMAIL_BOUNCED_FLAG = "email_bounced"
+
+# Cờ RIÊNG cho complaint — KHÔNG dùng chung với `EMAIL_BOUNCED_FLAG` (fix sau adversarial review,
+# vòng 3). Từ khi COMPLAINED thôi hạ trạng thái (I3), cờ là TÍN HIỆU DUY NHẤT một complaint để lại
+# cho HR — dùng chung tên "bounced" cho một lá thư ĐÃ TỚI NƠI vừa sai nghĩa vừa NGUY HIỂM: `_clear_
+# bounce` gỡ cờ khi có thư SAU tới cùng địa chỉ, nên nếu dùng chung tên, một lượt gửi THÀNH CÔNG về
+# sau sẽ XOÁ ÂM THẦM dấu vết "người này đã báo chúng ta là spam" — trong khi giao hàng thành công
+# KHÔNG hề phủ nhận việc họ từng bấm spam. Hai tình huống cần hai hành động NGƯỢC nhau: bounce ⇒ tìm
+# địa chỉ đúng rồi liên hệ lại; complaint ⇒ NGỪNG gửi cho người này. Resend là kênh email DUY NHẤT
+# của cả hệ thống — tiếp tục gửi cho người đã báo spam là cách nhanh nhất làm hỏng danh tiếng domain
+# rồi làm câm thư của MỌI ứng viên khác.
+EMAIL_COMPLAINED_FLAG = "email_complained"
 
 
 def _now() -> datetime:
@@ -240,10 +251,14 @@ async def _apply_bounce(
 ) -> str:
     """Gắn cờ + (có điều kiện) hạ về PENDING_REVIEW. Trả trạng thái CUỐI của hồ sơ.
 
-    `new_status` quyết ĐƯỢC hạ hay không (I3, adversarial review — xem `_DEMOTABLE`): complaint
-    KHÔNG được hạ, chỉ bounce THẬT mới đáng đưa về tay HR.
+    `new_status` quyết cờ nào được gắn (fix vòng 3 — xem định nghĩa `EMAIL_COMPLAINED_FLAG`) VÀ có
+    được hạ hay không (I3, adversarial review — xem `_DEMOTABLE`): complaint KHÔNG được hạ, chỉ
+    bounce THẬT mới đáng đưa về tay HR.
     """
-    app_row.uncertainty_flags = with_flag(app_row.uncertainty_flags, EMAIL_BOUNCED_FLAG)
+    flag = (
+        EMAIL_BOUNCED_FLAG if new_status == DeliveryStatus.BOUNCED.value else EMAIL_COMPLAINED_FLAG
+    )
+    app_row.uncertainty_flags = with_flag(app_row.uncertainty_flags, flag)
 
     if new_status not in _DEMOTABLE:
         return app_row.status  # complaint: thư ĐÃ TỚI tay ứng viên — chỉ cờ, không hạ
@@ -331,10 +346,15 @@ async def _already_moved_on(session: AsyncSession, application_id: int, *, kind:
 
 
 def _clear_bounce(app_row: Application, *, recipient: str) -> None:
-    """GỠ cờ khi một lá thư sau ĐÃ tới cùng địa chỉ đó (bài học SCH-3: gắn cờ thì phải có đường gỡ).
+    """GỠ cờ BOUNCE khi một lá thư sau ĐÃ tới cùng địa chỉ đó (bài học SCH-3: gắn cờ thì phải có
+    đường gỡ). Không gỡ thì hồ sơ mang nhãn báo động vĩnh viễn kể cả sau khi địa chỉ đã hoạt động
+    trở lại — và cảnh báo không bao giờ tắt là cảnh báo sẽ bị phớt lờ.
 
-    Không gỡ thì hồ sơ mang nhãn báo động vĩnh viễn kể cả sau khi địa chỉ đã hoạt động trở lại — và
-    cảnh báo không bao giờ tắt là cảnh báo sẽ bị phớt lờ.
+    **CHỈ gỡ `EMAIL_BOUNCED_FLAG` — TUYỆT ĐỐI không đụng `EMAIL_COMPLAINED_FLAG`** (fix vòng 3, xem
+    định nghĩa cờ đó). Một lượt giao hàng THÀNH CÔNG về sau chứng minh địa chỉ đang hoạt động, nên
+    gỡ được cờ bounce; nhưng nó KHÔNG hề phủ nhận việc ứng viên đã từng bấm "đây là spam" — hai sự
+    kiện độc lập nhau. Việc chỉ so khớp đúng CHUỖI `EMAIL_BOUNCED_FLAG` (không lặp qua mọi cờ) là
+    chốt chặn duy nhất ở đây; đừng "tổng quát hoá" nó thành xoá mọi cờ liên quan tới email.
     """
     if recipient != app_row.applicant_email:
         return

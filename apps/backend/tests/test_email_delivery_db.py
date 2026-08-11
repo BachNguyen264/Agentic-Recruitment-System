@@ -244,18 +244,55 @@ async def test_unknown_email_id_is_silent_noop(Session) -> None:  # noqa: N803
 
 async def test_complained_only_flags_never_demotes(Session, app_id) -> None:  # noqa: N803
     """I3 (chốt của người dùng): complaint là bằng chứng thư ĐÃ TỚI TAY — không có gì "hỏng" để cứu
-    bằng cách hạ trạng thái. CHỈ gắn cờ + audit, GIỮ NGUYÊN AWAITING_BOOKING."""
+    bằng cách hạ trạng thái. CHỈ gắn cờ + audit, GIỮ NGUYÊN AWAITING_BOOKING.
+
+    Fix vòng 3: complaint gắn ĐÚNG `EMAIL_COMPLAINED_FLAG` — KHÔNG dùng chung `EMAIL_BOUNCED_FLAG`
+    (dùng chung sẽ khiến `_clear_bounce` xoá nhầm dấu vết "đã báo spam" khi có thư sau tới cùng
+    địa chỉ — xem định nghĩa `EMAIL_COMPLAINED_FLAG`)."""
     await _delivery(Session, app_id, EmailKind.INVITE.value, "e_cmp_1")
     async with Session() as s:
         await svc.handle_event(s, _event("complained", "e_cmp_1"))
     async with Session() as s:
         row = await s.get(Application, app_id)
         assert row.status == ApplicationStatus.AWAITING_BOOKING.value  # KHÔNG hạ
-        assert svc.EMAIL_BOUNCED_FLAG in row.uncertainty_flags
+        assert svc.EMAIL_COMPLAINED_FLAG in row.uncertainty_flags
+        assert svc.EMAIL_BOUNCED_FLAG not in row.uncertainty_flags  # KHÔNG dùng chung cờ
         d = (await s.execute(
             select(EmailDelivery).where(EmailDelivery.resend_email_id == "e_cmp_1")
         )).scalar_one()
         assert d.status == DeliveryStatus.COMPLAINED.value  # thứ bậc vẫn ghi nhận đúng
+
+
+async def test_later_delivery_does_not_clear_complained_flag(Session, app_id) -> None:  # noqa: N803
+    """Fix vòng 3: `EMAIL_COMPLAINED_FLAG` KHÔNG được gỡ bởi bất kỳ `delivered` nào sau đó — một
+    lượt giao hàng thành công chứng minh địa chỉ đang hoạt động, nhưng KHÔNG hề phủ nhận việc ứng
+    viên đã từng bấm "đây là spam". Khác hẳn cờ bounce (có đường gỡ — xem
+    `test_later_delivery_to_same_address_clears_the_flag`).
+
+    **Dựng CẢ HAI cờ cùng lúc** (bounce THẬT + complain) trước khi gửi `delivered`: nếu hồ sơ chỉ
+    mang MỘT MÌNH cờ complained, guard đầu của `_clear_bounce` (`EMAIL_BOUNCED_FLAG not in flags`)
+    return SỚM và không bao giờ chạm tới dòng gỡ cờ — bài test sẽ xanh dù logic gỡ có sai (tự bắt
+    được đúng lỗ hổng này bằng mutation lúc viết test — xem task-7-report.md)."""
+    await _delivery(Session, app_id, EmailKind.BOOKING_CONFIRMED.value, "e_cmp_flag_bounce")
+    async with Session() as s:
+        await svc.handle_event(s, _event("bounced", "e_cmp_flag_bounce"))  # cờ BOUNCE thật
+    await _delivery(Session, app_id, EmailKind.INTERVIEW_REMINDER.value, "e_cmp_flag_complain")
+    async with Session() as s:
+        await svc.handle_event(s, _event("complained", "e_cmp_flag_complain"))  # + cờ COMPLAINED
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        assert svc.EMAIL_BOUNCED_FLAG in row.uncertainty_flags
+        assert svc.EMAIL_COMPLAINED_FLAG in row.uncertainty_flags  # cả hai cờ đang CÙNG tồn tại
+
+    await _delivery(Session, app_id, EmailKind.BOOKING_REMINDER.value, "e_cmp_flag_delivered")
+    async with Session() as s:
+        await svc.handle_event(
+            s, {"type": "email.delivered", "data": {"email_id": "e_cmp_flag_delivered"}}
+        )
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        assert svc.EMAIL_BOUNCED_FLAG not in row.uncertainty_flags  # bounce ĐƯỢC gỡ như thường lệ
+        assert svc.EMAIL_COMPLAINED_FLAG in row.uncertainty_flags  # complained KHÔNG BAO GIỜ bị gỡ
 
 
 async def test_invite_bounce_demotion_cancels_booking_session(Session, app_id) -> None:  # noqa: N803

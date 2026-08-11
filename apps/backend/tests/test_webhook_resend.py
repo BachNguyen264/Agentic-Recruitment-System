@@ -281,3 +281,16 @@ def test_clear_bounce_keeps_unrelated_escalation_reason() -> None:
     svc._clear_bounce(app_row, recipient="a@e.com")  # CÙNG địa chỉ → cờ ĐƯỢC gỡ
     assert svc.EMAIL_BOUNCED_FLAG not in app_row.uncertainty_flags
     assert app_row.escalation_reason == "HR đã huỷ lịch phỏng vấn — cần sắp xếp lại với ứng viên."
+
+
+def test_clear_bounce_never_touches_complained_flag() -> None:
+    """Fix vòng 3 (adversarial review — lỗi THẬT, không phải chuyện đặt tên): `_clear_bounce` CHỈ
+    được phép gỡ `EMAIL_BOUNCED_FLAG`. Cờ complained là dấu vết "ứng viên đã báo chúng ta là spam" —
+    một lượt giao hàng thành công về sau chứng minh địa chỉ hoạt động (nên gỡ được cờ bounce) nhưng
+    KHÔNG hề phủ nhận việc họ từng bấm spam. Nếu ai đó "tổng quát hoá" hàm này để gỡ mọi cờ liên quan
+    tới email, test này bắt được ngay (xem mutation trong task-7-report.md)."""
+    app_row = Application(applicant_email="a@e.com")
+    app_row.uncertainty_flags = [svc.EMAIL_BOUNCED_FLAG, svc.EMAIL_COMPLAINED_FLAG]
+    svc._clear_bounce(app_row, recipient="a@e.com")  # CÙNG địa chỉ → chỉ BOUNCE được gỡ
+    assert svc.EMAIL_BOUNCED_FLAG not in app_row.uncertainty_flags
+    assert svc.EMAIL_COMPLAINED_FLAG in app_row.uncertainty_flags  # KHÔNG BAO GIỜ bị gỡ ở đây
