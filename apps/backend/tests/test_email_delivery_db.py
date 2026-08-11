@@ -363,6 +363,75 @@ async def test_application_detail_exposes_separate_bounce_and_complaint_reasons(
         assert "LY-DO-BOUNCE-RIENG" not in result.email_complaint_reason
 
 
+async def test_screener_reminder_transient_bounce_only_flags_keeps_link_alive(
+    Session, app_id  # noqa: N803
+) -> None:
+    """F2 (final review): `screener_reminder` chở lại CHÍNH magic-link mà thư `screener` gốc đã giao
+    THÀNH CÔNG. Hộp thư đầy (`type: Transient`) lúc thư NHẮC tới KHÔNG chứng minh liên kết đã chết —
+    hạ về PENDING_REVIEW rồi đóng phiên (`_abandon_in_flight_session`) là giết một link đang sống
+    dưới chân ứng viên, mà HR không có nút "gửi lại link sàng lọc" (chỉ booking mới có). Phải CHỈ
+    gắn cờ: status GIỮ AWAITING_SCREENER, `timed_out_at` GIỮ None (phiên vẫn mở, link vẫn dùng được).
+    """
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        row.status = ApplicationStatus.AWAITING_SCREENER.value
+        s.add(ScreeningSession(
+            application_id=app_id, token=f"{_MARK}-transient-tok", questions=[],
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        ))
+        await s.commit()
+    await _delivery(Session, app_id, EmailKind.SCREENER_REMINDER.value, "e_scr_transient")
+    async with Session() as s:
+        await svc.handle_event(s, {
+            "type": "email.bounced",
+            "data": {
+                "email_id": "e_scr_transient",
+                "bounce": {"type": "Transient", "message": "mailbox full"},
+            },
+        })
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        assert row.status == ApplicationStatus.AWAITING_SCREENER.value  # KHÔNG hạ
+        assert svc.EMAIL_BOUNCED_FLAG in row.uncertainty_flags  # nhưng HR VẪN thấy cảnh báo
+        sess = (await s.execute(
+            select(ScreeningSession).where(ScreeningSession.token == f"{_MARK}-transient-tok")
+        )).scalar_one()
+        assert sess.timed_out_at is None  # link còn sống — sweep/HR có thể vẫn xử lý bình thường
+        d = (await s.execute(
+            select(EmailDelivery).where(EmailDelivery.resend_email_id == "e_scr_transient")
+        )).scalar_one()
+        assert d.status == DeliveryStatus.BOUNCED.value  # vết giao hàng vẫn ghi ĐÚNG (chỉ status app không hạ)
+    async with Session() as s:
+        await s.execute(delete(ScreeningSession).where(ScreeningSession.application_id == app_id))
+        await s.commit()
+
+
+async def test_screener_reminder_permanent_bounce_still_demotes(Session, app_id) -> None:  # noqa: N803
+    """Đối chứng F2: `Permanent` (địa chỉ chết hẳn) trên CHÍNH `screener_reminder` vẫn phải hạ như cũ
+    — chỉ `Transient` mới được miễn."""
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        row.status = ApplicationStatus.AWAITING_SCREENER.value
+        s.add(ScreeningSession(
+            application_id=app_id, token=f"{_MARK}-permanent-tok", questions=[],
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        ))
+        await s.commit()
+    await _delivery(Session, app_id, EmailKind.SCREENER_REMINDER.value, "e_scr_permanent")
+    async with Session() as s:
+        await svc.handle_event(s, _event("bounced", "e_scr_permanent"))  # _event() dùng type Permanent
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        assert row.status == ApplicationStatus.PENDING_REVIEW.value  # HẠ như cũ
+        sess = (await s.execute(
+            select(ScreeningSession).where(ScreeningSession.token == f"{_MARK}-permanent-tok")
+        )).scalar_one()
+        assert sess.timed_out_at is not None  # phiên đã đóng
+    async with Session() as s:
+        await s.execute(delete(ScreeningSession).where(ScreeningSession.application_id == app_id))
+        await s.commit()
+
+
 async def test_screener_bounce_demotion_closes_screening_session(Session, app_id) -> None:  # noqa: N803
     """I4 (chốt của người dùng): hạ vì screener bounce phải ĐÓNG phiên sàng lọc đang mở
     (`timed_out_at`) — không thì hàng screening_session sống mãi MẬP MỜ (không dùng, không hết hạn)

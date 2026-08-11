@@ -119,6 +119,22 @@ def email_id_of(event: dict) -> str | None:
     return str(value) if value else None
 
 
+def _is_transient_bounce(data: dict | None) -> bool:
+    """`bounce.type` Resend phân "Transient" (hộp thư đầy/tạm thời — địa chỉ VẪN sống) khác
+    "Permanent" (địa chỉ chết hẳn). `bounce_reason_of` đã ĐỌC field này từ lâu nhưng KHÔNG ai DÙNG
+    nó để quyết định — F2 (final review): Transient CHỈ gắn cờ, KHÔNG hạ trạng thái (xem `_apply_
+    bounce`). Cùng kỷ luật với `bounce_reason_of`: `data`/`bounce` sai kiểu hoặc thiếu → False (không
+    coi là transient), KHÔNG ném — payload rác là đường bình thường của webhook công khai.
+    """
+    if not isinstance(data, dict):
+        return False
+    bounce = data.get("bounce")
+    if not isinstance(bounce, dict):
+        return False
+    bounce_type = bounce.get("type")
+    return isinstance(bounce_type, str) and bounce_type.strip().lower() == "transient"
+
+
 def bounce_reason_of(data: dict) -> str | None:
     """Gộp `type/subType/message` của Resend thành một câu cho HR đọc. Không có → None.
 
@@ -220,7 +236,9 @@ async def _process(session: AsyncSession, event: dict) -> None:
 
     if app_row is not None:
         if new_status in _NEGATIVE:
-            final_status = await _apply_bounce(session, app_row, kind=kind, new_status=new_status)
+            final_status = await _apply_bounce(
+                session, app_row, kind=kind, new_status=new_status, bounce_data=event.get("data"),
+            )
         elif new_status == DeliveryStatus.DELIVERED.value:
             _clear_bounce(app_row, recipient=recipient)
 
@@ -247,13 +265,22 @@ async def _process(session: AsyncSession, event: dict) -> None:
 
 
 async def _apply_bounce(
-    session: AsyncSession, app_row: Application, *, kind: str, new_status: str
+    session: AsyncSession, app_row: Application, *, kind: str, new_status: str,
+    bounce_data: dict | None = None,
 ) -> str:
     """Gắn cờ + (có điều kiện) hạ về PENDING_REVIEW. Trả trạng thái CUỐI của hồ sơ.
 
     `new_status` quyết cờ nào được gắn (fix vòng 3 — xem định nghĩa `EMAIL_COMPLAINED_FLAG`) VÀ có
     được hạ hay không (I3, adversarial review — xem `_DEMOTABLE`): complaint KHÔNG được hạ, chỉ
     bounce THẬT mới đáng đưa về tay HR.
+
+    **F2 (final review):** trong nhóm BOUNCE, `Transient` (hộp thư đầy/tạm thời) cũng KHÔNG được hạ —
+    chỉ `Permanent` (và các loại khác/không rõ, coi như nghiêm trọng) mới hạ. Lý do cụ thể:
+    `screener_reminder` chở lại CHÍNH magic-link mà thư `screener` gốc đã giao THÀNH CÔNG — hộp thư
+    đầy lúc thư nhắc tới KHÔNG có nghĩa liên kết đã chết, nên hạ về PENDING_REVIEW rồi đóng phiên
+    (`_abandon_in_flight_session`) là giết một link đang sống dưới chân ứng viên, mà HR lại không có
+    nút "gửi lại link sàng lọc" (chỉ booking mới có). `bounce_data` cho phép `None` (complaint/sự
+    kiện không mang `data`) — an toàn vì `_is_transient_bounce` tự canh kiểu.
     """
     flag = (
         EMAIL_BOUNCED_FLAG if new_status == DeliveryStatus.BOUNCED.value else EMAIL_COMPLAINED_FLAG
@@ -262,6 +289,9 @@ async def _apply_bounce(
 
     if new_status not in _DEMOTABLE:
         return app_row.status  # complaint: thư ĐÃ TỚI tay ứng viên — chỉ cờ, không hạ
+
+    if new_status == DeliveryStatus.BOUNCED.value and _is_transient_bounce(bounce_data):
+        return app_row.status  # Transient: địa chỉ vẫn sống, liên kết vẫn sống — chỉ cờ, không hạ
 
     mapping = _SINGLE_CHANNEL.get(kind)
     if mapping is None:

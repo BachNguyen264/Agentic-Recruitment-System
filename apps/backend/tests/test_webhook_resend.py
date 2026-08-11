@@ -237,6 +237,29 @@ def test_bounce_reason_of_rejects_non_dict_data_or_bounce() -> None:
     assert svc.bounce_reason_of({"bounce": ["type", "Permanent"]}) is None
 
 
+# ── F2 (final review): Transient (hộp thư đầy/tạm thời) KHÔNG được xử lý y hệt Permanent ────────
+
+
+def test_is_transient_bounce_recognizes_type_case_insensitive() -> None:
+    assert svc._is_transient_bounce({"bounce": {"type": "Transient"}}) is True
+    assert svc._is_transient_bounce({"bounce": {"type": "transient"}}) is True
+    assert svc._is_transient_bounce({"bounce": {"type": " TRANSIENT "}}) is True
+
+
+def test_is_transient_bounce_false_for_permanent_or_absent() -> None:
+    assert svc._is_transient_bounce({"bounce": {"type": "Permanent"}}) is False
+    assert svc._is_transient_bounce({"bounce": {}}) is False
+    assert svc._is_transient_bounce({}) is False
+
+
+def test_is_transient_bounce_rejects_non_dict_payload() -> None:
+    """Cùng kỷ luật với `bounce_reason_of`/`email_id_of` (C1): hình dạng payload rác KHÔNG được ném."""
+    assert svc._is_transient_bounce(None) is False
+    assert svc._is_transient_bounce("khong-phai-dict") is False
+    assert svc._is_transient_bounce({"bounce": "hard bounce"}) is False
+    assert svc._is_transient_bounce({"bounce": ["type", "Transient"]}) is False
+
+
 async def test_handle_event_lets_infra_errors_surface(monkeypatch) -> None:  # noqa: ANN001
     """C1 phần 2: `handle_event` chỉ nuốt lỗi HÌNH DẠNG payload — lỗi HẠ TẦNG (mất kết nối DB giữa
     chừng, deadlock...) phải NỔI LÊN cho route xử lý, vì Resend thử lại LÀ đúng hướng cho loại lỗi
