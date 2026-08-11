@@ -204,3 +204,49 @@ async def test_resume_screener_error_escalates_not_stuck(monkeypatch) -> None:
     assert app_row.escalation_reason  # có lý do lỗi cho HR
     assert session.rollbacks == 1
     assert res["branch"] == "error"
+
+
+async def test_resume_screener_preserves_email_flags(monkeypatch) -> None:
+    """F1 (final review, hardening email): webhook Resend gắn `email_complained`/`email_bounced`
+    THẲNG lên hàng DB — checkpoint LangGraph không hề biết tới hai cờ này (grep xác nhận: KHÔNG chỗ
+    nào trong app/agents hay app/tasks đọc/ghi chúng). Trước fix, dòng ghi đè trần
+    `application.uncertainty_flags = final.get(...) or []` xoá sạch `email_complained` ở MỌI lượt
+    resume (vd. hết hạn sàng lọc → sweep resume `no_response`) — HR mất cảnh báo, có thể duyệt/mời
+    tiếp đúng người vừa báo spam. Test khẳng định HỢP NHẤT: cờ email CÒN nguyên, VÀ cờ mới của graph
+    (`no_response`) vẫn được áp — không phải "bỏ qua graph", mà "không xoá cái graph không biết tới".
+    """
+    from app.models.application import Application
+    from app.tasks import background
+
+    app_row = Application(
+        id=7, applicant_email="a@e.com", job_id=2, status="AWAITING_SCREENER",
+        uncertainty_flags=["email_complained"], escalation_reason=None,
+    )
+    session = _FakeSession({(Application, 7): app_row})
+
+    def _resume_out_no_response() -> dict:
+        return {
+            "branch": "human_review",
+            "final": {
+                "status": ApplicationStatus.PENDING_REVIEW.value,
+                "confidence": None,
+                "uncertainty_flags": ["no_response"],
+                "escalation_reason": "Ứng viên không phản hồi bộ câu hỏi sàng lọc trong thời hạn.",
+            },
+            "trace": [
+                {"node": "screener", "status": "SCREENING", "uncertainty_flags": ["no_response"]},
+                {"node": "human_review", "status": "PENDING_REVIEW", "uncertainty_flags": ["no_response"]},
+            ],
+            "suspended": False,
+        }
+
+    monkeypatch.setattr(
+        background, "resume_with_trace", lambda **_kw: _await_value(_resume_out_no_response())
+    )
+
+    await background.resume_screener(session, 7, {"no_response": True})
+
+    # Cờ email GIỮ LẠI (không bị graph biết-đâu-là-gì xoá mất) VÀ cờ mới của graph được ÁP — hợp
+    # nhất, không phải ghi đè trần cũng không phải "đóng băng" state cũ.
+    assert set(app_row.uncertainty_flags) == {"no_response", "email_complained"}
+    assert app_row.escalation_reason == "Ứng viên không phản hồi bộ câu hỏi sàng lọc trong thời hạn."
