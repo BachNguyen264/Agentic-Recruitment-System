@@ -6,6 +6,9 @@ bounce và phá hồ sơ của ứng viên thật. Đây là phần được tes
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 
 from app.core.webhook_signature import sign_svix_payload, verify_svix_signature
@@ -68,3 +71,96 @@ def test_accepts_any_matching_version_in_multi_signature_header() -> None:
 
 def test_ignores_unknown_signature_version() -> None:
     assert _verify(signature_header="v2,YWJj") is False
+
+
+# --- Vòng sửa sau security review (opus, security-auditor, "Not approved") ---------------------
+#
+# Bài học của vòng review: khẳng định "mọi ca bất thường → False" trong report trước ĐƯỢC RÚT RA
+# TỪ ĐỌC CODE, không phải từ chạy thử — reviewer fuzz thì 4/23 ca nổ exception thật. Các test dưới
+# đây khoá lại đúng những ca đã nổ, và 3 test cuối khoá lại thuật toán (không chỉ hành vi bên ngoài)
+# vì `sign_svix_payload`/`verify_svix_signature` dùng chung `_digest` — một lỗi trong cách dựng
+# `signed_content` (ví dụ bỏ sót `msg_id`) sẽ khiến hai hàm tự khớp nhau và MỌI test trên vẫn xanh.
+
+
+def test_empty_secret_fails() -> None:
+    """CRITICAL: `base64.b64decode("", validate=True)` trả `b''` HỢP LỆ (không ném) — secret rỗng
+    phải bị chặn TRƯỚC khi decode, không thì HMAC chạy bình thường với khoá RỖNG mà kẻ tấn công
+    cũng biết trước (ca thật: `RESEND_WEBHOOK_SECRET` chưa set trên Render). Tự dựng chữ ký bằng
+    khoá rỗng THẲNG bằng hmac/hashlib (KHÔNG qua `sign_svix_payload` — hàm đó CỐ Ý raise khi secret
+    rỗng vì nó là helper dựng dữ liệu test hợp lệ, không phải đường cần test ở đây)."""
+    signed = f"{_ID}.{_TS}".encode() + b"." + _BODY
+    forged = "v1," + base64.b64encode(hmac.new(b"", signed, hashlib.sha256).digest()).decode()
+    assert (
+        verify_svix_signature(
+            secret="", msg_id=_ID, timestamp=_TS, signature_header=forged,
+            body=_BODY, now=_NOW, tolerance_seconds=300.0,
+        )
+        is False
+    )
+
+
+def test_secret_with_only_whsec_prefix_fails() -> None:
+    """Cùng lỗ hổng CRITICAL, qua đường khác: đúng tiền tố `whsec_` nhưng KHÔNG có phần thân —
+    sau khi cắt tiền tố cũng ra chuỗi rỗng, phải bị chặn giống hệt secret rỗng ở trên."""
+    signed = f"{_ID}.{_TS}".encode() + b"." + _BODY
+    forged = "v1," + base64.b64encode(hmac.new(b"", signed, hashlib.sha256).digest()).decode()
+    assert (
+        verify_svix_signature(
+            secret="whsec_", msg_id=_ID, timestamp=_TS, signature_header=forged,
+            body=_BODY, now=_NOW, tolerance_seconds=300.0,
+        )
+        is False
+    )
+
+
+def test_non_ascii_signature_header_fails() -> None:
+    """`hmac.compare_digest` trên kiểu `str` bắt buộc ASCII-only — Starlette decode header theo
+    latin-1 nên `svix-signature: v1,café` từng ném `TypeError` (⇒ 500) thay vì trả `False` (⇒ 401)."""
+    assert _verify(signature_header="v1,café") is False
+
+
+def test_huge_timestamp_fails() -> None:
+    """`int("9"*400)` THÀNH CÔNG (dưới ngưỡng 4300 chữ số của Python 3.11+), rồi `now - sent_at`
+    từng ném `OverflowError` — attacker điều khiển hoàn toàn giá trị `svix-timestamp`."""
+    assert _verify(timestamp="9" * 400) is False
+
+
+def test_none_msg_id_fails() -> None:
+    """Task sau đọc header thiếu bằng `request.headers.get("svix-id")` → `None` — từng ném
+    `AttributeError` khi gọi `.encode()` trên `None`."""
+    assert _verify(msg_id=None) is False  # type: ignore[arg-type]
+
+
+def test_none_body_fails() -> None:
+    """Cùng lý do — body rỗng/thiếu ở tầng request từng ném `TypeError` trong `bytes.join`."""
+    assert _verify(body=None) is False  # type: ignore[arg-type]
+
+
+def test_known_answer_hardcoded_signature_passes() -> None:
+    """Vector ĐỘC LẬP: giá trị base64 dưới đây được tính TAY bằng `hmac`/`hashlib`/`base64` trong
+    một `python -c` KHÔNG import `app.core.webhook_signature` (không dùng `sign_svix_payload`) —
+    khoá cứng ngay trong test để không phụ thuộc bất kỳ hàm nào của module đang kiểm tra. Nếu ai đó
+    sửa `_digest` (đổi thứ tự nối chuỗi, đổi dấu phân cách, quên `msg_id`...), test này đỏ mà không
+    cần tin vào chính module đang bị nghi ngờ."""
+    known_header = "v1,O/OU8qv8ODjiVuyFLFr8Pf/hp7+F/54FTA1sbV0GY2k="
+    assert (
+        verify_svix_signature(
+            secret=_SECRET, msg_id=_ID, timestamp=_TS, signature_header=known_header,
+            body=_BODY, now=_NOW, tolerance_seconds=300.0,
+        )
+        is True
+    )
+
+
+def test_signature_built_for_different_msg_id_fails() -> None:
+    """Bắt mutation bỏ `msg_id` khỏi `signed_content`: nếu bỏ, chữ ký ký cho `msg_id` KHÁC vẫn khớp
+    khi verify với `msg_id` thật — vì `sign_*`/`verify_*` dùng chung `_digest`, test dựng-rồi-verify
+    thông thường (kiểu `test_valid_signature_passes`) KHÔNG bắt được lỗi này."""
+    sig_for_other_id = sign_svix_payload(secret=_SECRET, msg_id="msg_OTHER", timestamp=_TS, body=_BODY)
+    assert _verify(signature_header=sig_for_other_id) is False
+
+
+def test_signature_built_for_different_timestamp_fails() -> None:
+    """Tương tự test trên nhưng cho `timestamp` — bắt mutation bỏ `timestamp` khỏi `signed_content`."""
+    sig_for_other_ts = sign_svix_payload(secret=_SECRET, msg_id=_ID, timestamp="1786000001", body=_BODY)
+    assert _verify(signature_header=sig_for_other_ts) is False

@@ -30,8 +30,20 @@ _VERSION = "v1"
 
 
 def _key(secret: str) -> bytes | None:
-    """`whsec_<base64>` → bytes khoá. Secret hỏng → None (gọi là từ chối, không nổ)."""
+    """`whsec_<base64>` → bytes khoá. Secret hỏng/RỖNG → None (gọi là từ chối, không nổ).
+
+    CHỐT AN NINH: `base64.b64decode("", validate=True)` trả `b''` **HỢP LỆ**, không ném lỗi — nếu
+    không chặn `raw` rỗng ở đây, secret rỗng (hoặc đúng chuỗi `"whsec_"` thiếu phần thân — ví dụ
+    biến môi trường `RESEND_WEBHOOK_SECRET` chưa set trên Render) sẽ cho ra khoá HMAC RỖNG mà kẻ
+    tấn công cũng biết trước, và xác thực vẫn "chạy" bình thường (không phải đường tắt `return True`,
+    mà là chạy đúng thuật toán với một khoá công khai) — webhook mở toang trong khi log vẫn báo "đã
+    verify". Cùng nguyên tắc `_jwt_secret` trong `core/security.py`: thiếu secret phải bị từ chối,
+    KHÔNG âm thầm dùng khoá yếu (khác ở chỗ hàm này KHÔNG được `raise` — verify là hàm biên nhận
+    HTTP công khai, exception ở đây sẽ thành 500 thay vì 401).
+    """
     raw = secret[len(_PREFIX):] if secret.startswith(_PREFIX) else secret
+    if not raw:
+        return None
     try:
         return base64.b64decode(raw, validate=True)
     except (ValueError, TypeError):
@@ -65,23 +77,47 @@ def verify_svix_signature(
 
     `now` được TIÊM VÀO (không gọi `time` bên trong) để test đo được cửa sổ replay mà không phải
     ngủ — cùng triết lý `RateLimiter.allow(..., now)` của `core/hardening`.
+
+    Đầu vào tới thẳng từ HTTP header do BÊN NGOÀI kiểm soát hoàn toàn (task sau đọc bằng
+    `request.headers.get(...)`, thiếu header ⇒ `None`; header có thể chứa ký tự non-ASCII hoặc một
+    chuỗi số khổng lồ) — MỌI kiểu dữ liệu bất ngờ phải hoá thành `False`, không được để
+    `AttributeError`/`TypeError`/`OverflowError` thoát ra ngoài thành 500 (mất chặn xác thực, lộ
+    stack trace).
     """
-    key = _key(secret)
-    if key is None or not signature_header:
+    if not isinstance(msg_id, str) or not isinstance(timestamp, str):
+        return False
+    if not isinstance(body, (bytes, bytearray)):
+        return False
+    if not isinstance(signature_header, str) or not signature_header:
+        return False
+
+    key = _key(secret) if isinstance(secret, str) else None
+    if key is None:
         return False
 
     try:
         sent_at = int(timestamp)
-    except (TypeError, ValueError):
-        return False
-    if abs(now - sent_at) > tolerance_seconds:
+        if abs(now - sent_at) > tolerance_seconds:
+            return False
+    except (TypeError, ValueError, OverflowError):
+        # ValueError: timestamp không phải số (hoặc vượt giới hạn chuyển đổi int() của Python).
+        # OverflowError: timestamp là số HỢP LỆ nhưng quá lớn để trừ với `now` (float) — attacker
+        # điều khiển hoàn toàn header này, không chặn thì thành DoS/ồn log rẻ tiền (500 mỗi request).
         return False
 
     expected = _digest(key, msg_id, timestamp, body)
+    expected_bytes = expected.encode("ascii")  # tự sinh, luôn ASCII (base64) — encode không bao giờ nổ
     for part in signature_header.split(" "):
         version, _, candidate = part.partition(",")
         if version != _VERSION or not candidate:
             continue
-        if hmac.compare_digest(candidate, expected):
+        try:
+            # `hmac.compare_digest` trên KIỂU STR bắt buộc ASCII-only, còn trên bytes thì không —
+            # Starlette decode header theo latin-1 nên `svix-signature: v1,café` tới được đây; nếu
+            # so sánh thẳng bằng str sẽ ném TypeError (thoát ra ngoài thành 500 thay vì 401).
+            candidate_bytes = candidate.encode("utf-8")
+        except UnicodeEncodeError:
+            continue
+        if hmac.compare_digest(candidate_bytes, expected_bytes):
             return True
     return False
