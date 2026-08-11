@@ -294,3 +294,134 @@ def test_clear_bounce_never_touches_complained_flag() -> None:
     svc._clear_bounce(app_row, recipient="a@e.com")  # CÙNG địa chỉ → chỉ BOUNCE được gỡ
     assert svc.EMAIL_BOUNCED_FLAG not in app_row.uncertainty_flags
     assert svc.EMAIL_COMPLAINED_FLAG in app_row.uncertainty_flags  # KHÔNG BAO GIỜ bị gỡ ở đây
+
+
+# ── Endpoint ────────────────────────────────────────────────────────────────
+import httpx
+import pytest
+
+from app.core.hardening import OriginCheckMiddleware, RateLimitMiddleware
+
+
+def _headers(body: bytes, *, secret: str = _SECRET, ts: str = _TS) -> dict[str, str]:
+    return {
+        "svix-id": _ID,
+        "svix-timestamp": ts,
+        "svix-signature": sign_svix_payload(secret=secret, msg_id=_ID, timestamp=ts, body=body),
+        "content-type": "application/json",
+    }
+
+
+@pytest.fixture
+def client(monkeypatch):
+    """App THẬT nhưng chỉ mount router webhook — không kéo theo lifespan/DB của app đầy đủ.
+
+    `get_session` được ghi đè bằng một object rỗng: dependency của FastAPI chạy TRƯỚC thân handler,
+    nên không ghi đè thì cả test 401/503 cũng mở một connection Postgres thật (chậm + đòi DB cho
+    những test vốn không cần).
+    """
+    from fastapi import FastAPI
+
+    from app.api.routes import webhooks
+    from app.core.database import get_session
+
+    monkeypatch.setattr(webhooks.settings, "resend_webhook_secret", _SECRET)
+    monkeypatch.setattr(webhooks.settings, "resend_webhook_tolerance_seconds", 300.0)
+    monkeypatch.setattr(webhooks, "_now", lambda: _NOW)
+
+    app = FastAPI()
+    app.include_router(webhooks.router, prefix="/api")
+    app.dependency_overrides[get_session] = lambda: object()
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+
+
+async def test_valid_signature_accepted(client, monkeypatch) -> None:
+    seen: list[dict] = []
+    from app.api.routes import webhooks
+
+    async def fake_handle(_session, event: dict) -> None:  # noqa: ANN001
+        seen.append(event)
+
+    monkeypatch.setattr(webhooks, "_handle", fake_handle)
+    async with client as c:
+        r = await c.post("/api/webhooks/resend", content=_BODY, headers=_headers(_BODY))
+    assert r.status_code == 204
+    assert seen and seen[0]["type"] == "email.bounced"
+
+
+async def test_forged_signature_rejected_401(client, monkeypatch) -> None:
+    """Giả mạo → 401 và KHÔNG chạm nghiệp vụ (không có tác dụng phụ nào)."""
+    from app.api.routes import webhooks
+
+    async def boom(*_a):  # noqa: ANN002, ANN202
+        raise AssertionError("nghiệp vụ KHÔNG được chạy khi chữ ký sai")
+
+    monkeypatch.setattr(webhooks, "_handle", boom)
+    bad = dict(_headers(_BODY), **{"svix-signature": "v1,YWJjZA=="})
+    async with client as c:
+        r = await c.post("/api/webhooks/resend", content=_BODY, headers=bad)
+    assert r.status_code == 401
+
+
+async def test_missing_signature_headers_rejected_401(client) -> None:
+    async with client as c:
+        r = await c.post("/api/webhooks/resend", content=_BODY,
+                         headers={"content-type": "application/json"})
+    assert r.status_code == 401
+
+
+async def test_secret_not_configured_returns_503(client, monkeypatch) -> None:
+    """Chưa cấu hình secret → TỪ CHỐI, không phải "cho qua vì chưa bật"."""
+    from app.api.routes import webhooks
+
+    monkeypatch.setattr(webhooks.settings, "resend_webhook_secret", None)
+    async with client as c:
+        r = await c.post("/api/webhooks/resend", content=_BODY, headers=_headers(_BODY))
+    assert r.status_code == 503
+
+
+async def test_invalid_json_with_valid_signature_returns_400(client) -> None:
+    body = b"khong-phai-json"
+    async with client as c:
+        r = await c.post("/api/webhooks/resend", content=body, headers=_headers(body))
+    assert r.status_code == 400
+
+
+# ── Miễn trừ middleware: hành vi ta ĐANG DỰA VÀO mà chưa có test nào giữ ─────
+async def test_webhook_is_exempt_from_rate_limit() -> None:
+    """Resend gọi từ VÀI IP cố định. Siết theo IP là gom hết vào một xô → 429 → MẤT sự kiện bounce,
+    và mất im lặng (Resend thử lại vài lần rồi thôi)."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+
+    @app.post("/api/webhooks/resend")
+    async def hook() -> dict:
+        return {"ok": True}
+
+    app.add_middleware(
+        RateLimitMiddleware, login_max=1, login_window_seconds=60,
+        public_max=1, public_window_seconds=60, trust_proxy=False, enabled=True,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        for _ in range(5):
+            assert (await c.post("/api/webhooks/resend", json={})).status_code == 200
+
+
+async def test_webhook_passes_origin_check_without_origin_header() -> None:
+    """Request server-to-server KHÔNG có header `Origin` — phải cho qua, nếu không webhook chết hẳn."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+
+    @app.post("/api/webhooks/resend")
+    async def hook() -> dict:
+        return {"ok": True}
+
+    app.add_middleware(OriginCheckMiddleware, allowed=frozenset({"https://ars.vercel.app"}))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        assert (await c.post("/api/webhooks/resend", json={})).status_code == 200

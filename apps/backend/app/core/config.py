@@ -242,6 +242,15 @@ class Settings(BaseSettings):
     # một hạn mức đã cạn chỉ làm chậm mọi lá thư khác đang xếp hàng sau.
     email_max_retries: int = 3
 
+    # ── Webhook Resend (EMAIL-1) ─────────────────────────────────────
+    # Secret ký của webhook (`whsec_...`), lấy khi tạo webhook trên dashboard Resend. CHƯA cấu hình
+    # → endpoint trả 503 chứ KHÔNG âm thầm nhận: một webhook nhận mọi thứ không ký còn tệ hơn không
+    # có webhook, vì bất kỳ ai cũng giả được sự kiện bounce để phá hồ sơ ứng viên thật.
+    resend_webhook_secret: str | None = None
+    # Cửa sổ chống replay theo `svix-timestamp`. Chữ ký đúng mà không có hạn thì một request hợp lệ
+    # bị chặn lại sẽ phát lại được mãi mãi.
+    resend_webhook_tolerance_seconds: float = 300.0
+
     # ── Langfuse (observability — phase sau) ─────────────────────────
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None

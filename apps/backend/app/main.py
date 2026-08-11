@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents import checkpointer
 from app.api.deps import require_hr
-from app.api.routes import agents, applications, auth, health, jobs, public
+from app.api.routes import agents, applications, auth, health, jobs, public, webhooks
 from app.core.config import settings
 from app.core.database import engine
 from app.core.hardening import (
@@ -109,13 +109,18 @@ app.add_middleware(
 )
 
 # Slice 09 — Auth HR (PRD §4): require_hr bảo vệ MỌI router HR ở cấp router (áp cho mọi endpoint
-# bên trong). CÔNG KHAI giữ MỞ tuyệt đối: health, auth (login/logout), public (JD/nộp CV/screening)
-# — ứng viên GUEST không bị chặn. `me` tự bảo vệ trong auth router (dependency ở handler).
+# bên trong). CÔNG KHAI giữ MỞ tuyệt đối: health, auth (login/logout), public (JD/nộp CV/screening),
+# webhook (EMAIL-1: Resend gọi server-to-server, không có cookie phiên nào để kiểm — chốt chặn của
+# nó là CHỮ KÝ, xem `api/routes/webhooks.py`) — ứng viên GUEST không bị chặn. `me` tự bảo vệ trong
+# auth router (dependency ở handler).
 _HR_ONLY = [Depends(require_hr)]
 
 app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(public.router, prefix="/api")
+# Webhook nhà cung cấp email (EMAIL-1): CÔNG KHAI có chủ ý — Resend gọi server-to-server, không có
+# cookie phiên nào để kiểm. Chốt chặn là CHỮ KÝ (`core/webhook_signature`), không phải `require_hr`.
+app.include_router(webhooks.router, prefix="/api")
 app.include_router(applications.router, prefix="/api", dependencies=_HR_ONLY)
 app.include_router(agents.router, prefix="/api", dependencies=_HR_ONLY)
 app.include_router(jobs.router, prefix="/api", dependencies=_HR_ONLY)
