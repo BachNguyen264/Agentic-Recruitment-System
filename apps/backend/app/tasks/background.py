@@ -17,6 +17,11 @@ from app.core.logging import get_logger
 from app.models.application import IN_FLIGHT_STATUSES, Application, ApplicationStatus
 from app.models.job_posting import JobPosting
 from app.services import audit_service, booking_flow, job_service
+# F1 (final review, hardening email): chỉ hai TÊN cờ — dùng để giữ lại cờ email khi resume ghi đè
+# uncertainty_flags (graph không biết webhook Resend, xem resume_screener). KHÔNG vòng import: email_
+# delivery chỉ kéo app.models/app.services.audit_service/app.services.booking_flow — không module nào
+# trong đó import app.tasks.background ngược lại.
+from app.services.email_delivery import EMAIL_BOUNCED_FLAG, EMAIL_COMPLAINED_FLAG
 
 logger = get_logger("app.tasks.background")
 
@@ -353,8 +358,27 @@ async def resume_screener(
 
         application.status = final.get("status", application.status)
         application.confidence = final.get("confidence")
-        application.uncertainty_flags = final.get("uncertainty_flags", []) or []
-        application.escalation_reason = final.get("escalation_reason")
+        # F1 (final review): KHÔNG ghi đè trần. Webhook Resend gắn email_bounced/email_complained
+        # thẳng lên hàng DB (checkpoint LangGraph không biết hai cờ này), nên "final.get(...) or []"
+        # trần XOÁ SẠCH chúng ở MỌI lượt resume — một ứng viên vừa báo spam bị resume (vd. hết hạn
+        # sàng lọc) là mất cảnh báo, HR có thể mời/gửi tiếp cho đúng người đó. Hợp NHẤT: giữ cờ email
+        # cũ nếu graph không tự trả lại chúng, kế thừa lối lọc-chọn-lọc đã dùng ở booking_flow.py
+        # (gỡ cờ CŨ theo tên, không ghi đè trần).
+        old_email_flags = [
+            f for f in (application.uncertainty_flags or [])
+            if f in (EMAIL_BOUNCED_FLAG, EMAIL_COMPLAINED_FLAG)
+        ]
+        new_flags = final.get("uncertainty_flags", []) or []
+        application.uncertainty_flags = new_flags + [
+            f for f in old_email_flags if f not in new_flags
+        ]
+        # escalation_reason: graph không đặt lý do MỚI (None) trong khi hồ sơ đang mang cờ email —
+        # đừng để mất lý do "cần liên hệ thủ công" đã ghi lúc bounce hạ trạng thái. Graph CÓ đặt lý do
+        # (vd. no_response) thì lý do đó vẫn thắng như cũ — chỉ tránh cái XOÁ VỀ None trần.
+        new_reason = final.get("escalation_reason")
+        if new_reason is None and old_email_flags:
+            new_reason = application.escalation_reason
+        application.escalation_reason = new_reason
 
         await audit_service.record(
             session, application_id=application_id, node="system",

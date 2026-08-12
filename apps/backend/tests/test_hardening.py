@@ -454,3 +454,16 @@ async def test_origin_check_leaves_reads_alone() -> None:
     async with _client(_origin_app()) as c:
         r = await c.get("/api/applications", headers={"origin": "https://evil.example"})
     assert r.status_code == 200
+
+
+# ── EMAIL-1: khoá miễn trừ rate-limit cho webhook Resend ──────────────
+async def test_webhook_path_is_not_rate_limited() -> None:
+    """EMAIL-1: `/api/webhooks/*` phải nằm NGOÀI mọi xô quota. Resend gọi từ vài IP cố định — siết
+    theo IP là gom cả nhà cung cấp vào một xô rồi 429, và sự kiện bounce mất IM LẶNG."""
+    from app.core.hardening import RateLimitMiddleware
+
+    mw = RateLimitMiddleware(
+        app=None, login_max=1, login_window_seconds=60, public_max=1,
+        public_window_seconds=60, trust_proxy=False,
+    )
+    assert mw._bucket("/api/webhooks/resend", "POST") is None

@@ -69,6 +69,26 @@ export function ReviewCard({
         </p>
       )}
 
+      {/* EMAIL-1: HR phải thấy điều này TRƯỚC khi bấm nút — cả hai nút bên dưới đều gửi email thật.
+          Complaint hiện TRƯỚC vì mức cấp bách khác hẳn bounce: bấm nút khi đã complained là tiếp
+          tục gửi thư cho người đã báo chúng ta là spam (hại danh tiếng gửi email CẢ hệ thống); bấm
+          nút khi đã bounce chỉ là gửi thêm một lượt bounce vô hại hơn (nhưng vẫn lãng phí). */}
+      {app.email_complained && (
+        <p className="mt-3 rounded-r-lg border-l-[3px] border-red-500 bg-red-100 px-3 py-2.5 text-[13px] text-red-900">
+          <strong className="font-bold">🚫 Đã báo cáo spam: </strong>
+          {app.applicant_email} đã đánh dấu một thư trước đó là spam. Bấm nút bên dưới sẽ gửi THÊM
+          một thư vào đúng địa chỉ đó — cân nhắc liên hệ qua kênh khác thay vì gửi tiếp.
+        </p>
+      )}
+      {app.email_bounced && (
+        <p className="mt-3 rounded-r-lg border-l-[3px] border-red-500 bg-red-50 px-3 py-2.5 text-[13px] text-red-900">
+          <strong className="font-bold">⚠ Email không gửi được: </strong>
+          Thư trước đó không tới được {app.applicant_email}
+          {app.email_bounce_reason ? ` (${app.email_bounce_reason})` : ""}. Hãy liên hệ thủ công —
+          bấm nút bên dưới sẽ gửi thêm một thư nữa vào cùng địa chỉ đó.
+        </p>
+      )}
+
       {/* Lý do vào review (escalation) — nổi bật, đây là thứ HR cần đọc trước khi quyết */}
       {app.escalation_reason?.trim() && (
         <p className="mt-3 rounded-r-lg border-l-[3px] border-accent bg-accent-100 px-3 py-2.5 text-[13px] text-accent-800">

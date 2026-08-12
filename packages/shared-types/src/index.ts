@@ -69,6 +69,12 @@ export interface ApplicationListItem {
   // suy từ status, vì "chưa bấm link" và "bấm rồi mà hết lịch" đều đứng ở AWAITING_BOOKING — gộp
   // hai cái thành một nhãn là đổ lỗi cho người không có lỗi.
   booking_no_slots?: boolean;
+  // EMAIL-1: thư MỜI/SÀNG LỌC không tới được ứng viên (webhook Resend báo bounce). Dẫn xuất từ
+  // uncertainty_flags ở backend nên có ở CẢ danh sách lẫn chi tiết mà không tốn thêm truy vấn nào.
+  email_bounced?: boolean;
+  // Ứng viên đã bấm "đây là spam" trên một lá thư ĐÃ TỚI NƠI — RIÊNG với email_bounced (hai tình
+  // huống cần hai cách xử TRÁI NGƯỢC: bounce ⇒ tìm địa chỉ đúng; complaint ⇒ NGỪNG gửi cho người này).
+  email_complained?: boolean;
 }
 
 // Một tiêu chí rubric đã chấm (khớp ranker._reconcile_criteria: tên+trọng số từ JD, điểm từ LLM).
@@ -109,6 +115,10 @@ export interface ApplicationDetail extends ApplicationListItem {
   has_booking_link: boolean;
   // Có file CV gốc để tải không (slice 06). Bytes lấy qua GET /api/applications/{id}/cv (require_hr).
   has_cv: boolean;
+  // Lý do bounce rút gọn — chỉ có ở endpoint chi tiết. Cờ nói "có chuyện", câu này nói "chuyện gì".
+  email_bounce_reason: string | null;
+  // Lý do complaint tương tự — RIÊNG cột, Resend hiếm khi kèm chi tiết cho loại này nên thường null.
+  email_complaint_reason: string | null;
 }
 
 // Khung giờ phỏng vấn đã chốt — khớp BookedInterview (backend).

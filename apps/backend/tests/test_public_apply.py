@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from pydantic import ValidationError
 
 from app.models.job_posting import JobPosting
 from app.services import job_service
@@ -115,3 +116,61 @@ async def test_get_open_job_rejects_closed() -> None:
 
 async def test_get_open_job_missing() -> None:
     assert await job_service.get_open_job(FakeSession(None), 999) is None
+
+
+# ── Validate email: chặt ở prod / nới ở dev (EMAIL-1 §3.5) ──────────────────
+from app.core.config import settings as _settings
+from app.schemas.application import ApplicationCreate
+
+
+@pytest.mark.parametrize("bad", ["khong-co-a-cong", "a@@e.com", "a@", "@e.com", ""])
+def test_prod_rejects_malformed_email(monkeypatch, bad: str) -> None:
+    monkeypatch.setattr(_settings, "app_env", "production")
+    with pytest.raises(ValidationError):
+        ApplicationCreate(job_id=1, applicant_email=bad)
+
+
+def test_prod_rejects_special_use_tld(monkeypatch) -> None:
+    """`.local` là domain nội bộ — thư gửi tới đó chắc chắn không tới ai."""
+    monkeypatch.setattr(_settings, "app_env", "production")
+    with pytest.raises(ValidationError):
+        ApplicationCreate(job_id=1, applicant_email="hr@congty.local")
+
+
+def test_dev_allows_local_domain(monkeypatch) -> None:
+    """Nới ở dev để test end-to-end được với domain `.local` — cùng lý do slice 09 nới email đăng nhập."""
+    monkeypatch.setattr(_settings, "app_env", "local")
+    assert ApplicationCreate(job_id=1, applicant_email="hr@congty.local").applicant_email == "hr@congty.local"
+
+
+def test_dev_still_rejects_obvious_garbage(monkeypatch) -> None:
+    """Nới ≠ tắt: không có @ hoặc không có dấu chấm ở domain thì vẫn phải 422."""
+    monkeypatch.setattr(_settings, "app_env", "local")
+    for bad in ("khong-co-a-cong", "a@e", "a b@e.com"):
+        with pytest.raises(ValidationError):
+            ApplicationCreate(job_id=1, applicant_email=bad)
+
+
+async def test_bad_email_raises_422_before_creating_anything(monkeypatch) -> None:
+    """Email hỏng phải chết ở CỬA. Để nó đi tiếp là tạo một hồ sơ + tốn hai lượt LLM (parser +
+    ranker, đo được ~34s) cho một ứng viên không bao giờ liên hệ được."""
+    from fastapi import HTTPException
+
+    from app.api.routes import public
+
+    class ExplodingSession(FakeSession):
+        """Bất kỳ lượt ghi nào cũng là bằng chứng validate đã chạy MUỘN."""
+
+        def add(self, *_a):  # noqa: ANN002, ANN202
+            raise AssertionError("KHÔNG được tạo hồ sơ khi email sai định dạng")
+
+        async def commit(self):  # noqa: ANN202
+            raise AssertionError("KHÔNG được commit khi email sai định dạng")
+
+    monkeypatch.setattr(_settings, "app_env", "production")
+    with pytest.raises(HTTPException) as exc:
+        await public.submit_application(
+            ExplodingSession(_job()), None, job_id=2,
+            applicant_email="hr@congty.local", file=None,
+        )
+    assert exc.value.status_code == 422

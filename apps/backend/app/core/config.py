@@ -227,6 +227,37 @@ class Settings(BaseSettings):
     # Đổi sang địa chỉ thuộc domain đã xác thực khi demo public.
     resend_api_key: str | None = None
     email_from: str = "onboarding@resend.dev"
+    # Địa chỉ nhận thư trả lời (EMAIL-1). Vừa là UX (ứng viên bấm Reply là tới HR thật), vừa là tín
+    # hiệu deliverability: địa chỉ gửi kiểu `noreply@` không có hòm thư bị nhà cung cấp trừ điểm.
+    # Rỗng = không đặt `reply_to` (giữ nguyên hành vi cũ).
+    email_reply_to: str | None = None
+
+    # ── Giữ nhịp + retry khi gọi Resend (EMAIL-1) ────────────────────
+    # Resend giới hạn 2 req/s. Sweep loop (08c + SCH-3) có thể bắn nhiều thư trong MỘT vòng, nên
+    # lượt gửi được NỐI TIẾP HOÁ và cách nhau ít nhất ngần này — tự đâm giới hạn của chính mình là
+    # lỗi ta gây ra, không phải lỗi ngoại cảnh. 550ms > 500ms để có biên an toàn.
+    email_min_interval_ms: int = 550
+    # Số lần thử lại tối đa cho lỗi TẠM THỜI (429 do bùng nổ, 5xx, lỗi mạng). KHÔNG áp cho lỗi
+    # vĩnh viễn (400/422 — địa chỉ sai định dạng) và KHÔNG áp cho cạn quota ngày/tháng: thử lại
+    # một hạn mức đã cạn chỉ làm chậm mọi lá thư khác đang xếp hàng sau.
+    email_max_retries: int = 3
+
+    # ── Webhook Resend (EMAIL-1) ─────────────────────────────────────
+    # Secret ký của webhook (`whsec_...`), lấy khi tạo webhook trên dashboard Resend. CHƯA cấu hình
+    # → endpoint trả 503 chứ KHÔNG âm thầm nhận: một webhook nhận mọi thứ không ký còn tệ hơn không
+    # có webhook, vì bất kỳ ai cũng giả được sự kiện bounce để phá hồ sơ ứng viên thật.
+    resend_webhook_secret: str | None = None
+    # Cửa sổ chống replay theo `svix-timestamp`. Chữ ký đúng mà không có hạn thì một request hợp lệ
+    # bị chặn lại sẽ phát lại được mãi mãi.
+    resend_webhook_tolerance_seconds: float = 300.0
+    # Trần thân body RIÊNG cho webhook (audit sau Task 6, Important-2) — KHÔNG dùng chung
+    # `max_request_bytes` (12MB, cỡ dành cho upload CV). `/api/webhooks/*` là path công khai DUY NHẤT
+    # không có xô rate-limit (miễn trừ có chủ ý — mục 4, xem `api/routes/webhooks.py`), nên trần 12MB
+    # biến nó thành đường khuếch đại KHÔNG hạn mức: không cần chữ ký đúng, chỉ cần gửi lặp lại một
+    # body cỡ chục MB vẫn ép server đệm hết vào RAM rồi chạy trọn HMAC-SHA256 trước khi bị từ chối.
+    # Payload Resend thật chỉ cỡ 1–2KB; 64KB đã rộng rãi gấp hàng chục lần mà vẫn nhỏ hơn nhiều so
+    # với 12MB.
+    resend_webhook_max_bytes: int = 65_536
 
     # ── Langfuse (observability — phase sau) ─────────────────────────
     langfuse_public_key: str | None = None

@@ -53,10 +53,34 @@
   không chép lại) — hai bản chuỗi dự phòng lệch nhau là hai lá thư cùng một buổi PV xưng hô khác nhau.
   Nút HR nào ánh xạ một điều kiện của backend (vd "Gửi lại link" ↔ `has_any_session`) thì backend phải
   TRẢ RA cờ đó (`has_booking_link`) — để UI tự đoán là HR bấm rồi mới biết mình bấm nhầm qua 409.
+  **PARKED (EMAIL-1, Task 7 I5):** webhook `email_delivery` lấy `pg_advisory_xact_lock(application_id)`
+  TRƯỚC khi đọc/ghi hồ sơ (cùng khoá `booking_flow`/`booking_service` dùng), nhưng `confirm_booking`
+  (đường ứng viên tự chốt giờ) KHÔNG xin khoá này — nó dựa vào `SELECT…FOR UPDATE` + partial unique
+  index riêng của chính nó. Cửa sổ đua GIỮA đúng hai đường này (webhook hạ trạng thái do bounce ⋂
+  ứng viên đang chốt giờ CÙNG lúc) không được khoá tuyệt đối, chỉ hẹp lại nhờ `_already_moved_on` đọc
+  bảng ngay trước khi ghi. CỐ Ý không vá thêm: điều kiện kích hoạt gần như tự mâu thuẫn (invite bounce
+  ⇒ ứng viên không có link hợp lệ để đua), và vá triệt để đòi thêm khoá thứ hai vào `confirm_booking`
+  — đường công khai nóng đã có FOR UPDATE + partial unique index và từng bị deadlock-ra-500 (xem gotcha
+  SCH-2), nên đánh đổi SAI. Đụng lại race này → cân nhắc kỹ trước khi thêm khoá thứ hai, đừng vá vội.
 - **Storage boundary (06):** nghiệp vụ TUYỆT ĐỐI không mở path CV — chỉ qua `services/storage`
   (`get_storage().save/get/delete`). Thêm chỗ đọc/ghi CV mới → đi qua seam, nếu không sẽ vỡ khi
   `STORAGE_BACKEND=r2`. `cv_file_ref` là KEY (opaque), KHÔNG trả ra client (dùng `has_cv` + endpoint tải).
   Bucket PRIVATE + stream qua `require_hr` — KHÔNG public URL/presigned cho CV (NFR-4).
+- **Email boundary (EMAIL-1):** `scheduler._dispatch` là chỗ DUY NHẤT gọi `email_service.send_email`
+  và cũng là chỗ DUY NHẤT ghi `email_delivery` — thêm đường gửi mới thì đi qua một hàm `notify_*`,
+  đừng gọi thẳng `send_email` (mất luôn khả năng phát hiện bounce của lá thư đó). `kind` của
+  `email_delivery` PHẢI trùng chuỗi `mode` (audit đã ghi `email_sent:{mode}` từ lát 04, hai từ vựng
+  là không đối soát được nữa). Webhook `/api/webhooks/resend` là endpoint CÔNG KHAI CÓ MUTATION:
+  chốt chặn là CHỮ KÝ, không phải `require_hr`; nó phải nằm NGOÀI mọi xô rate-limit (Resend gọi từ
+  vài IP cố định — siết theo IP là mất sự kiện bounce trong im lặng). Mọi lượt hạ trạng thái do
+  bounce phải CÓ ĐIỀU KIỆN + hỏi BẢNG, và **KHÔNG BAO GIỜ auto-reject**. **Bounce ≠ Complaint** — hai
+  cờ RIÊNG (`email_bounced`/`email_complained`), vì đòi hai hành động NGƯỢC nhau: bounce ⇒ tìm địa
+  chỉ đúng rồi liên hệ lại (CÓ đường gỡ cờ khi thư sau tới thành công); complaint ⇒ NGỪNG gửi cho
+  người này (cờ KHÔNG BAO GIỜ bị gỡ — complaint là bằng chứng thư ĐÃ TỚI, không phải sự cố kỹ thuật
+  tự lành). Chỉ `BOUNCED` được phép hạ trạng thái (`_DEMOTABLE`); `COMPLAINED` chỉ gắn cờ, vì hạ nó
+  sẽ giết một link đặt lịch/sàng lọc vẫn đang sống tốt. Cả hai cờ phải PHƠI RA UI ở MỌI trạng thái
+  (không chỉ `PENDING_REVIEW`) — ca đáng lo nhất là ca đã quyết xong mà thư không tới nơi, giấu nhãn
+  vì hồ sơ "đã xong" thì không ai phát hiện ra nữa.
 - **Auth boundary (09):** `require_hr` bảo vệ MỌI router HR (`/api/jobs|applications|agents` + `/api/auth/me`).
   GIỮ MỞ tuyệt đối: `/api/public/*`, `/api/auth/login|logout`, health — ứng viên guest KHÔNG bị chặn. Thêm
   router/endpoint HR mới → NHỚ áp `require_hr` (hoặc thêm vào `_HR_ONLY` trong `main.py`). Cookie Secure/SameSite/
@@ -265,3 +289,53 @@
 - **Gắn cờ thì phải có đường GỠ cờ (SCH-3).** `booking_no_response` không được xoá khi mời lại ⇒ hồ sơ
   đã chốt lịch vẫn mang nhãn "không phản hồi" vĩnh viễn, và vì handler khử trùng theo TÊN cờ nên lần hết
   hạn THẬT tiếp theo bị bỏ qua im lặng. Cờ vòng đời phải được dọn ở nhánh thành công của lượt sau.
+
+- **`base64.b64decode("", validate=True)` trả `b''` — HỢP LỆ, KHÔNG ném (EMAIL-1, CRITICAL).** Secret
+  webhook rỗng (hoặc chỉ có tiền tố `whsec_`) decode ra khoá `b''` thay vì lỗi ⇒ HMAC verify chạy được
+  bình thường với khoá rỗng ⇒ AI CŨNG GIẢ ĐƯỢC CHỮ KÝ (PoC đã chạy thật: verify(chữ ký tự tính bằng khoá
+  b'') = True). Kịch bản thật: quên đặt `RESEND_WEBHOOK_SECRET` trên Render → webhook mở toang cho bất kỳ
+  ai, mà log vẫn báo "đã verify" như bình thường. Fix đúng: `if not raw: return None` TRƯỚC khi decode —
+  secret rỗng phải là "không verify được gì", không phải "verify được với khoá rỗng".
+- **Verify webhook phải dùng BYTES THÔ của request, không phải JSON đã parse lại (EMAIL-1).** Parse rồi
+  `json.dumps` lại đổi khoảng trắng/thứ tự khoá ⇒ HMAC không bao giờ khớp dù payload "giống hệt". Đọc
+  `await request.body()` TRƯỚC mọi thao tác khác trên request. Kèm theo: cửa sổ chống replay theo
+  `svix-timestamp` là CHỐT CHẶN THỨ HAI, không phải trang trí — chữ ký đúng mà không kiểm timestamp thì
+  một request hợp lệ chặn được LÀ MỘT request phát lại được MÃI MÃI (attacker chỉ cần bắt được một sự
+  kiện thật một lần).
+- **Hàm `sign_*`/`verify_*` GƯƠNG NHAU thì tự khớp kể cả khi thuật toán SAI (EMAIL-1).** Nếu cả hai dùng
+  chung một hàm `_digest` nội bộ, một bộ test tự sign-rồi-verify sẽ luôn xanh — kể cả khi mutation bỏ hẳn
+  `msg_id`/`timestamp` khỏi phần dữ liệu được ký (đã tự bắt được lỗ này bằng mutation: bỏ `msg_id` khỏi
+  `signed_content` vẫn 9/9 test cũ xanh). Chốt chặn duy nhất là test **known-answer HARDCODE** — tự tính
+  tay (không import module đang test) một chữ ký cố định rồi so — cộng thêm test xác nhận chữ ký đổi khi
+  `msg_id`/`timestamp` đổi.
+- **429 của Resend là HAI chuyện khác nhau, đừng phân loại theo MÃ (EMAIL-1).** `error_type:
+  rate_limit_exceeded` = bùng nổ tức thời, lùi một nhịp là qua — ĐÁNG thử lại. `daily_quota_exceeded`/
+  `monthly_quota_exceeded` = tài nguyên DÙNG CHUNG của cả hệ thống đã cạn ⇒ thư của MỌI ứng viên khác
+  cũng câm theo, và thử lại chỉ tổ làm chậm hàng đợi (lãng phí thời gian cho một việc chắc chắn thất bại
+  lần nữa). Phân loại theo `error_type` trong body, KHÔNG theo mã HTTP 429 — cả hai loại đều trả 429.
+- **Retry làm dài một lượt gửi tới ~8s — Load boundary (14) siết thêm một bậc (EMAIL-1).** Trước đây giữ
+  session/connection qua MỘT lượt gọi Resend đã là tệ; nay retry (tối đa `EMAIL_MAX_RETRIES` lần, có
+  backoff) có thể kéo dài gấp nhiều lần. Mọi caller `notify_*` PHẢI đã `commit()` xong trước khi gọi —
+  không được giữ transaction mở rồi mới gửi thư. `_send_lock` bị giữ QUA CẢ vòng retry là CÓ CHỦ Ý (429
+  nghĩa là "chậm lại", không phải "thử caller khác trước") — đừng "tối ưu" bằng cách nhả khoá giữa các
+  lần thử.
+- **`html_to_text` BỎ href — bản text của email mất link nếu template không tự in URL thô (EMAIL-1).**
+  Các template có link phải in cả URL thô ra thân thư (không chỉ dựa vào thẻ `<a href>`) để bản
+  `text/plain` (một số client email/preview chỉ hiện bản này) còn giữ được đường dẫn. Thêm template có
+  link mới → nhớ in URL thô + viết test `assert url in html_to_text(html)`.
+- **COMPLAINED ≠ BOUNCED — đừng gộp chung xử lý (EMAIL-1).** Complaint (ứng viên bấm "đây là spam") là
+  bằng chứng thư ĐÃ TỚI TAY, không phải sự cố kỹ thuật cần cứu — hạ trạng thái về `PENDING_REVIEW` không
+  mở ra hành động đúng nào, mà còn GIẾT một link đặt lịch/sàng lọc vẫn đang sống tốt (đẩy hồ sơ ra khỏi
+  tập trạng thái mà `booking_flow`/sweep của `screening_timeout` đòi hỏi). Chỉ `BOUNCED` được hạ trạng
+  thái; `COMPLAINED` CHỈ gắn cờ — và cờ đó KHÔNG BAO GIỜ bị gỡ (khác cờ bounce, vốn được gỡ khi một thư
+  sau giao thành công), vì một lượt giao hàng thành công về sau không hề phủ nhận việc ứng viên đã từng
+  báo spam.
+- **Đường nào HẠ trạng thái vì bounce phải ĐÓNG luôn phiên đang bay, không chỉ đổi cột status (EMAIL-1).**
+  Hạ hồ sơ khỏi `AWAITING_BOOKING`/`AWAITING_SCREENER` mà không dọn `BookingSession`/`ScreeningSession`
+  tương ứng thì: khung giờ đang `HELD` không ai nhả (ứng viên vẫn mở được link cũ, và nếu họ chốt giờ thì
+  `confirm_and_notify` ghi ĐÈ `PENDING_REVIEW` thành `INTERVIEW_SCHEDULED` sau lưng HR); phiên sàng lọc
+  rớt khỏi CẢ HAI lưới sweep (điều kiện JOIN đòi đúng `status` cũ, mà `status` vừa đổi) nên nằm MẬP MỜ
+  vĩnh viễn — không dùng, không hết hạn, không ai dọn. Dùng đúng API sẵn có: `booking_service.cancel_sessions`
+  cho hướng đặt lịch, đặt `timed_out_at` cho `ScreeningSession` đang mở. **KHÔNG** resume graph LangGraph
+  từ webhook (đổi nặng, ngoài phạm vi EMAIL-1) — giới hạn đã biết: một thread checkpointer có thể rò lại,
+  ghi nhận chứ không vá ở đây.

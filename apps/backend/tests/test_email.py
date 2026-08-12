@@ -57,6 +57,22 @@ def test_subject_is_single_line() -> None:
     assert "\n" not in subject and "\r" not in subject
 
 
+def test_interview_reminder_keeps_raw_url_for_text_part() -> None:
+    """`html_to_text` BỎ href, chỉ giữ text-node. Thư nhắc trước buổi PV mà chỉ có <a> thì bản text
+    mất nút huỷ — đúng lúc ứng viên cần nó nhất. Mọi template có link đều in cả URL thô."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.html_text import html_to_text
+    from app.services.email_templates import interview_reminder_email
+
+    start = datetime(2026, 8, 20, 2, 0, tzinfo=timezone.utc)
+    _, html = interview_reminder_email(
+        "A", "Backend", start_at=start, end_at=start + timedelta(hours=1),
+        manage_url="http://x.test/booking/tok",
+    )
+    assert "http://x.test/booking/tok" in html_to_text(html)
+
+
 # ── email_service (Resend) — mock, không gửi thật ────────────────────────────
 
 
@@ -68,26 +84,36 @@ async def test_send_email_requires_api_key(monkeypatch) -> None:
 
 async def test_send_email_wraps_resend_error(monkeypatch) -> None:
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
+    calls = {"n": 0}
 
-    def boom(to: str, subject: str, html: str, attachments) -> None:
+    def boom(to: str, subject: str, html: str, text: str, attachments, idempotency_key: str) -> None:
+        calls["n"] += 1
         raise RuntimeError("network down")
 
     monkeypatch.setattr(email_service, "_send_sync", boom)
     with pytest.raises(email_service.EmailError):
         await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>")
+    # RuntimeError KHÔNG phải ResendError nên `_classify` hỏng-mở về "retry" — lỗi không rõ hình
+    # dạng thì thử lại là hành vi MONG MUỐN, không phải tai nạn. 4 = 1 lượt đầu + 3 lần thử lại.
+    assert calls["n"] == 4
 
 
 async def test_send_email_success_passes_params(monkeypatch) -> None:
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
     captured: dict = {}
 
-    def fake_send(to: str, subject: str, html: str, attachments) -> None:
-        captured.update(to=to, subject=subject, html=html, attachments=attachments)
+    def fake_send(
+        to: str, subject: str, html: str, text: str, attachments, idempotency_key: str
+    ) -> dict:
+        captured.update(to=to, subject=subject, html=html, text=text, attachments=attachments)
+        return {"id": "email_test"}
 
     monkeypatch.setattr(email_service, "_send_sync", fake_send)
     await email_service.send_email(to="a@e.com", subject="Mời", html="<p>xin chào</p>")
     assert captured == {
-        "to": "a@e.com", "subject": "Mời", "html": "<p>xin chào</p>", "attachments": [],
+        "to": "a@e.com", "subject": "Mời", "html": "<p>xin chào</p>",
+        "text": "xin chào",  # dẫn xuất từ html khi caller không tự truyền text
+        "attachments": [],
     }
 
 
@@ -98,8 +124,11 @@ async def test_send_email_encodes_attachment_base64(monkeypatch) -> None:
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
     captured: dict = {}
 
-    def fake_send(to: str, subject: str, html: str, attachments) -> None:
+    def fake_send(
+        to: str, subject: str, html: str, text: str, attachments, idempotency_key: str
+    ) -> dict:
         captured["attachments"] = attachments
+        return {"id": "email_test"}
 
     monkeypatch.setattr(email_service, "_send_sync", fake_send)
     await email_service.send_email(
@@ -112,17 +141,34 @@ async def test_send_email_encodes_attachment_base64(monkeypatch) -> None:
     assert base64.b64decode(att["content"]) == b"BEGIN:VCALENDAR\r\n"
 
 
+async def test_send_email_returns_resend_id(monkeypatch) -> None:
+    """ID trả về là KHOÁ ĐỐI CHIẾU với webhook — mất nó là mất khả năng phát hiện bounce."""
+    monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(email_service, "_send_sync", lambda *a: {"id": "email_xyz"})
+    assert await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>") == "email_xyz"
+
+
+async def test_send_email_tolerates_missing_id(monkeypatch) -> None:
+    """Resend không trả id → thư VẪN coi là đã gửi (nó đã bay đi), chỉ mất đường theo dõi."""
+    monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(email_service, "_send_sync", lambda *a: {})
+    assert await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>") is None
+
+
 async def test_send_email_builds_resend_payload(monkeypatch) -> None:
     # Chạy _send_sync THẬT (chỉ mock resend.Emails.send) → khoá đúng shape payload Resend:
-    # key `from`, `to` bọc thành list. Bắt lỗi sai key ('from_') / to chưa bọc list.
+    # key `from`, `to` bọc thành list, VÀ `options.idempotency_key` có mặt (EMAIL-1 — chống thư
+    # trùng khi retry, xem `_paced_send`). Bắt lỗi sai key ('from_') / to chưa bọc list / thiếu khoá.
     import resend
 
     monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
     monkeypatch.setattr(email_service.settings, "email_from", "onboarding@resend.dev")
     captured: dict = {}
+    captured_options: dict = {}
 
-    def fake_resend_send(params: dict) -> dict:
+    def fake_resend_send(params: dict, options: dict | None = None) -> dict:
         captured.update(params)
+        captured_options.update(options or {})
         return {"id": "email_123"}
 
     monkeypatch.setattr(resend.Emails, "send", fake_resend_send)
@@ -132,3 +178,42 @@ async def test_send_email_builds_resend_payload(monkeypatch) -> None:
     assert captured["to"] == ["a@e.com"]  # phải là list
     assert captured["subject"] == "Mời"
     assert captured["html"] == "<p>hi</p>"
+    assert captured_options["idempotency_key"]  # non-rỗng — chống thư trùng khi retry
+
+
+async def test_payload_includes_reply_to_and_text(monkeypatch) -> None:
+    """Reply phải về hòm thư HR thật, và multipart (text + html) giảm tín hiệu spam."""
+    import resend
+
+    monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(email_service.settings, "email_reply_to", "tuyendung@congty.vn")
+    monkeypatch.setattr(email_service, "_last_send_at", 0.0)
+    captured: dict = {}
+    # `options=None`: `_send_sync` thật (Task 3) gọi `resend.Emails.send(payload, options={...})`
+    # để mang idempotency key qua retry — mock phải nhận tham số đó, không chỉ `p`.
+    monkeypatch.setattr(
+        resend.Emails, "send", lambda p, options=None: captured.update(p) or {"id": "e"}
+    )
+
+    await email_service.send_email(
+        to="a@e.com", subject="Mời", html="<p>Xin chào</p><p>http://x.test/booking/tok</p>"
+    )
+
+    assert captured["reply_to"] == "tuyendung@congty.vn"
+    assert "Xin chào" in captured["text"]
+    assert "http://x.test/booking/tok" in captured["text"]  # LINK không được rơi mất ở bản text
+    assert "<p>" not in captured["text"]
+
+
+async def test_reply_to_omitted_when_not_configured(monkeypatch) -> None:
+    import resend
+
+    monkeypatch.setattr(email_service.settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(email_service.settings, "email_reply_to", None)
+    monkeypatch.setattr(email_service, "_last_send_at", 0.0)
+    captured: dict = {}
+    monkeypatch.setattr(
+        resend.Emails, "send", lambda p, options=None: captured.update(p) or {"id": "e"}
+    )
+    await email_service.send_email(to="a@e.com", subject="s", html="<p>h</p>")
+    assert "reply_to" not in captured

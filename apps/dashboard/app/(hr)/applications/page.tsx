@@ -108,7 +108,13 @@ export default function ApplicationsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((a) => (
+                {filtered.map((a) => {
+                  // EMAIL-1: hai cờ này giờ có Tag RIÊNG (dòng dưới) — loại khỏi dòng cờ "cần chú ý"
+                  // chung để HR không thấy trùng lặp (badge đẹp ⚠/🚫 CỘNG thêm token thô "email_bounced").
+                  const otherFlags = a.uncertainty_flags.filter(
+                    (f) => f !== "email_bounced" && f !== "email_complained"
+                  );
+                  return (
                   <tr key={a.id} className="border-b border-divider last:border-b-0 hover:bg-ink/[0.04]">
                     <td className="px-3 py-2">
                       <Link href={`/applications/${a.id}`} className="flex items-center gap-2.5">
@@ -134,17 +140,27 @@ export default function ApplicationsPage() {
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <Tag tone={applicationStatusTone(a)}>{applicationStatusLabel(a)}</Tag>
+                        {/* EMAIL-1: KHÁC cờ "cần chú ý" bên dưới ở chỗ nó hiện với MỌI trạng thái.
+                            Ca đáng lo nhất chính là ca đã quyết xong: "Đã từ chối" / "Đã hẹn phỏng
+                            vấn" mà thư không tới nơi thì dòng trạng thái đó đang nói dối, và nếu
+                            giấu nhãn đi vì hồ sơ "đã xong" thì không ai phát hiện ra nữa. Bounce và
+                            complaint là HAI nhãn riêng — gộp lại thì HR không biết phải liên hệ lại
+                            (bounce) hay ngừng gửi hẳn (complaint). Complaint hiện TRƯỚC vì hành động
+                            cấp bách hơn (đồng bộ thứ tự với trang chi tiết + ReviewCard). */}
+                        {a.email_complained && <Tag tone="danger">🚫 Đã báo cáo spam</Tag>}
+                        {a.email_bounced && <Tag tone="danger">⚠ Email không gửi được</Tag>}
                         {/* Cờ "cần chú ý" chỉ là chỉ báo HÀNH ĐỘNG cho HR → CHỈ hiện khi còn chờ
                             quyết. Hồ sơ đã quyết chỉ hiện trạng thái cuối. */}
-                        {a.status === "PENDING_REVIEW" && a.uncertainty_flags.length > 0 && (
+                        {a.status === "PENDING_REVIEW" && otherFlags.length > 0 && (
                           <span className="text-xs font-semibold text-accent">
-                            {a.uncertainty_flags.join(" · ")}
+                            {otherFlags.join(" · ")}
                           </span>
                         )}
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

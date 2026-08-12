@@ -4,6 +4,7 @@ from app.models.application import Application, ApplicationStatus
 from app.models.audit_log import AuditLog
 from app.models.base import Base
 from app.models.booking import BookingSession, BookingStatus, InterviewBooking
+from app.models.email_delivery import DeliveryStatus, EmailDelivery, EmailKind
 from app.models.hr_user import HrUser
 from app.models.job_posting import JobPosting
 from app.models.screening_session import ScreeningSession
@@ -19,4 +20,7 @@ __all__ = [
     "InterviewBooking",
     "BookingSession",
     "BookingStatus",
+    "EmailDelivery",
+    "EmailKind",
+    "DeliveryStatus",
 ]

@@ -155,6 +155,9 @@ def interview_reminder_email(
         change = (
             "<p>Nếu có việc đột xuất, bạn có thể huỷ hoặc chọn giờ khác tại đây:</p>"
             f'<p><a href="{href}">Xem hoặc huỷ lịch phỏng vấn</a></p>'
+            # URL thô: `html_to_text` (bản text của thư) chỉ giữ text-node, không giữ href — thiếu
+            # dòng này là bản text mất nút huỷ đúng lúc ứng viên cần nó nhất.
+            f'<p style="word-break:break-all;color:#475569">{href}</p>'
         )
     else:
         change = "<p>Nếu có việc đột xuất, vui lòng phản hồi email này sớm nhất có thể.</p>"

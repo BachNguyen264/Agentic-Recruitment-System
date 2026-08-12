@@ -10,9 +10,12 @@ from pathlib import PurePosixPath
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Response, UploadFile, status
 from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import DBSession
 from app.core.logging import get_logger
+from app.models.email_delivery import DeliveryStatus, EmailDelivery
 from app.schemas.application import (
     ApplicationCreate,
     ApplicationRead,
@@ -109,7 +112,34 @@ async def get_application(application_id: int, session: DBSession) -> Applicatio
             # Đã từng được mời chưa — quyết định UI có hiện nút "Gửi lại link đặt lịch" hay không.
             # Hỏi ĐÚNG câu mà `resend_booking_link` hỏi, để nút chỉ xuất hiện khi nó bấm được.
             "has_booking_link": await booking_service.has_any_session(session, application_id),
+            # EMAIL-1: lý do bounce/complaint GẦN NHẤT — hai truy vấn RIÊNG theo ĐÚNG status, không
+            # gộp chung (xem `_latest_reason`), để HR không đọc nhầm lý do complaint thành lý do bounce.
+            "email_bounce_reason": await _latest_reason(
+                session, application_id, DeliveryStatus.BOUNCED.value
+            ),
+            "email_complaint_reason": await _latest_reason(
+                session, application_id, DeliveryStatus.COMPLAINED.value
+            ),
         }
+    )
+
+
+async def _latest_reason(session: AsyncSession, application_id: int, delivery_status: str) -> str | None:
+    """Lý do GẦN NHẤT (`email_delivery.bounce_reason`) của MỘT loại sự kiện xấu cụ thể (bounce HOẶC
+    complaint — KHÔNG gộp `status.in_([...])` cả hai vào một câu, vì lý do bounce lẫn với lý do
+    complaint sẽ khiến HR đọc sai chuyện đang xảy ra). Cờ nói "có chuyện", câu này nói "chuyện gì".
+
+    ⚠ Kiểu tham số là `AsyncSession`, KHÔNG phải `DBSession` — `DBSession` là alias
+    `Annotated[..., Depends(...)]` chỉ có nghĩa ở chữ ký route handler.
+    """
+    return await session.scalar(
+        select(EmailDelivery.bounce_reason)
+        .where(
+            EmailDelivery.application_id == application_id,
+            EmailDelivery.status == delivery_status,
+        )
+        .order_by(EmailDelivery.created_at.desc(), EmailDelivery.id.desc())
+        .limit(1)
     )
 
 
