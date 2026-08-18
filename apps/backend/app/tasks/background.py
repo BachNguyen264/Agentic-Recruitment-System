@@ -73,6 +73,44 @@ async def _escalate_technical_error(application_id: int, reason: str) -> None:
         )
 
 
+# Pipeline CỐ ĐỊNH, KHÔNG Supervisor (PRD §5 trụ cột 1) ⇒ "node X vừa xong thì đang đứng ở đâu" là
+# biết trước, không cần hỏi graph. Chỉ MỘT bước cần ghi: xong parser là sang ranker. Sau ranker,
+# quyết định (gate/screener/scheduler) chốt ngay trong khối GHI nên thêm mốc nữa chỉ tốn một lượt
+# mượn pool mà không cho HR biết thêm điều gì.
+_STATUS_AFTER_NODE = {"parser": ApplicationStatus.RANKING.value}
+
+
+async def _mark_progress(application_id: int, new_status: str) -> None:
+    """Ghi mốc "hồ sơ đang ở node nào" NGAY LÚC pipeline còn chạy (PRD §13, FR-HR-DASH-1).
+
+    Trước mốc này, `PARSING`/`RANKING` chỉ tồn tại trong graph state (bộ nhớ) và không bao giờ chạm
+    DB: hồ sơ nằm ở `SUBMITTED` suốt ~34 giây rồi nhảy thẳng sang trạng thái cuối. Hệ quả là (a)
+    dashboard không soi được pipeline đang chạy, và (b) lưới đối soát `stuck_applications` biết hồ sơ
+    kẹt nhưng KHÔNG biết kẹt ở đâu — dù nó vốn đã quét cả ba trạng thái đang-bay.
+
+    CHI PHÍ: đúng MỘT lượt mượn pool ngắn cho mỗi CV (mốc `PARSING` đi ghép vào session ĐỌC nên
+    không tốn gì). Cố ý KHÔNG dùng lại session của pipeline: giữa hai node KHÔNG có session nào đang
+    mở, và mở lại một session dài là quay về đúng cái đã vá ở hardening tải.
+
+    KHÔNG BAO GIỜ raise: đây là dữ liệu hiển thị. Ghi hỏng thì dashboard hiện chậm một nhịp — chấp
+    nhận được; để nó ném ra thì giết luôn pipeline của một ứng viên thật vì một con số trang trí.
+    Guard `IN_FLIGHT_STATUSES` giữ đúng bất biến của file: mốc tiến độ đến muộn KHÔNG được kéo ngược
+    hồ sơ đã rời vạch "chưa quyết" (vd sweep đối soát vừa đẩy về HR, hoặc hồ sơ đã bị xóa).
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            application = await session.get(Application, application_id)
+            if application is None or application.status not in IN_FLIGHT_STATUSES:
+                return
+            application.status = new_status
+            await session.commit()
+    except Exception:  # noqa: BLE001 — mốc hiển thị KHÔNG được phép giết pipeline
+        logger.warning(
+            "BG: không ghi được mốc tiến độ %s cho app=%s — pipeline vẫn chạy tiếp",
+            new_status, application_id, exc_info=True,
+        )
+
+
 def _parsed_summary(parsed: dict | None) -> dict:
     """Tóm tắt parsed_data cho audit detail (PRD §16) — không nhồi cả CV vào log."""
     if not parsed:
@@ -120,14 +158,27 @@ async def process_application(application_id: int, *, force_review: bool = False
                     jd = job_service.jd_dict(job)
                     job_title = job.title
                     screener_questions = list(job.screener_questions or [])
+            # Mốc PARSING GHÉP vào chính session ĐỌC này — parser chạy ngay sau khi thoát khối `async
+            # with` nên đây là mô tả đúng, không phải dự đoán, và KHÔNG tốn thêm lượt mượn pool nào.
+            # Đặt CUỐI khối: mọi thứ pipeline cần đã nằm trong biến cục bộ, không còn đọc ORM object.
+            if application.status in IN_FLIGHT_STATUSES:
+                application.status = ApplicationStatus.PARSING.value
+                await session.commit()
 
         # ── 2) CHẠY pipeline — phần TỐN GIÂY (parser LLM + ranker LLM). KHÔNG giữ connection nào ──
+        async def _advance(node_name: str) -> None:
+            """Node vừa xong → ghi mốc node kế tiếp. Chạy GIỮA hai node, lúc không giữ connection."""
+            next_status = _STATUS_AFTER_NODE.get(node_name)
+            if next_status is not None:
+                await _mark_progress(application_id, next_status)
+
         out = await run_with_trace(
             force_review=force_review,
             applicant_email=applicant_email,
             application_id=application_id,
             cv_path=cv_file_ref,  # parser đọc CV thật từ đây
             jd=jd,                # ranker đọc JD thật từ đây
+            on_node=_advance,
         )
         final = out["final"]
 

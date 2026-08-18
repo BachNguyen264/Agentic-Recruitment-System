@@ -70,6 +70,35 @@ class PublicSubmitResponse(BaseModel):
     message: str = "Đã nhận hồ sơ. Chúng tôi sẽ liên hệ với bạn qua email."
 
 
+class PipelineItem(BaseModel):
+    """Một hồ sơ đang chạy, ở dạng GỌN NHẤT đủ vẽ một dòng trên dashboard.
+
+    Cố ý KHÔNG phải `ApplicationRead`: bảng điều hành hỏi lại vài giây một lần, mà `ApplicationRead`
+    chở theo `parsed_data` (cả CV đã bóc tách) + `score_breakdown`. Gửi ngần ấy chỉ để vẽ một dòng
+    tên là biến nhịp làm tươi thành đường tải nặng nhất hệ thống lúc bình thường.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    applicant_email: str
+    job_id: int | None
+    status: str
+
+
+class PipelineSnapshot(BaseModel):
+    """Ảnh chụp pipeline cho bảng điều hành (PRD §12.1 FR-HR-DASH-1) — payload KÍCH THƯỚC CỐ ĐỊNH.
+
+    `counts` là ĐỦ mọi trạng thái PRD §13 (kể cả đang 0), đếm trên TOÀN BẢNG. Việc gom trạng thái nào
+    vào nút nào (`SUBMITTED`+`PARSING` → parser, …) do client giữ: đó là cách đọc PRD, không phải dữ
+    liệu, và nhân đôi nó xuống backend chỉ tạo thêm một chỗ để hai bên lệch nhau.
+    """
+
+    counts: dict[str, int]
+    active: list[PipelineItem]
+    generated_at: datetime
+
+
 class BookedInterview(BaseModel):
     """Khung giờ phỏng vấn ứng viên đã tự chọn (SCH-2). Chỉ mốc thời gian — HR không cần id nội bộ."""
 

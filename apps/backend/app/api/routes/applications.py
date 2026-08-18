@@ -6,6 +6,7 @@ Nộp CV = upload file (PDF/DOCX) + email + job_id → lưu file local, tạo Ap
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Response, UploadFile, status
@@ -20,6 +21,8 @@ from app.schemas.application import (
     ApplicationCreate,
     ApplicationRead,
     BookedInterview,
+    PipelineItem,
+    PipelineSnapshot,
     ReviewRequest,
 )
 from app.services import application_service, booking_flow, booking_service, screening
@@ -93,6 +96,28 @@ async def list_applications(session: DBSession) -> list[ApplicationRead]:
         )
         for r in rows
     ]
+
+
+@router.get("/pipeline", response_model=PipelineSnapshot)
+async def get_pipeline(session: DBSession) -> PipelineSnapshot:
+    """Ảnh chụp pipeline cho bảng điều hành — HAI câu SQL, payload cỡ CỐ ĐỊNH (PRD §12.1).
+
+    ⚠ PHẢI khai TRƯỚC `GET /{application_id}`: FastAPI khớp route theo THỨ TỰ khai báo, nên nếu
+    đứng sau thì `/pipeline` rơi vào tay handler kia và chết 422 ("pipeline" không parse ra int).
+
+    Đây là đường DUY NHẤT dashboard hỏi lại theo nhịp. Trước đó nó gọi `GET /api/applications` mỗi
+    5 giây — trả về TOÀN BỘ hồ sơ kèm `parsed_data`, tức payload phình theo số ứng viên trong khi
+    thứ cần vẽ chỉ là 11 con số. Ở đây `counts` đếm bằng `GROUP BY` trên toàn bảng (chính xác hơn
+    đường cũ, vốn đếm trong `limit=100` bản ghi mới nhất) và `active` bị chặn cứng 6 dòng.
+    """
+    return PipelineSnapshot(
+        counts=await application_service.status_counts(session),
+        active=[
+            PipelineItem.model_validate(r)
+            for r in await application_service.active_applications(session, limit=6)
+        ],
+        generated_at=datetime.now(timezone.utc),
+    )
 
 
 @router.get("/{application_id}", response_model=ApplicationRead)

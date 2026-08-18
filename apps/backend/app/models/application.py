@@ -56,6 +56,26 @@ IN_FLIGHT_STATUSES = frozenset(
     }
 )
 
+# ⚠ KHÁC HẲN `IN_FLIGHT_STATUSES` ở trên — ĐỪNG gộp hai tập này.
+#   IN_FLIGHT_STATUSES  = bất biến AN TOÀN: tập DUY NHẤT được phép ghi đè trạng thái. Nới nó ra là
+#                         mở đường cho "mời xong lại từ chối" / giết magic-link đang sống.
+#   DASHBOARD_ACTIVE_*  = khái niệm HIỂN THỊ: "chưa tới điểm kết thúc", dùng cho panel đang-chạy của
+#                         dashboard (PRD §12.1). Rộng hơn hẳn, và cố ý CHỨA những trạng thái mà việc
+#                         ghi đè bị CẤM (AWAITING_SCREENER, SCHEDULING, AWAITING_BOOKING).
+# Trộn hai tập lại thì lỗi lộ ra không phải ở dashboard mà ở xử-lý-lỗi/đối-soát — nơi khó thấy nhất.
+DASHBOARD_ACTIVE_STATUSES = frozenset(
+    {
+        ApplicationStatus.SUBMITTED.value,
+        ApplicationStatus.PARSING.value,
+        ApplicationStatus.RANKING.value,
+        ApplicationStatus.SCREENING.value,
+        ApplicationStatus.AWAITING_SCREENER.value,
+        ApplicationStatus.REMINDED.value,
+        ApplicationStatus.SCHEDULING.value,
+        ApplicationStatus.AWAITING_BOOKING.value,
+    }
+)
+
 
 class Application(Base, TimestampMixin):
     __tablename__ = "application"

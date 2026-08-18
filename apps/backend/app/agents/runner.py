@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langgraph.types import Command
@@ -14,6 +15,10 @@ from langgraph.types import Command
 from app.agents.checkpointer import get_graph
 from app.agents.graph import recruitment_graph
 from app.agents.state import RecruitmentState
+
+# Callback "một node vừa xong" — nhận TÊN node. Cố ý KHÔNG truyền state: người gọi chỉ cần biết
+# pipeline đang đứng ở đâu, không được phép dựa vào nội dung state giữa chừng (chưa phải kết quả).
+NodeDone = Callable[[str], Awaitable[None]]
 
 
 def initial_state(*, force_review: bool = False, application_id: int | None = None,
@@ -68,9 +73,21 @@ def _branch(*, suspended: bool, nodes_run: set[str]) -> str:
     return "human_review"  # terminal cho ca bất định VÀ ca đạt (gate mời TẮT) sau khi resume screener.
 
 
-async def _stream_collect(graph: Any, graph_input: Any, config: dict[str, Any]) -> tuple[Any, list[dict[str, Any]]]:
+async def _stream_collect(
+    graph: Any,
+    graph_input: Any,
+    config: dict[str, Any],
+    on_node: NodeDone | None = None,
+) -> tuple[Any, list[dict[str, Any]]]:
     """astream (updates) + thu trace, BỎ QUA sự kiện `__interrupt__` (điểm suspend, không phải node
-    hoàn tất — payload là tuple Interrupt, không .get được). Trả (snapshot cuối, trace)."""
+    hoàn tất — payload là tuple Interrupt, không .get được). Trả (snapshot cuối, trace).
+
+    `on_node` được gọi NGAY khi một node hoàn tất, tức TRONG lúc pipeline còn chạy — khác hẳn
+    `trace`, thứ chỉ dùng được sau khi mọi node đã xong. Đó là điểm móc duy nhất cho phép ghi mốc
+    tiến độ ra ngoài (dashboard) mà KHÔNG phải cấp DB session cho node (các node cố ý không có
+    session — xem `nodes/gate.py`). Lỗi trong callback là việc của người gọi: ở đây không bắt, vì
+    nuốt lỗi lặng lẽ tại chỗ này sẽ giấu luôn cả lỗi lập trình.
+    """
     trace: list[dict[str, Any]] = []
     async for update in graph.astream(graph_input, config, stream_mode="updates"):
         if "__interrupt__" in update:  # DỪNG ở screener — xác định qua snapshot.next bên dưới.
@@ -86,6 +103,8 @@ async def _stream_collect(graph: Any, graph_input: Any, config: dict[str, Any]) 
                     "require_human_review": bool(partial.get("require_human_review", False)),
                 }
             )
+            if on_node is not None:
+                await on_node(node_name)
     snapshot = await graph.aget_state(config)
     return snapshot, trace
 
@@ -104,11 +123,14 @@ def run_sync(*, force_review: bool = False, jd: dict[str, Any] | None = None) ->
 async def run_with_trace(*, force_review: bool = False, applicant_email: str | None = None,
                          application_id: int | None = None,
                          cv_path: str | None = None,
-                         jd: dict[str, Any] | None = None) -> dict[str, Any]:
+                         jd: dict[str, Any] | None = None,
+                         on_node: NodeDone | None = None) -> dict[str, Any]:
     """Chạy bất đồng bộ, thu trace từng node (cho background task xử lý mỗi CV).
 
     Dùng `get_graph()` (prod: bản compile với AsyncPostgresSaver — suspend bền; PRD §10) + thread_id
     ỔN ĐỊNH theo application_id (để resume). Ca ĐẠT dừng ở screener → `suspended=True` (AWAITING_SCREENER).
+
+    `on_node`: xem `_stream_collect` — móc để ghi mốc tiến độ khi pipeline CÒN đang chạy.
     """
     graph = get_graph()
     config = _app_thread_config(application_id)
@@ -116,7 +138,7 @@ async def run_with_trace(*, force_review: bool = False, applicant_email: str | N
         force_review=force_review, applicant_email=applicant_email,
         application_id=application_id, cv_path=cv_path, jd=jd,
     )
-    snapshot, trace = await _stream_collect(graph, state, config)
+    snapshot, trace = await _stream_collect(graph, state, config, on_node)
     suspended = bool(snapshot.next)  # còn node chờ chạy (screener) → đang suspend, CHƯA quyết.
     branch = _branch(suspended=suspended, nodes_run={step["node"] for step in trace})
     return {"branch": branch, "final": snapshot.values, "trace": trace, "suspended": suspended}
