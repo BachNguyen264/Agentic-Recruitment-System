@@ -1092,3 +1092,63 @@ async def test_reinvite_clears_stale_booking_flags(Session, apps: list[int], mon
         assert app_row.status == ApplicationStatus.AWAITING_BOOKING.value
         assert "booking_no_response" not in app_row.uncertainty_flags
         assert "low_confidence" in app_row.uncertainty_flags, "chỉ gỡ cờ ĐẶT LỊCH, đừng đụng cờ khác"
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# Hồi quy: hai thao tác lịch của HR từng trả HTTP 500 (verify prod 18/08/2026)
+# ══════════════════════════════════════════════════════════════════════════════════════════
+#
+# Nghiệp vụ CHẠY ĐÚNG (slot nhả, thư gửi, trạng thái đổi) nhưng route nổ khi serialize hàng trả về:
+# `updated_at` khai `onupdate=func.now()` ở tầng DB nên SQLAlchemy đánh dấu riêng cột đó expired sau
+# mỗi UPDATE — độc lập với `expire_on_commit=False`. `ApplicationRead.model_validate()` là code ĐỒNG
+# BỘ, chạm vào nó là nạp lười ngoài greenlet → `MissingGreenlet` → 500.
+#
+# Test gọi ĐÚNG dòng của route (`model_validate`), không chỉ gọi hàm nghiệp vụ: bản test cũ chỉ gọi
+# `resend_booking_link` rồi đọc DB ở session KHÁC nên vẫn XANH suốt trong khi prod thì 500.
+
+
+async def _serialize_like_route(app_row: Application):
+    """Đúng dòng cuối của route HR: `ApplicationRead.model_validate(app_row)`."""
+    from app.schemas.application import ApplicationRead
+
+    return ApplicationRead.model_validate(app_row)
+
+
+async def test_hr_cancel_returns_serializable_row(Session, apps: list[int]) -> None:  # noqa: N803
+    """`cancel_by_hr` phải trả một hàng serialize được NGAY — nếu không route trả 500."""
+    app_id = apps[0]
+    start = _free_slot(offset_days=4, hour=9)
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        row.status = ApplicationStatus.INTERVIEW_SCHEDULED.value
+        s.add(InterviewBooking(
+            application_id=app_id, start_at=start, end_at=start + timedelta(hours=1),
+            status=BookingStatus.BOOKED.value,
+        ))
+        sess = booking_service.create_booking_session(s, app_id)
+        sess.booked_at = _now()
+        await s.commit()
+
+    async with Session() as s:
+        app_row = await booking_flow.cancel_by_hr(s, app_id)
+        out = await _serialize_like_route(app_row)  # nổ MissingGreenlet trước khi vá
+        assert out.id == app_id
+        assert out.status == ApplicationStatus.PENDING_REVIEW.value
+        assert out.updated_at is not None
+
+
+async def test_hr_resend_link_returns_serializable_row(Session, apps: list[int]) -> None:  # noqa: N803
+    """`resend_booking_link` — cùng lỗi, cùng lưới. Đây là đường ĐÃ tái hiện được 500 trên prod."""
+    app_id = apps[1]
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        row.status = ApplicationStatus.PENDING_REVIEW.value
+        old = booking_service.create_booking_session(s, app_id)
+        old.cancelled_at = _now()  # đã từng được mời → has_any_session() = True
+        await s.commit()
+
+    async with Session() as s:
+        app_row = await booking_flow.resend_booking_link(s, app_id)
+        out = await _serialize_like_route(app_row)
+        assert out.id == app_id
+        assert out.updated_at is not None

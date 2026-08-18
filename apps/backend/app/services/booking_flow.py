@@ -521,6 +521,26 @@ async def cancel_by_candidate(session: AsyncSession, token: str) -> dict:
     }
 
 
+async def _refresh_for_response(session: AsyncSession, app_row: Application) -> None:
+    """Nạp lại hàng TRƯỚC khi trả cho route — nếu không, route trả HTTP 500 (lỗi thật, bắt được ở
+    verify prod 18/08/2026: cả "Huỷ lịch" lẫn "Gửi lại link" đều 500).
+
+    Vì sao `expire_on_commit=False` KHÔNG đủ: `updated_at` khai `onupdate=func.now()` ở TẦNG DB
+    (models/base.py), nên sau MỖI câu UPDATE, SQLAlchemy đánh dấu riêng cột đó là expired để lần đọc
+    sau lấy giá trị server sinh ra. Cờ đó độc lập với `expire_on_commit`. Route kết thúc bằng
+    `ApplicationRead.model_validate(app_row)` — code ĐỒNG BỘ — nên khi Pydantic đọc `updated_at` nó
+    kích hoạt nạp lười ngoài ngữ cảnh greenlet và nổ `MissingGreenlet` → 500.
+    Triệu chứng độc: nghiệp vụ ĐÃ XONG (slot đã nhả, thư đã gửi, trạng thái đã đổi) mà HR vẫn thấy
+    lỗi — rồi bấm lại lần nữa.
+
+    `review_service.review_decision` đã làm đúng việc này từ trước (nên nút Duyệt/Từ chối không
+    dính); hai đường đặt lịch chỉ đơn giản là thiếu. Đặt ở CUỐI, sau mọi lượt gửi mail, nên
+    transaction mà `refresh` mở lại (gotcha `refresh()` trong AI_GUIDE) đóng ngay khi request kết
+    thúc — không ôm connection qua I/O chậm nào.
+    """
+    await session.refresh(app_row)
+
+
 async def cancel_by_hr(session: AsyncSession, application_id: int) -> Application:
     """HR huỷ lịch từ dashboard → nhả slot + báo ứng viên → `PENDING_REVIEW` (§3.4, FR-BOOK-4).
 
@@ -562,6 +582,7 @@ async def cancel_by_hr(session: AsyncSession, application_id: int) -> Applicatio
         candidate_name=candidate_name, job_title=job_title, start_at=start_at,
         end_at=end_at, booking_id=booked_id, by_hr=True,
     )
+    await _refresh_for_response(session, app_row)
     return app_row
 
 
@@ -604,4 +625,5 @@ async def resend_booking_link(session: AsyncSession, application_id: int) -> App
         session, app_row, applicant_email=applicant_email, candidate_name=candidate_name,
         job_title=job_title, audit_node="human_review",
     )
+    await _refresh_for_response(session, app_row)
     return app_row
