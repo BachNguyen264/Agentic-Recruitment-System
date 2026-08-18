@@ -31,6 +31,17 @@ const IN_FLIGHT: ApplicationStatus[] = [
   "AWAITING_BOOKING",
 ];
 
+// TẬP KHÁC HẲN `IN_FLIGHT`: những trạng thái mà HỆ THỐNG đang thực sự làm việc, đổi trong vài giây.
+// `IN_FLIGHT` nghĩa là "chưa kết thúc" — bao gồm cả `AWAITING_SCREENER`/`REMINDED`/`AWAITING_BOOKING`,
+// tức đang CHỜ CON NGƯỜI, kéo dài hàng NGÀY. Dùng `IN_FLIGHT` để bật animation + nhịp nhanh là sai hai
+// đường: (a) ô node hiện "ĐANG CHẠY" kèm thanh chạy trong khi không có tác tử nào chạy — đúng loại
+// "trạng thái nói dối" mà repo này vốn né; (b) một ứng viên chưa bấm link đặt lịch là ghim MỌI tab
+// dashboard ở nhịp 2 giây vô thời hạn — chính sự lãng phí mà DASH-1 sinh ra để dẹp.
+// Bắt được khi verify prod: app 22 ở AWAITING_BOOKING làm ô scheduler nhấp nháy suốt.
+const MACHINE_BUSY: ApplicationStatus[] = [
+  "SUBMITTED", "PARSING", "RANKING", "SCREENING", "SCHEDULING",
+];
+
 // Nút pipeline cố định (PRD §5 trụ cột 1): parser → ranker → screener → scheduler.
 const NODES: { key: string; label: string; caption: string; statuses: ApplicationStatus[]; icon: React.ReactNode }[] = [
   {
@@ -111,10 +122,17 @@ function NodeCard({
 }: {
   label: string; caption: string; icon: React.ReactNode; count: number; running: boolean;
 }) {
+  // Có hồ sơ ở chặng này nhưng KHÔNG có tác tử nào chạy ⇒ đang chờ ứng viên (trả lời sàng lọc / chọn
+  // giờ PV). Phải nói ra bằng chữ, không thì ô hiện số 1 mà trơ ra trông như hỏng.
+  const waiting = count > 0 && !running;
   return (
     <div
       className={`flex min-w-0 flex-1 flex-col gap-2 rounded-lg border-2 bg-canvas p-3 ${
-        running ? "border-accent motion-safe:animate-pulse-ring" : "border-divider"
+        running
+          ? "border-accent motion-safe:animate-pulse-ring"
+          : waiting
+            ? "border-accent-300"
+            : "border-divider"
       }`}
     >
       <div className="flex items-center gap-2">
@@ -129,6 +147,11 @@ function NodeCard({
         {running && (
           <span className="ml-auto flex-none rounded bg-accent-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-accent-800">
             đang chạy
+          </span>
+        )}
+        {waiting && (
+          <span className="ml-auto flex-none rounded bg-steel-200 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink/60">
+            chờ ứng viên
           </span>
         )}
       </div>
@@ -157,7 +180,8 @@ export default function DashboardPage() {
     refetchInterval: (query) => {
       const counts = query.state.data?.counts;
       if (!counts) return REFRESH_IDLE_MS;
-      return IN_FLIGHT.some((s) => (counts[s] ?? 0) > 0) ? REFRESH_RUNNING_MS : REFRESH_IDLE_MS;
+      // MACHINE_BUSY, KHÔNG phải IN_FLIGHT — xem chú thích ở khai báo.
+      return MACHINE_BUSY.some((s) => (counts[s] ?? 0) > 0) ? REFRESH_RUNNING_MS : REFRESH_IDLE_MS;
     },
   });
   const { data: jobs } = useQuery<JobPosting[]>({ queryKey: ["jobs", "active"], queryFn: () => getJobs() });
@@ -165,13 +189,18 @@ export default function DashboardPage() {
   const counts = snapshot?.counts;
   const countOf = (statuses: ApplicationStatus[]) =>
     statuses.reduce((sum, s) => sum + (counts?.[s] ?? 0), 0);
+  // Chỉ đếm phần "máy đang làm" của một nút — ô screener/scheduler có cả trạng thái chờ con người.
+  const busyOf = (statuses: ApplicationStatus[]) =>
+    countOf(statuses.filter((s) => MACHINE_BUSY.includes(s)));
 
   const cProcessing = countOf(IN_FLIGHT);
   const cReview = countOf(["PENDING_REVIEW"]);
   const cPassed = countOf(["INTERVIEW_SCHEDULED"]);
   const cRejected = countOf(["REJECTED"]);
   const cDone = cPassed + cRejected;
-  const anyRunning = cProcessing > 0;
+  // "Đang xử lý" (cProcessing) đếm hồ sơ CHƯA KẾT THÚC — con số nghiệp vụ, giữ nguyên IN_FLIGHT.
+  // `anyBusy` là chuyện khác: có tác tử nào đang chạy không. Nó điều khiển nhịp hỏi + animation.
+  const anyBusy = countOf(MACHINE_BUSY) > 0;
 
   const jobTitle = new Map((jobs ?? []).map((j) => [j.id, j.title]));
   const inflight = snapshot?.active ?? [];
@@ -192,11 +221,15 @@ export default function DashboardPage() {
         <p className="flex items-center gap-2.5 text-[13px] text-ink/65">
           <span
             className={`h-2 w-2 flex-none rounded-full ${
-              anyRunning ? "bg-accent motion-safe:animate-pulse-dot" : "bg-steel-400"
+              anyBusy ? "bg-accent motion-safe:animate-pulse-dot" : "bg-steel-400"
             }`}
             aria-hidden
           />
-          {anyRunning ? "Đang chạy · làm tươi mỗi 2 giây" : "Pipeline rỗi · làm tươi mỗi 6 giây"}
+          {/* Nói về TÁC TỬ, không nói "pipeline rỗi" — còn hồ sơ chờ ứng viên thì câu đó mâu thuẫn
+              với ô "Đang xử lý" ngay bên dưới. */}
+          {anyBusy
+            ? "Tác tử đang chạy · làm tươi mỗi 2 giây"
+            : "Không tác tử nào chạy · làm tươi mỗi 6 giây"}
         </p>
       </div>
 
@@ -240,9 +273,10 @@ export default function DashboardPage() {
         <div className="flex flex-col items-stretch gap-3 md:flex-row md:gap-0">
           {NODES.map((n, i) => {
             const count = countOf(n.statuses);
-            // Mũi tên sáng lên khi node PHÍA SAU nó đang có hồ sơ — đọc ra là "hồ sơ vừa chảy qua
-            // đây", đúng hướng parser → ranker → screener → scheduler.
-            const nextRunning = i < NODES.length - 1 && countOf(NODES[i + 1].statuses) > 0;
+            // Mũi tên sáng lên khi node PHÍA SAU nó đang có TÁC TỬ CHẠY — đọc ra là "hồ sơ vừa chảy
+            // qua đây", đúng hướng parser → ranker → screener → scheduler. Dùng busyOf chứ không
+            // countOf: hồ sơ nằm chờ ứng viên thì không có gì đang chảy.
+            const nextBusy = i < NODES.length - 1 && busyOf(NODES[i + 1].statuses) > 0;
             return (
               <div key={n.key} className="flex flex-1 items-stretch">
                 <NodeCard
@@ -250,18 +284,18 @@ export default function DashboardPage() {
                   caption={n.caption}
                   icon={n.icon}
                   count={count}
-                  running={count > 0}
+                  running={busyOf(n.statuses) > 0}
                 />
                 {i < NODES.length - 1 && (
                   <div
                     className={`hidden w-[34px] flex-none items-center justify-center md:flex ${
-                      nextRunning ? "text-accent" : "text-ink/40"
+                      nextBusy ? "text-accent" : "text-ink/40"
                     }`}
                     aria-hidden
                   >
                     <svg
                       viewBox="0 0 24 24"
-                      className={`h-5 w-5 ${nextRunning ? "motion-safe:animate-flow-dot" : ""}`}
+                      className={`h-5 w-5 ${nextBusy ? "motion-safe:animate-flow-dot" : ""}`}
                       fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
                     >
                       <path d="M5 12h14" /><path d="m12 5 7 7-7 7" />

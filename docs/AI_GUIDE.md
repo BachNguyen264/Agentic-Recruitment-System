@@ -418,6 +418,18 @@
   rơi vào tay handler kia và chết 422. Triệu chứng khó chịu: dashboard trắng trong khi
   `/api/health` vẫn báo mọi thứ khoẻ. Có test canh thứ tự thật trong `app.routes`.
 
+- **"Chưa kết thúc" ≠ "đang chạy" — animation và nhịp hỏi phải bám cái thứ HAI (DASH-1, bắt trên
+  prod).** `IN_FLIGHT` ở dashboard nghĩa là *chưa tới điểm kết thúc*, nên nó CHỨA `AWAITING_SCREENER`,
+  `REMINDED`, `AWAITING_BOOKING` — những trạng thái ĐANG CHỜ CON NGƯỜI và kéo dài hàng NGÀY. Lấy tập
+  đó để bật animation + nhịp nhanh thì sai hai đường cùng lúc: (a) ô node hiện "ĐANG CHẠY" kèm thanh
+  chạy trong khi KHÔNG có tác tử nào chạy — đúng loại "trạng thái nói dối"; (b) một ứng viên chưa bấm
+  link đặt lịch là ghim MỌI tab dashboard ở nhịp 2 giây vô thời hạn, tức tái tạo lại chính sự lãng phí
+  mà DASH-1 sinh ra để dẹp. Tách `MACHINE_BUSY` (`SUBMITTED`/`PARSING`/`RANKING`/`SCREENING`/
+  `SCHEDULING` — máy đang làm, đổi trong vài giây) khỏi `IN_FLIGHT` (con số nghiệp vụ "Đang xử lý",
+  giữ nguyên). Node có hồ sơ mà không bận → nhãn "chờ ứng viên", KHÔNG animation. ⚠ Không có test
+  runner ở frontend nên lưới duy nhất là chú thích tại chỗ + mục này; thêm trạng thái chờ-người mới
+  (vd chờ HR ký) thì nhớ xếp nó RA NGOÀI `MACHINE_BUSY`.
+
 - **Nhịp làm tươi của dashboard phải NGẮN HƠN chặng ngắn nhất của pipeline (DASH-1).** Đặt nhịp lúc
   rỗi 15s trong khi parser chỉ ~10s ⇒ CV nộp ngay sau một nhịp có thể chạy xong parser trước lượt
   hỏi kế tiếp: HR nhìn thẳng vào màn hình mà không thấy ô parser sáng lần nào, và kết luận tính năng
