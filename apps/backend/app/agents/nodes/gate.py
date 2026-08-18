@@ -15,6 +15,15 @@ def gate_auto_reject_node(state: RecruitmentState) -> dict:
     score = state.get("score")
     return {
         "status": ApplicationStatus.REJECTED.value,
+        # GHI ĐÈ lý do của ranker. Ranker chạy trước gate nên nó chỉ biết "điểm dưới ngưỡng → cần HR
+        # xem xét"; tới đây thì KHÔNG cần HR nữa — chính gate vừa quyết. Không ghi đè thì hồ sơ
+        # REJECTED mang lý do "cần HR xem xét" vào cả `application` lẫn `audit_log`, tức bản ghi pháp
+        # y (PRD §16, NFR-3) mô tả sai người ra quyết định. Đây là lỗi thật bắt được khi verify prod
+        # 18/08/2026 — nay cả hai node đều chỉ phát biểu điều mình thực sự biết.
+        "escalation_reason": (
+            f"Tự động từ chối: điểm {score}/100 dưới ngưỡng đạt và gate auto-từ-chối của JD đang BẬT "
+            "(PRD §9). Không cần HR xử lý."
+        ),
         "result": {"action": "auto_reject", "score": score},
         "messages": [
             f"[gate] auto-từ-chối: điểm {score} dưới ngưỡng đạt, gate JD BẬT (PRD §9). "

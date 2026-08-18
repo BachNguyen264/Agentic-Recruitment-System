@@ -251,9 +251,13 @@ async def rank_cv(
     flags, confidence, escalation = _flags_and_confidence(overall, similarity)
     require_review = overall < settings.score_pass_threshold
     if require_review and not escalation:
+        # KHÔNG nói gì về gate ở đây. Ranker chạy TRƯỚC `route_after_ranker`, nên nó không hề biết
+        # JD có bật auto-từ-chối hay không — câu cũ khẳng định "(auto-từ-chối chưa bật)" và khi gate
+        # BẬT thì hồ sơ bị auto-từ-chối vẫn mang đúng câu đó vào DB lẫn audit_log (bắt được ở verify
+        # prod 18/08/2026: app REJECTED mà lý do ghi "cần HR xem xét — auto-từ-chối chưa bật").
+        # Ai QUYẾT ĐỊNH thì người đó ghi lý do: xem `gate_auto_reject_node`.
         escalation = (
-            f"Điểm {overall}/100 dưới ngưỡng đạt {settings.score_pass_threshold:g} — "
-            "cần HR xem xét (auto-từ-chối chưa bật)."
+            f"Điểm {overall}/100 dưới ngưỡng đạt {settings.score_pass_threshold:g} — cần HR xem xét."
         )
 
     return {
