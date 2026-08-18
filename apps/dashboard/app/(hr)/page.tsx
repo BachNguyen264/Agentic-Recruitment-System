@@ -2,14 +2,29 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import type { ApplicationListItem, ApplicationStatus, JobPosting } from "@ars/shared-types";
+import type { ApplicationStatus, JobPosting, PipelineSnapshot } from "@ars/shared-types";
 import { ServiceStatus } from "@/components/ServiceStatus";
-import { getApplications, getJobs } from "@/lib/api";
+import { getJobs, getPipeline } from "@/lib/api";
 
 // Bảng điều hành (PRD §12.1 FR-HR-DASH-1) — giám sát pipeline thời gian thực.
-// MỌI con số dẫn xuất từ dữ liệu THẬT (/api/applications, /api/jobs, /api/health). Không có số minh họa.
+// MỌI con số dẫn xuất từ dữ liệu THẬT (/api/applications/pipeline, /api/jobs). Không có số minh họa.
+
+// NHỊP LÀM TƯƠI THÍCH ỨNG. Trước đây trang này gọi `GET /api/applications` cứ 5 giây một lần, mãi
+// mãi, kể cả khi hệ thống rỗng — trả về TOÀN BỘ hồ sơ kèm parsed_data chỉ để vẽ vài con số. Nay hỏi
+// endpoint ảnh chụp (cỡ cố định) và chỉ hỏi DỒN khi thực sự có hồ sơ đang chạy: pipeline rỗng thì
+// dashboard gần như nằm im. TanStack v5 mặc định KHÔNG chạy interval khi cửa sổ mất focus, nên tab
+// nền cũng không tiêu gì.
+const REFRESH_RUNNING_MS = 2_000; // parser ~9s, ranker ~25s → 2s là đủ thấy từng chặng
+// Nhịp lúc rỗi phải NGẮN HƠN chặng ngắn nhất của pipeline (parser ~10s đo thật). Để 15s thì một CV
+// nộp ngay sau một nhịp có thể chạy hết parser trước lượt hỏi kế tiếp — HR mở dashboard nhìn thẳng
+// vào màn hình mà không thấy ô parser sáng lần nào. Đây là lỗi bắt được khi chạy thử bằng trình
+// duyệt, không phải suy luận: cái giá của 6s chỉ là ~250 byte mỗi lượt (payload cỡ cố định).
+const REFRESH_IDLE_MS = 6_000;
 
 // Trạng thái đang chạy trong pipeline (chưa tới điểm dừng người/kết thúc) — PRD §13.
+// PHẢI khớp `DASHBOARD_ACTIVE_STATUSES` ở backend (`models/application.py`): backend dùng nó để chọn
+// danh sách `active`, frontend dùng để đếm và để quyết định nhịp hỏi. Lệch nhau thì con số "Đang xử
+// lý" và danh sách bên dưới nói hai chuyện khác nhau.
 const IN_FLIGHT: ApplicationStatus[] = [
   "SUBMITTED", "PARSING", "RANKING", "SCREENING", "AWAITING_SCREENER", "REMINDED", "SCHEDULING",
   // SCH-2: thư mời + link đã gửi, đang chờ ứng viên tự chọn giờ — vẫn là "đang chạy", chưa kết thúc.
@@ -88,26 +103,78 @@ function StatTile({
   );
 }
 
+// Một ô node trong pipeline. `running` = có hồ sơ đang đứng ở node này NGAY BÂY GIỜ.
+// Mọi hiệu ứng đều nằm sau `motion-safe:` — người bật "giảm chuyển động" của hệ điều hành vẫn phải
+// đọc được trạng thái, nên chữ "đang chạy" (không phải animation) mới là tín hiệu chính thức.
+function NodeCard({
+  label, caption, icon, count, running,
+}: {
+  label: string; caption: string; icon: React.ReactNode; count: number; running: boolean;
+}) {
+  return (
+    <div
+      className={`flex min-w-0 flex-1 flex-col gap-2 rounded-lg border-2 bg-canvas p-3 ${
+        running ? "border-accent motion-safe:animate-pulse-ring" : "border-divider"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className={`flex h-[26px] w-[26px] flex-none items-center justify-center rounded ${
+            running ? "bg-accent text-white" : "bg-steel-200 text-ink/70"
+          }`}
+        >
+          {icon}
+        </span>
+        <span className="font-heading text-[13px] font-bold">{label}</span>
+        {running && (
+          <span className="ml-auto flex-none rounded bg-accent-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-accent-800">
+            đang chạy
+          </span>
+        )}
+      </div>
+      {/* `key={count}` để React gắn phần tử MỚI mỗi lần số đổi — đó là cách phát lại animation nảy
+          mà không cần state/timer nào. */}
+      <p key={count} className="font-heading text-[30px] font-bold leading-none motion-safe:animate-count-pop">
+        {count}
+      </p>
+      <p className="text-xs leading-snug text-ink/65">{caption}</p>
+      {/* Thanh chạy vô định: node đang làm việc nhưng không biết trước bao lâu. Luôn chiếm chỗ (kể
+          cả lúc rỗi) để ô không nhảy layout mỗi khi hồ sơ đi qua. */}
+      <div className="mt-auto h-1 overflow-hidden rounded-full bg-steel-200" aria-hidden>
+        {running && (
+          <div className="h-full w-1/3 rounded-full bg-accent motion-safe:animate-indeterminate" />
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
-  const { data: apps, isLoading, isError } = useQuery<ApplicationListItem[]>({
-    queryKey: ["applications"],
-    queryFn: getApplications,
-    refetchInterval: 5000,
+  const { data: snapshot, isLoading, isError } = useQuery<PipelineSnapshot>({
+    queryKey: ["pipeline"],
+    queryFn: getPipeline,
+    // Nhịp quyết định bằng CHÍNH dữ liệu vừa nhận: còn hồ sơ đang chạy thì bám sát, hết thì thả ra.
+    refetchInterval: (query) => {
+      const counts = query.state.data?.counts;
+      if (!counts) return REFRESH_IDLE_MS;
+      return IN_FLIGHT.some((s) => (counts[s] ?? 0) > 0) ? REFRESH_RUNNING_MS : REFRESH_IDLE_MS;
+    },
   });
   const { data: jobs } = useQuery<JobPosting[]>({ queryKey: ["jobs", "active"], queryFn: () => getJobs() });
 
-  const list = apps ?? [];
+  const counts = snapshot?.counts;
   const countOf = (statuses: ApplicationStatus[]) =>
-    list.filter((a) => statuses.includes(a.status)).length;
+    statuses.reduce((sum, s) => sum + (counts?.[s] ?? 0), 0);
 
   const cProcessing = countOf(IN_FLIGHT);
   const cReview = countOf(["PENDING_REVIEW"]);
   const cPassed = countOf(["INTERVIEW_SCHEDULED"]);
   const cRejected = countOf(["REJECTED"]);
   const cDone = cPassed + cRejected;
+  const anyRunning = cProcessing > 0;
 
   const jobTitle = new Map((jobs ?? []).map((j) => [j.id, j.title]));
-  const inflight = list.filter((a) => IN_FLIGHT.includes(a.status)).slice(0, 6);
+  const inflight = snapshot?.active ?? [];
 
   const autoReject = (jobs ?? []).filter((j) => j.gate_config.auto_reject).length;
   const autoInvite = (jobs ?? []).filter((j) => j.gate_config.auto_invite).length;
@@ -120,9 +187,16 @@ export default function DashboardPage() {
           <p className="eyebrow mb-1.5">Giám sát pipeline · thời gian thực</p>
           <h1 className="text-[28px] sm:text-[38px]">Bảng điều hành</h1>
         </div>
+        {/* Nói ĐÚNG nhịp đang chạy. Câu cũ ("mỗi 5 giây") sẽ thành sai ngay khi trang tự thả nhịp
+            lúc rỗi — và một dòng trạng thái nói sai về chính nó thì tệ hơn là không có. */}
         <p className="flex items-center gap-2.5 text-[13px] text-ink/65">
-          <span className="h-2 w-2 flex-none rounded-full bg-accent motion-safe:animate-pulse-dot" aria-hidden />
-          Cập nhật trực tiếp · mỗi 5 giây
+          <span
+            className={`h-2 w-2 flex-none rounded-full ${
+              anyRunning ? "bg-accent motion-safe:animate-pulse-dot" : "bg-steel-400"
+            }`}
+            aria-hidden
+          />
+          {anyRunning ? "Đang chạy · làm tươi mỗi 2 giây" : "Pipeline rỗi · làm tươi mỗi 6 giây"}
         </p>
       </div>
 
@@ -166,21 +240,30 @@ export default function DashboardPage() {
         <div className="flex flex-col items-stretch gap-3 md:flex-row md:gap-0">
           {NODES.map((n, i) => {
             const count = countOf(n.statuses);
+            // Mũi tên sáng lên khi node PHÍA SAU nó đang có hồ sơ — đọc ra là "hồ sơ vừa chảy qua
+            // đây", đúng hướng parser → ranker → screener → scheduler.
+            const nextRunning = i < NODES.length - 1 && countOf(NODES[i + 1].statuses) > 0;
             return (
               <div key={n.key} className="flex flex-1 items-stretch">
-                <div className={`flex min-w-0 flex-1 flex-col gap-2 rounded-lg border-2 bg-canvas p-3 ${count > 0 ? "border-accent" : "border-divider"}`}>
-                  <div className="flex items-center gap-2">
-                    <span className={`flex h-[26px] w-[26px] flex-none items-center justify-center rounded ${count > 0 ? "bg-accent text-white" : "bg-steel-200 text-ink/70"}`}>
-                      {n.icon}
-                    </span>
-                    <span className="font-heading text-[13px] font-bold">{n.label}</span>
-                  </div>
-                  <p className="font-heading text-[30px] font-bold leading-none">{count}</p>
-                  <p className="text-xs leading-snug text-ink/65">{n.caption}</p>
-                </div>
+                <NodeCard
+                  label={n.label}
+                  caption={n.caption}
+                  icon={n.icon}
+                  count={count}
+                  running={count > 0}
+                />
                 {i < NODES.length - 1 && (
-                  <div className="hidden w-[34px] flex-none items-center justify-center text-ink/40 md:flex" aria-hidden>
-                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <div
+                    className={`hidden w-[34px] flex-none items-center justify-center md:flex ${
+                      nextRunning ? "text-accent" : "text-ink/40"
+                    }`}
+                    aria-hidden
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className={`h-5 w-5 ${nextRunning ? "motion-safe:animate-flow-dot" : ""}`}
+                      fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+                    >
                       <path d="M5 12h14" /><path d="m12 5 7 7-7 7" />
                     </svg>
                   </div>

@@ -35,6 +35,24 @@ export type ApplicationStatus =
   | "INTERVIEW_SCHEDULED"
   | "REJECTED";
 
+// ── Ảnh chụp pipeline cho bảng điều hành (PRD §12.1 FR-HR-DASH-1) ──
+// Đây là đường DUY NHẤT dashboard hỏi lại theo nhịp, nên payload cố ý có KÍCH THƯỚC CỐ ĐỊNH: 11 con
+// số + tối đa 6 dòng. (Trước đây dashboard poll `GET /api/applications` mỗi 5 giây — trả TOÀN BỘ hồ
+// sơ kèm parsed_data, phình theo số ứng viên, và đếm sai vì backend cắt ở 100 bản ghi mới nhất.)
+export interface PipelineItem {
+  id: number;
+  applicant_email: string;
+  job_id: number | null;
+  status: ApplicationStatus;
+}
+
+export interface PipelineSnapshot {
+  // ĐỦ mọi trạng thái PRD §13, kể cả trạng thái đang có 0 hồ sơ.
+  counts: Record<ApplicationStatus, number>;
+  active: PipelineItem[];
+  generated_at: string;
+}
+
 export interface Application {
   id: number;
   job_id: number | null;

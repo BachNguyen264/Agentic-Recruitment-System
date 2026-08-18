@@ -6,6 +6,7 @@ import type {
   JobPosting,
   JobPostingInput,
   ParseCvResponse,
+  PipelineSnapshot,
   PublicJob,
   PublicSubmitResult,
   ReviewDecision,
@@ -110,6 +111,10 @@ export async function getMe(): Promise<HrUser | null> {
 // ── Màn HR ứng viên (slice 03a, CHỈ ĐỌC) ──
 export const getApplications = () =>
   getJson<ApplicationListItem[]>("/api/applications");
+
+// Bảng điều hành: ảnh chụp pipeline (đếm + vài hồ sơ đang chạy). Endpoint RIÊNG, KHÔNG dùng lại
+// `getApplications`: đây là thứ DUY NHẤT được hỏi lại theo nhịp, nên nó phải rẻ và cỡ cố định.
+export const getPipeline = () => getJson<PipelineSnapshot>("/api/applications/pipeline");
 
 export const getApplication = (id: number) =>
   getJson<ApplicationDetail>(`/api/applications/${id}`);

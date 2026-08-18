@@ -46,9 +46,37 @@ const config: Config = {
       keyframes: {
         // Chấm "đang chạy trực tiếp" trên dashboard.
         pulseDot: { "0%,100%": { opacity: "1" }, "50%": { opacity: "0.28" } },
+        // ── Pipeline đa tác tử: ô của node ĐANG chạy phải nhìn ra ngay giữa các ô đứng im ──
+        // Vòng sáng lan ra rồi tắt (dùng box-shadow nên KHÔNG chiếm chỗ, không đẩy layout).
+        pulseRing: {
+          "0%": { boxShadow: "0 0 0 0 rgba(31,111,235,0.42)" },
+          "70%": { boxShadow: "0 0 0 10px rgba(31,111,235,0)" },
+          "100%": { boxShadow: "0 0 0 0 rgba(31,111,235,0)" },
+        },
+        // Thanh chạy vô định ở đáy ô — "đang làm việc, chưa biết bao lâu" (parser ~9s, ranker ~25s).
+        indeterminate: {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(320%)" },
+        },
+        // Hạt chạy dọc mũi tên giữa hai node — cho thấy HƯỚNG đi của hồ sơ.
+        flowDot: {
+          "0%": { transform: "translateX(-9px)", opacity: "0" },
+          "35%,65%": { opacity: "1" },
+          "100%": { transform: "translateX(9px)", opacity: "0" },
+        },
+        // Con số vừa đổi → nảy một nhịp. Kích hoạt bằng `key={count}` (React remount lại phần tử).
+        countPop: {
+          "0%": { transform: "scale(1)" },
+          "38%": { transform: "scale(1.22)" },
+          "100%": { transform: "scale(1)" },
+        },
       },
       animation: {
         "pulse-dot": "pulseDot 1.6s ease-in-out infinite",
+        "pulse-ring": "pulseRing 1.8s ease-out infinite",
+        indeterminate: "indeterminate 1.25s ease-in-out infinite",
+        "flow-dot": "flowDot 1.1s ease-in-out infinite",
+        "count-pop": "countPop 420ms ease-out 1",
       },
     },
   },
