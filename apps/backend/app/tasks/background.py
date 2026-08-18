@@ -304,7 +304,10 @@ async def process_application(application_id: int, *, force_review: bool = False
                         session, application_id=application_id,
                         applicant_email=screener_email_to, candidate_name=screener_name,
                         job_title=screener_title, form_url=form_url,
-                        deadline_text=f"{settings.screener_deadline_hours} giờ",
+                        # `:g` — biến này là FLOAT (cố ý, để verify đặt ngưỡng dưới 1 giờ), nên nội
+                        # suy thẳng cho ra "72.0 giờ" trong thư gửi ứng viên. `:g` bỏ đuôi .0 mà vẫn
+                        # giữ được giá trị nhỏ (0.017 → "0.017"). Cùng ý đồ `booking_flow._deadline_text`.
+                        deadline_text=f"{settings.screener_deadline_hours:g} giờ",
                     )
                 except Exception:  # noqa: BLE001 — AWAITING_SCREENER đã commit; lỗi email KHÔNG làm sập
                     logger.exception(
