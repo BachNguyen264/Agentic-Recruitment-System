@@ -158,6 +158,19 @@ gắn cờ). Bốn lỗi: **(1)+(2) HTTP 500 ở CẢ HAI nút lịch của HR**
 của ca auto-từ-chối ghi sai "(auto-từ-chối chưa bật)"; **(4)** thư sàng lọc in "72.0 giờ". Chi tiết
 + cách tránh → `docs/AI_GUIDE.md` (2 gotcha cuối).
 
+**DASH-1 (bảng điều hành soi được pipeline đang chạy) XONG — verify bằng trình duyệt thật:** trước
+đây `PARSING`/`RANKING` CHỈ nằm trong graph state, DB không hề thấy ⇒ hồ sơ đứng ở `SUBMITTED` suốt
+~34s rồi nhảy sang trạng thái cuối, hai ô parser/ranker KHÔNG THỂ sáng. Nay `run_with_trace` có móc
+`on_node` → `background._mark_progress` ghi mốc GIỮA hai node (mốc `PARSING` ghép vào session ĐỌC nên
+tốn đúng **+1 lượt mượn pool ngắn/CV**; guard `IN_FLIGHT_STATUSES`, không bao giờ raise). Kèm theo:
+`GET /api/applications/pipeline` (HR-only, HAI câu SQL, payload cỡ CỐ ĐỊNH) thay cho việc poll
+`GET /api/applications` mỗi 5s — đường cũ trả TOÀN BỘ hồ sơ kèm `parsed_data` và **đếm sai khi vượt
+100 hồ sơ** (`list_applications` có `limit=100`). Frontend: nhịp THÍCH ỨNG (rỗi 6s / đang chạy 2s),
+animation chỉ ở node đang chạy (`pulse-ring` + thanh vô định + mũi tên chảy, đều sau `motion-safe:`),
+và **trạng thái dịch vụ nay KIỂM THEO YÊU CẦU** (nạp 1 lần + nút "Kiểm tra lại"; `/api/health` là
+kiểm SÂU và nằm trong hạn mức 20 lượt/giờ). Đo thật local: `SUBMITTED → PARSING → RANKING → PENDING_
+REVIEW` hiện đúng thứ tự, parser 10s · ranker 19s. Bốn bẫy → `docs/AI_GUIDE.md` (4 gotcha cuối).
+
 **NOT yet done:** analytics; observability; anti-prompt-injection; `email.suppressed` (xem AI_GUIDE);
 **runbook của 13**; test tải + scale;
 UI redesign; learning loop. Hardening tải còn nợ: semaphore chặn số pipeline song song, parser dùng

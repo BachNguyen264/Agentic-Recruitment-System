@@ -391,3 +391,35 @@
   `gate_auto_reject_node` GHI ĐÈ lý do bằng phát biểu của chính nó. Thêm node quyết định mới → nhớ
   ghi đè lý do, nếu không nó thừa kế câu của node trước. Lỗi này KHÔNG lộ trên UI (trang chi tiết
   giấu khối "Vì sao vào review" ở trạng thái `REJECTED`) nên chỉ đọc DB/audit mới thấy.
+
+- **`status` các node trả về là state TRONG BỘ NHỚ — DB không hề thấy nó (DASH-1).** `parser` trả
+  `PARSING`, `ranker` trả `RANKING`, nhưng `_stream_collect` chỉ gom chúng vào `trace` và
+  `process_application` ghi DB một lần duy nhất ở khối GHI cuối. Hệ quả trước DASH-1: hồ sơ đứng ở
+  `SUBMITTED` suốt CẢ HAI lượt LLM (~34s) rồi nhảy thẳng sang trạng thái cuối, nên hai ô
+  parser/ranker trên dashboard KHÔNG THỂ sáng — nhịp hỏi nhanh cỡ nào, hay đổi sang SSE, cũng vô
+  nghĩa vì dữ liệu không tồn tại. Cần mốc giữa chừng thì dùng móc `on_node` của `run_with_trace`
+  (`background._mark_progress`): nó chạy GIỮA hai node, lúc KHÔNG giữ connection nào — đừng "tiện
+  tay" cấp DB session cho node, các node cố ý không có session (xem `nodes/gate.py`). Mốc tiến độ
+  phải luôn có guard `IN_FLIGHT_STATUSES` + `try/except` nuốt lỗi: nó là dữ liệu hiển thị, ném ra là
+  giết pipeline của một ứng viên thật vì một con số trang trí. Lợi ích kèm theo: lưới đối soát
+  `stuck_applications` nay biết hồ sơ kẹt Ở ĐÂU chứ không chỉ biết là kẹt.
+
+- **`DASHBOARD_ACTIVE_STATUSES` ≠ `IN_FLIGHT_STATUSES` — đừng gộp (DASH-1).** Hai tập trong
+  `models/application.py` nhìn na ná nhau nhưng khác hẳn về bản chất: `IN_FLIGHT_STATUSES` là bất
+  biến AN TOÀN (tập DUY NHẤT được phép ghi đè trạng thái), `DASHBOARD_ACTIVE_STATUSES` là khái niệm
+  HIỂN THỊ ("chưa tới điểm kết thúc") và cố ý CHỨA những trạng thái mà ghi đè bị CẤM
+  (`AWAITING_SCREENER`, `SCHEDULING`, `AWAITING_BOOKING`). Ai đó "dọn trùng lặp" bằng cách gộp hai
+  tập thì lỗi KHÔNG lộ ở dashboard mà ở `_escalate_technical_error`/sweep — tức mở đường cho "mời
+  xong lại từ chối" và giết magic-link đang sống. Có test canh: `test_dashboard_active_set_is_not_
+  the_safety_set`.
+
+- **Route tĩnh phải khai TRƯỚC route có tham số (DASH-1).** `GET /api/applications/pipeline` đứng
+  sau `GET /api/applications/{application_id}` thì FastAPI khớp theo THỨ TỰ khai báo → "pipeline"
+  rơi vào tay handler kia và chết 422. Triệu chứng khó chịu: dashboard trắng trong khi
+  `/api/health` vẫn báo mọi thứ khoẻ. Có test canh thứ tự thật trong `app.routes`.
+
+- **Nhịp làm tươi của dashboard phải NGẮN HƠN chặng ngắn nhất của pipeline (DASH-1).** Đặt nhịp lúc
+  rỗi 15s trong khi parser chỉ ~10s ⇒ CV nộp ngay sau một nhịp có thể chạy xong parser trước lượt
+  hỏi kế tiếp: HR nhìn thẳng vào màn hình mà không thấy ô parser sáng lần nào, và kết luận tính năng
+  hỏng. Hiện: rỗi 6s / đang chạy 2s. Đổi số đo pipeline (đổi model, bỏ thread pool) thì xem lại cặp
+  số này. Đây là lỗi chỉ lộ ra khi chạy thử bằng trình duyệt thật — poll bằng `curl` không thấy.
