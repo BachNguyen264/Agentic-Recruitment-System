@@ -142,7 +142,24 @@ chống replay); giữ nhịp 2 req/s + retry lỗi tạm thời (không retry l
 CHỈ gắn cờ (dừng gửi, không hạ). Cờ `email_bounced`/`email_complained` hiện cho HR ở mọi trạng thái.
 Chi tiết + gotcha → `docs/AI_GUIDE.md` *Email boundary*.
 
-**NOT yet done:** analytics; observability; anti-prompt-injection; **runbook + verify live của 13**;
+**EMAIL-2 (`email.failed`) XONG:** webhook nay xử lý cả `email.failed` → `DeliveryStatus.FAILED` +
+cờ RIÊNG `email_send_failed` (KHÔNG phải `email_failed` — chuỗi đó `scheduler._dispatch` đã chiếm
+làm tên audit action) + lý do đọc từ `data.failed.reason`. Hạ trạng thái CÓ điều kiện như bounce,
+TRỪ `screener_reminder` (thư nhắc chở lại chính link đã giao thành công). `_NEGATIVE` nay DẪN XUẤT
+từ `_STATUS_FLAG`. Không cần migration (`status` là `varchar(16)`).
+
+**VERIFY PROD E2E (18/08/2026) — ĐÃ CHẠY THẬT, 4 lỗi tìm được + đã vá:** dọn sạch prod rồi chạy trọn
+vòng đời trên bản live (JD + AI-gợi-ý-rubric → 4 CV → cả 3 nhánh quyết định → magic-link sàng lọc →
+gate auto-mời → ứng viên tự chọn giờ → huỷ/đặt lại → HR duyệt). Webhook Resend nay CÓ bằng chứng
+chạy thật trên prod: `delivered` · `bounced` (hạ trạng thái + huỷ phiên đúng) · `complained` (chỉ
+gắn cờ). Bốn lỗi: **(1)+(2) HTTP 500 ở CẢ HAI nút lịch của HR** (`cancel_by_hr`,
+`resend_booking_link` — thiếu `refresh` nên `updated_at` expired làm `model_validate` nổ
+`MissingGreenlet`; nghiệp vụ vẫn chạy xong nên rất dễ chẩn đoán sai); **(3)** `escalation_reason`
+của ca auto-từ-chối ghi sai "(auto-từ-chối chưa bật)"; **(4)** thư sàng lọc in "72.0 giờ". Chi tiết
++ cách tránh → `docs/AI_GUIDE.md` (2 gotcha cuối).
+
+**NOT yet done:** analytics; observability; anti-prompt-injection; `email.suppressed` (xem AI_GUIDE);
+**runbook của 13**; test tải + scale;
 UI redesign; learning loop. Hardening tải còn nợ: semaphore chặn số pipeline song song, parser dùng
 `ainvoke` (bỏ thread pool), và **đường NHẬN CV vẫn giữ connection suốt lúc upload R2** (xem gotcha `refresh()`).
 

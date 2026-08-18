@@ -368,3 +368,26 @@
   thư KHÔNG BAO GIỜ được gửi. Hệ quả: ứng viên hard-bounce ở thư sàng lọc thì thư mời/từ chối về sau
   câm mà dashboard vẫn báo "đã gửi" — đúng lớp "trạng thái nói dối". Bật lên = đăng ký thêm event
   trên Resend + một `DeliveryStatus.SUPPRESSED` đi theo đúng đường đã dựng sẵn.
+
+- **`expire_on_commit=False` KHÔNG cứu được `updated_at` — route trả ORM row sau mutation là 500
+  (verify prod 18/08/2026).** `TimestampMixin.updated_at` khai `onupdate=func.now()` ở TẦNG DB, nên
+  sau MỖI câu UPDATE, SQLAlchemy đánh dấu RIÊNG cột đó là expired để lần đọc sau lấy giá trị server
+  vừa sinh. Cờ này độc lập hoàn toàn với `expire_on_commit`. Route kết thúc bằng
+  `ApplicationRead.model_validate(app_row)` — code ĐỒNG BỘ — nên Pydantic chạm `updated_at` là nạp
+  lười ngoài greenlet → `MissingGreenlet` → **HTTP 500**. Triệu chứng độc nhất và rất dễ chẩn đoán
+  sai: **nghiệp vụ ĐÃ CHẠY XONG** (slot đã nhả, thư đã gửi, trạng thái đã đổi trong DB) mà HR vẫn
+  nhận lỗi — rồi bấm lại lần nữa. Đã cắn `cancel_by_hr` và `resend_booking_link` (cả hai nút đặt
+  lịch của HR), trong khi `review_decision` thoát nạn chỉ vì nó tình cờ `refresh(app_row)` trước khi
+  return. **Hàm nghiệp vụ nào trả một ORM row cho route SAU khi đã ghi thì phải `await
+  session.refresh(row)` ở CUỐI** (sau mọi lượt gửi mail, để transaction mà `refresh` mở lại đóng
+  ngay khi request kết thúc). ⚠ Test gọi hàm nghiệp vụ rồi đọc DB ở session KHÁC sẽ XANH suốt —
+  muốn bắt được thì test phải gọi ĐÚNG dòng của route (`ApplicationRead.model_validate(...)`), xem
+  `test_hr_*_returns_serializable_row`.
+- **Node nào QUYẾT ĐỊNH thì node đó ghi lý do — đừng để node trước đoán hộ (verify prod
+  18/08/2026).** `ranker` chạy TRƯỚC `route_after_ranker` nên nó không thể biết JD có bật gate hay
+  không; câu cũ vẫn khẳng định "(auto-từ-chối chưa bật)". Khi gate BẬT, hồ sơ bị auto-từ-chối mang
+  đúng câu đó vào `application.escalation_reason` LẪN `audit_log` ⇒ bản ghi pháp y (PRD §16, NFR-3)
+  mô tả sai ai đã quyết định. Nay `ranker` chỉ nói điều nó biết (điểm dưới ngưỡng) và
+  `gate_auto_reject_node` GHI ĐÈ lý do bằng phát biểu của chính nó. Thêm node quyết định mới → nhớ
+  ghi đè lý do, nếu không nó thừa kế câu của node trước. Lỗi này KHÔNG lộ trên UI (trang chi tiết
+  giấu khối "Vì sao vào review" ở trạng thái `REJECTED`) nên chỉ đọc DB/audit mới thấy.
