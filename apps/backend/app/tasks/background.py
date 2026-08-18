@@ -21,7 +21,11 @@ from app.services import audit_service, booking_flow, job_service
 # uncertainty_flags (graph không biết webhook Resend, xem resume_screener). KHÔNG vòng import: email_
 # delivery chỉ kéo app.models/app.services.audit_service/app.services.booking_flow — không module nào
 # trong đó import app.tasks.background ngược lại.
-from app.services.email_delivery import EMAIL_BOUNCED_FLAG, EMAIL_COMPLAINED_FLAG
+from app.services.email_delivery import (
+    EMAIL_BOUNCED_FLAG,
+    EMAIL_COMPLAINED_FLAG,
+    EMAIL_SEND_FAILED_FLAG,
+)
 
 logger = get_logger("app.tasks.background")
 
@@ -366,7 +370,9 @@ async def resume_screener(
         # (gỡ cờ CŨ theo tên, không ghi đè trần).
         old_email_flags = [
             f for f in (application.uncertainty_flags or [])
-            if f in (EMAIL_BOUNCED_FLAG, EMAIL_COMPLAINED_FLAG)
+            # Thêm cờ email MỚI thì PHẢI thêm vào đây: thiếu một tên là cờ đó bị xoá sạch ở mọi
+            # lượt resume (hết hạn sàng lọc, trả lời muộn, nộp form) mà không test nào đỏ.
+            if f in (EMAIL_BOUNCED_FLAG, EMAIL_COMPLAINED_FLAG, EMAIL_SEND_FAILED_FLAG)
         ]
         new_flags = final.get("uncertainty_flags", []) or []
         application.uncertainty_flags = new_flags + [

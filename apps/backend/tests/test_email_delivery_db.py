@@ -85,6 +85,13 @@ def _event(kind: str, email_id: str) -> dict:
     }
 
 
+def _failed_event(email_id: str, reason: str = "reached_daily_quota") -> dict:
+    """Payload THẬT của `email.failed` — nguyên nhân nằm ở `data.failed.reason`, KHÔNG phải
+    `data.bounce.*` (đã đối chiếu tài liệu Resend). Chép `_event` rồi đổi mỗi `type` sẽ cho một test
+    XANH nhưng vô nghĩa: `bounce_reason` im lặng thành None và không assert nào phát hiện."""
+    return {"type": "email.failed", "data": {"email_id": email_id, "failed": {"reason": reason}}}
+
+
 async def test_invite_bounce_demotes_untouched_application(Session, app_id) -> None:  # noqa: N803
     await _delivery(Session, app_id, EmailKind.INVITE.value, "e_inv_1")
     async with Session() as s:
@@ -470,3 +477,188 @@ async def test_screener_bounce_demotion_closes_screening_session(Session, app_id
     async with Session() as s:
         await s.execute(delete(ScreeningSession).where(ScreeningSession.application_id == app_id))
         await s.commit()
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# `email.failed` — Resend KHÔNG đẩy được thư đi (thư chưa hề rời hệ thống)
+# ══════════════════════════════════════════════════════════════════════════════════════════
+
+
+async def test_invite_send_failure_demotes_and_records_its_own_reason(Session, app_id) -> None:  # noqa: N803
+    """Thư mời không gửi đi được → hạ về PENDING_REVIEW + cờ RIÊNG + lý do RIÊNG.
+
+    Hạ trạng thái là có chủ ý: ứng viên đang đứng ở `AWAITING_BOOKING` chờ một liên kết KHÔNG BAO
+    GIỜ tới. Chỉ gắn cờ mà để nguyên thì lưới sweep SCH-3 sẽ hết hạn rồi dán nhãn
+    `booking_no_response` — đổ lỗi cho người chưa từng nhận được gì.
+    """
+    await _delivery(Session, app_id, EmailKind.INVITE.value, "e_fail_1")
+    async with Session() as s:
+        await svc.handle_event(s, _failed_event("e_fail_1"))
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        assert row.status == ApplicationStatus.PENDING_REVIEW.value
+        assert svc.EMAIL_SEND_FAILED_FLAG in row.uncertainty_flags
+        # KHÔNG mượn cờ của hai loại kia — ba tình huống, ba hành động khác nhau cho HR.
+        assert svc.EMAIL_BOUNCED_FLAG not in row.uncertainty_flags
+        assert svc.EMAIL_COMPLAINED_FLAG not in row.uncertainty_flags
+        assert row.escalation_reason == svc._REASON_INVITE_FAILED
+        d = (await s.execute(
+            select(EmailDelivery).where(EmailDelivery.resend_email_id == "e_fail_1")
+        )).scalar_one()
+        assert d.status == DeliveryStatus.FAILED.value
+        # Lý do phải đọc được từ `data.failed.reason`; None ở đây = HR thấy cảnh báo đỏ trống rỗng.
+        assert d.bounce_reason == "reached_daily_quota"
+
+
+async def test_send_failure_audit_action_is_distinct_from_dispatch_failure(Session, app_id) -> None:  # noqa: N803
+    """Dòng audit của webhook KHÔNG được trùng tên với `email_failed` của `scheduler._dispatch`.
+
+    Hai sự kiện khác hẳn nhau, CÙNG `node="scheduler"`: `_dispatch` ghi `email_failed` khi lượt gọi
+    Resend NÉM lỗi tại chỗ (không sinh hàng `email_delivery` nào), còn đây là Resend đã nhận thư rồi
+    mới báo hỏng. Trùng tên là mất khả năng truy vết — đúng lớp lỗi đã vá ở commit d4fbfd5.
+    """
+    await _delivery(Session, app_id, EmailKind.INVITE.value, "e_fail_2")
+    async with Session() as s:
+        await svc.handle_event(s, _failed_event("e_fail_2", "invalid_recipient"))
+    async with Session() as s:
+        actions = set((await s.execute(
+            select(AuditLog.action).where(AuditLog.application_id == app_id)
+        )).scalars().all())
+        assert "email_send_failed" in actions
+        assert "email_failed" not in actions
+        audit = (await s.execute(
+            select(AuditLog)
+            .where(AuditLog.application_id == app_id, AuditLog.action == "email_send_failed")
+            .order_by(AuditLog.id.desc()).limit(1)
+        )).scalar_one()
+        # F3: cờ trong audit phải là cờ THẬT SỰ được gắn, không phải hằng số đoán lại.
+        assert audit.escalation_reason == svc.EMAIL_SEND_FAILED_FLAG
+        assert audit.detail.get("reason") == "invalid_recipient"
+
+
+async def test_send_failure_on_receipt_mail_only_flags(Session, app_id) -> None:  # noqa: N803
+    """Thư BIÊN NHẬN (xác nhận lịch) không gửi được → CHỈ gắn cờ, KHÔNG hạ trạng thái.
+
+    Cùng chính sách per-kind với bounce: ứng viên đã tự bấm chọn giờ và đã thấy màn xác nhận trên
+    web, nên lá thư chỉ là biên nhận — huỷ lịch của họ vì một biên nhận không gửi được mới là cái
+    sai lớn. `_SINGLE_CHANNEL` cố ý không chứa các loại thư này.
+    """
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        row.status = ApplicationStatus.INTERVIEW_SCHEDULED.value
+        await s.commit()
+    await _delivery(Session, app_id, EmailKind.BOOKING_CONFIRMED.value, "e_fail_3")
+    async with Session() as s:
+        await svc.handle_event(s, _failed_event("e_fail_3"))
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        assert row.status == ApplicationStatus.INTERVIEW_SCHEDULED.value  # KHÔNG hạ
+        assert svc.EMAIL_SEND_FAILED_FLAG in row.uncertainty_flags  # nhưng HR vẫn phải BIẾT
+
+
+async def test_later_delivery_clears_send_failed_flag(Session, app_id) -> None:  # noqa: N803
+    """Một lá thư sau giao THÀNH CÔNG tới cùng địa chỉ thì gỡ được cờ này — khác complaint.
+
+    Lý do: `email.failed` nói về phía TA (hạn mức/domain/khoá API). Thư sau đi được nghĩa là sự cố
+    đó đã hết, nên cảnh báo phải tự tắt; cảnh báo không bao giờ tắt là cảnh báo sẽ bị phớt lờ.
+    """
+    await _delivery(Session, app_id, EmailKind.INVITE.value, "e_fail_4")
+    async with Session() as s:
+        await svc.handle_event(s, _failed_event("e_fail_4"))
+    async with Session() as s:
+        assert svc.EMAIL_SEND_FAILED_FLAG in (await s.get(Application, app_id)).uncertainty_flags
+
+    await _delivery(Session, app_id, EmailKind.SCREENER.value, "e_fail_5")
+    async with Session() as s:
+        await svc.handle_event(s, _event("delivered", "e_fail_5"))
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        assert svc.EMAIL_SEND_FAILED_FLAG not in row.uncertainty_flags
+        assert row.escalation_reason is None  # câu escalation của chính nó cũng được dọn
+
+
+async def test_application_detail_exposes_send_failure_reason_separately(Session, app_id) -> None:  # noqa: N803
+    """Ba loại sự kiện xấu → BA cột lý do riêng ở endpoint chi tiết, không rò sang nhau.
+
+    Trộn chung thì HR đọc "hạn mức gửi đã cạn" ở ô dành cho bounce và đi làm đúng việc vô ích (tìm
+    số điện thoại của ứng viên) trong khi thứ cần sửa là cấu hình gửi.
+
+    Đi QUA `get_application` chứ không gọi thẳng `_latest_reason`: thứ dễ quên nhất không phải câu
+    truy vấn mà là DÒNG NỐI nó vào `model_copy(update=...)` của route. Gọi thẳng helper thì xoá hẳn
+    dòng nối đó test vẫn xanh, còn HR thì nhận banner ⛔ trống trơn — đúng cái "cảnh báo đỏ không kèm
+    lý do" mà docstring của `failure_reason_of` gọi là hỏng-câm tệ nhất.
+    """
+    from app.api.routes.applications import get_application
+
+    await _delivery(Session, app_id, EmailKind.INVITE.value, "e_mix_f")
+    async with Session() as s:
+        await svc.handle_event(s, _failed_event("e_mix_f", "domain_not_verified"))
+    await _delivery(Session, app_id, EmailKind.REJECT.value, "e_mix_b")
+    async with Session() as s:
+        await svc.handle_event(s, _event("bounced", "e_mix_b"))
+
+    async with Session() as s:
+        result = await get_application(app_id, s)
+        assert result.email_send_failed is True
+        assert result.email_send_failure_reason == "domain_not_verified"
+        assert "mailbox not found" in (result.email_bounce_reason or "")
+        # Ba cột RIÊNG, không rò sang nhau — HR phải biết mình đang đọc chuyện gì.
+        assert result.email_send_failure_reason != result.email_bounce_reason
+        assert result.email_complaint_reason is None
+
+
+async def test_screener_reminder_send_failure_keeps_the_live_link(Session, app_id) -> None:  # noqa: N803
+    """Thư NHẮC sàng lọc không gửi đi được → CHỈ gắn cờ, KHÔNG được giết liên kết đang sống.
+
+    Bắt được nhờ adversarial review khi bật `email.failed`: thư nhắc chở lại CHÍNH token mà thư
+    `screener` gốc đã giao THÀNH CÔNG, nên "không gửi được thư nhắc" không nói gì về liên kết. Nếu
+    hạ trạng thái, `_abandon_in_flight_session` đóng phiên → `screening._load_valid` trả "quá hạn"
+    cho ứng viên đang cầm liên kết CÒN HẠN; `reminded_at` đã tiêu nên không có lời nhắc thứ hai, và
+    HR KHÔNG có nút gửi lại link sàng lọc ⇒ mất bài dự tuyển, không đường cứu.
+
+    Sinh đôi của `test_screener_reminder_transient_bounce_only_flags_keeps_link_alive` (ngoại lệ F2
+    của bounce Transient) — hai chốt chặn RIÊNG cho cùng một bất biến, nên phải test RIÊNG từng cái.
+    """
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        row.status = ApplicationStatus.AWAITING_SCREENER.value
+        s.add(ScreeningSession(
+            application_id=app_id, token=f"{_MARK}-failtok", questions=[],
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=48),
+        ))
+        await s.commit()
+    await _delivery(Session, app_id, EmailKind.SCREENER_REMINDER.value, "e_rem_fail")
+    async with Session() as s:
+        await svc.handle_event(s, _failed_event("e_rem_fail"))
+
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        assert row.status == ApplicationStatus.AWAITING_SCREENER.value  # KHÔNG hạ
+        assert svc.EMAIL_SEND_FAILED_FLAG in row.uncertainty_flags  # nhưng HR vẫn BIẾT
+        sess = (await s.execute(
+            select(ScreeningSession).where(ScreeningSession.token == f"{_MARK}-failtok")
+        )).scalar_one()
+        assert sess.timed_out_at is None  # liên kết VẪN SỐNG — đây là điều đang bảo vệ
+    async with Session() as s:
+        await s.execute(delete(ScreeningSession).where(ScreeningSession.application_id == app_id))
+        await s.commit()
+
+
+async def test_screener_first_send_failure_still_demotes(Session, app_id) -> None:  # noqa: N803
+    """Đối trọng của test trên: thư sàng lọc GỐC không gửi được thì VẪN hạ về tay HR.
+
+    Không có test này thì ngoại lệ vừa thêm có thể bị nới rộng ra cả `screener` mà không ai biết —
+    và khi đó ứng viên chưa hề nhận được liên kết nào lại nằm im ở `AWAITING_SCREENER` cho tới lúc
+    hết hạn rồi bị dán nhãn "không phản hồi".
+    """
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        row.status = ApplicationStatus.AWAITING_SCREENER.value
+        await s.commit()
+    await _delivery(Session, app_id, EmailKind.SCREENER.value, "e_scr_fail")
+    async with Session() as s:
+        await svc.handle_event(s, _failed_event("e_scr_fail"))
+    async with Session() as s:
+        row = await s.get(Application, app_id)
+        assert row.status == ApplicationStatus.PENDING_REVIEW.value
+        assert row.escalation_reason == svc._REASON_SCREENER_FAILED

@@ -10,7 +10,13 @@ import pytest
 
 from app.agents.nodes import scheduler
 from app.models.audit_log import AuditLog
-from app.models.email_delivery import DeliveryStatus, EmailDelivery, EmailKind, outranks
+from app.models.email_delivery import (
+    _RANK,
+    DeliveryStatus,
+    EmailDelivery,
+    EmailKind,
+    outranks,
+)
 
 
 def test_kind_values_match_scheduler_modes() -> None:
@@ -40,6 +46,35 @@ def test_duplicate_event_is_noop() -> None:
     """Resend gửi lại sự kiện trùng là bình thường — cùng hạng thì KHÔNG áp lại (idempotent)."""
     for s in DeliveryStatus:
         assert not outranks(s.value, s.value)
+
+
+def test_every_status_has_a_rank() -> None:
+    """Thiếu MỘT hạng là sự kiện đó không bao giờ ghi được vào cột, mà KHÔNG lỗi nào bật ra.
+
+    `_RANK.get(x, -1)` cho mã lạ trả -1, nên `outranks` luôn False. Test trên
+    (`test_duplicate_event_is_noop`) KHÔNG bắt được vì nó so một giá trị với CHÍNH NÓ — vẫn False
+    dù thành viên đó có mặt trong `_RANK` hay không. Đây là lưới cho cái hố đó.
+    """
+    for s in DeliveryStatus:
+        assert s.value in _RANK, f"{s.value} thiếu trong _RANK — sự kiện sẽ bị bỏ qua trong im lặng"
+
+
+def test_send_failure_outranks_sent_and_delivered() -> None:
+    """`email.failed` phải ghi đè được `SENT` (đường thường) và cả `DELIVERED` tới muộn.
+
+    Resend KHÔNG bảo đảm thứ tự sự kiện. Hai cái này mâu thuẫn nhau về mặt vật lý, nên khi cả hai
+    cùng tới thì tin cái XẤU — bỏ sót một cảnh báo tốn kém hơn nhiều so với giữ thừa một cảnh báo.
+    """
+    assert outranks(DeliveryStatus.FAILED.value, DeliveryStatus.SENT.value)
+    assert outranks(DeliveryStatus.FAILED.value, DeliveryStatus.DELIVERED.value)
+    assert not outranks(DeliveryStatus.DELIVERED.value, DeliveryStatus.FAILED.value)
+
+
+def test_bounce_outranks_send_failure() -> None:
+    """Hai tín hiệu xấu loại trừ nhau; nếu vẫn cùng tới thì bounce thắng vì nó GIÀU thông tin hơn
+    (phản hồi SMTP thật, nói về chính địa chỉ ứng viên) — `failed` thường nói về phía TA."""
+    assert outranks(DeliveryStatus.BOUNCED.value, DeliveryStatus.FAILED.value)
+    assert not outranks(DeliveryStatus.FAILED.value, DeliveryStatus.BOUNCED.value)
 
 
 def test_unknown_status_never_applied() -> None:

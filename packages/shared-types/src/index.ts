@@ -75,6 +75,10 @@ export interface ApplicationListItem {
   // Ứng viên đã bấm "đây là spam" trên một lá thư ĐÃ TỚI NƠI — RIÊNG với email_bounced (hai tình
   // huống cần hai cách xử TRÁI NGƯỢC: bounce ⇒ tìm địa chỉ đúng; complaint ⇒ NGỪNG gửi cho người này).
   email_complained?: boolean;
+  // Dịch vụ gửi KHÔNG đẩy được thư đi (webhook Resend báo email.failed) — thư chưa hề rời hệ thống.
+  // RIÊNG với email_bounced: bounce ⇒ địa chỉ ứng viên có vấn đề, tìm kênh khác; failed ⇒ phía TA
+  // có vấn đề (hạn mức/domain/khoá API), sửa rồi gửi lại chính địa chỉ đó.
+  email_send_failed?: boolean;
 }
 
 // Một tiêu chí rubric đã chấm (khớp ranker._reconcile_criteria: tên+trọng số từ JD, điểm từ LLM).
@@ -119,6 +123,8 @@ export interface ApplicationDetail extends ApplicationListItem {
   email_bounce_reason: string | null;
   // Lý do complaint tương tự — RIÊNG cột, Resend hiếm khi kèm chi tiết cho loại này nên thường null.
   email_complaint_reason: string | null;
+  // Lý do KỸ THUẬT khi không gửi đi được (Resend `failed.reason`, vd "reached_daily_quota").
+  email_send_failure_reason: string | null;
 }
 
 // Khung giờ phỏng vấn đã chốt — khớp BookedInterview (backend).

@@ -88,6 +88,15 @@ export function ReviewCard({
           bấm nút bên dưới sẽ gửi thêm một thư nữa vào cùng địa chỉ đó.
         </p>
       )}
+      {app.email_send_failed && (
+        <p className="mt-3 rounded-r-lg border-l-[3px] border-amber-500 bg-amber-50 px-3 py-2.5 text-[13px] text-amber-900">
+          <strong className="font-bold">⛔ Hệ thống chưa gửi được thư: </strong>
+          Thư trước đó KHÔNG rời khỏi hệ thống
+          {app.email_send_failure_reason ? ` (${app.email_send_failure_reason})` : ""}. Địa chỉ của
+          ứng viên không có lỗi — hãy kiểm tra cấu hình gửi (hạn mức / domain / khoá API) TRƯỚC khi
+          bấm, nếu không lá thư này nhiều khả năng cũng không đi được.
+        </p>
+      )}
 
       {/* Lý do vào review (escalation) — nổi bật, đây là thứ HR cần đọc trước khi quyết */}
       {app.escalation_reason?.trim() && (

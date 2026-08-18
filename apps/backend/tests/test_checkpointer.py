@@ -250,3 +250,43 @@ async def test_resume_screener_preserves_email_flags(monkeypatch) -> None:
     # nhất, không phải ghi đè trần cũng không phải "đóng băng" state cũ.
     assert set(app_row.uncertainty_flags) == {"no_response", "email_complained"}
     assert app_row.escalation_reason == "Ứng viên không phản hồi bộ câu hỏi sàng lọc trong thời hạn."
+
+
+async def test_resume_screener_preserves_send_failed_flag(monkeypatch) -> None:
+    """Sinh đôi của test trên cho cờ THỨ BA (`email_send_failed`, bật cùng `email.failed`).
+
+    Danh sách cờ được giữ lại ở `background.py` là một tuple VIẾT TAY, nên mỗi cờ email mới đều có
+    khả năng bị bỏ quên ở đó — và triệu chứng hoàn toàn im lặng: không lỗi, không test đỏ, chỉ là
+    cảnh báo biến mất khỏi hàng DB ở lượt resume kế tiếp. Cờ này đặc biệt dễ mất vì ca sinh ra nó
+    (thư sàng lọc không gửi đi được) LUÔN dẫn tới một lượt resume `no_response` sau đó.
+    """
+    from app.models.application import Application
+    from app.tasks import background
+
+    app_row = Application(
+        id=8, applicant_email="b@e.com", job_id=2, status="AWAITING_SCREENER",
+        uncertainty_flags=["email_send_failed"], escalation_reason=None,
+    )
+    session = _FakeSession({(Application, 8): app_row})
+
+    monkeypatch.setattr(
+        background,
+        "resume_with_trace",
+        lambda **_kw: _await_value(
+            {
+                "branch": "human_review",
+                "final": {
+                    "status": ApplicationStatus.PENDING_REVIEW.value,
+                    "confidence": None,
+                    "uncertainty_flags": ["no_response"],
+                    "escalation_reason": "Ứng viên không phản hồi bộ câu hỏi sàng lọc trong thời hạn.",
+                },
+                "trace": [],
+                "suspended": False,
+            }
+        ),
+    )
+
+    await background.resume_screener(session, 8, {"no_response": True})
+
+    assert set(app_row.uncertainty_flags) == {"no_response", "email_send_failed"}

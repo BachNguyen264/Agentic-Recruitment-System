@@ -59,6 +59,16 @@ def test_email_complained_false_when_flag_absent() -> None:
     assert _read([]).email_complained is False
 
 
+def test_email_send_failed_true_when_flag_present() -> None:
+    assert _read(["email_send_failed"]).email_send_failed is True
+
+
+def test_email_send_failed_false_when_flag_absent() -> None:
+    assert _read([]).email_send_failed is False
+    # KHÔNG được nhận nhầm cờ bounce: hai tình huống dẫn HR tới hai hành động ngược nhau.
+    assert _read(["email_bounced"]).email_send_failed is False
+
+
 def test_bounced_and_complained_are_independent_flags() -> None:
     """Hai cờ RIÊNG (KHÔNG gộp) — một hồ sơ mang cả hai, hoặc chỉ một, phải tính đúng từng cái.
     Đây là chốt chặn cho việc "đừng gộp hai cái thành một nhãn" (yêu cầu global constraint)."""
@@ -69,6 +79,23 @@ def test_bounced_and_complained_are_independent_flags() -> None:
     only_complained = _read(["email_complained"])
     assert only_complained.email_bounced is False
     assert only_complained.email_complained is True
+
+
+def test_three_email_flags_are_mutually_independent() -> None:
+    """BA cờ, ba câu chuyện khác nhau — mỗi cái phải tính độc lập.
+
+    Ca nguy hiểm nhất là `email_send_failed` bị suy ra từ `email_bounced` (hoặc ngược lại): khi đó
+    HR đọc "địa chỉ hỏng, tìm kênh khác" trong khi sự thật là hạn mức gửi của CHÍNH TA đã cạn.
+    """
+    only_failed = _read(["email_send_failed"])
+    assert only_failed.email_send_failed is True
+    assert only_failed.email_bounced is False
+    assert only_failed.email_complained is False
+
+    all_three = _read(["email_bounced", "email_complained", "email_send_failed"])
+    assert (all_three.email_bounced, all_three.email_complained, all_three.email_send_failed) == (
+        True, True, True,
+    )
 
 
 def test_flag_ignores_status_and_escalation_reason() -> None:
@@ -84,6 +111,7 @@ def test_reason_fields_default_to_none() -> None:
     """`email_bounce_reason`/`email_complaint_reason` CHỈ populate ở endpoint chi tiết (route tự
     gán) — construct trực tiếp qua schema (như test này) phải mặc định None, không phải chuỗi rỗng
     hay lỗi validate."""
-    row = _read(["email_bounced", "email_complained"])
+    row = _read(["email_bounced", "email_complained", "email_send_failed"])
     assert row.email_bounce_reason is None
     assert row.email_complaint_reason is None
+    assert row.email_send_failure_reason is None

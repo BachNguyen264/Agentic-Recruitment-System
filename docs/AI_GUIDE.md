@@ -339,3 +339,32 @@
   cho hướng đặt lịch, đặt `timed_out_at` cho `ScreeningSession` đang mở. **KHÔNG** resume graph LangGraph
   từ webhook (đổi nặng, ngoài phạm vi EMAIL-1) — giới hạn đã biết: một thread checkpointer có thể rò lại,
   ghi nhận chứ không vá ở đây.
+- **`email.failed` KHÔNG phải bounce, và cái bẫy là nó TRÔNG GIỐNG bounce (EMAIL-2).** Ba khác biệt,
+  mỗi cái từng suýt thành lỗi thật: (a) nguyên nhân nằm ở `data["failed"]["reason"]` chứ KHÔNG phải
+  `data["bounce"]{type,subType,message}` — dùng nhầm bộ đọc KHÔNG ném lỗi, nó chỉ trả `None` và HR
+  nhận một banner đỏ TRỐNG RỖNG; (b) Resend **không** phân Transient/Permanent cho `failed` (đã tra
+  tài liệu — chỉ bounce mới có `bounce.type`), nên đừng chế phân loại bằng cách so chuỗi `reason`:
+  đó là chuỗi TỰ DO, không có danh sách đóng; (c) chuỗi `"email_failed"` ĐÃ BỊ CHIẾM làm tên `action`
+  trong `audit_log` bởi `scheduler._dispatch` (lượt gọi Resend ném lỗi TẠI CHỖ, không sinh hàng
+  `email_delivery` nào) — nên cờ HR là `email_send_failed`, và audit của webhook cũng vậy.
+  **Thêm loại sự kiện xấu MỚI** (vd `email.suppressed`) → khai ở `_STATUS_FLAG`; `_NEGATIVE` tự dẫn
+  xuất từ đó, còn `_RANK` PHẢI có mục tương ứng — thiếu là `outranks` luôn False ⇒ sự kiện rơi vào
+  im lặng (`test_every_status_has_a_rank` là lưới cho hố đó). Nhớ luôn `tasks/background.py`: danh
+  sách cờ email được GIỮ LẠI khi resume screener là tuple VIẾT TAY, thiếu tên nào là cờ đó bị xoá
+  sạch ở mọi lượt resume mà không test nào đỏ.
+- **Thư NHẮC không được xử như thư ĐẦU TIÊN khi nó chở lại CÙNG một liên kết (EMAIL-2).**
+  `screener_reminder` dùng LẠI đúng token của thư `screener` gốc, nên "gửi thư nhắc thất bại" KHÔNG
+  hề nói liên kết đã chết. Hạ trạng thái ở nhánh đó kéo theo `_abandon_in_flight_session` đóng phiên,
+  mà `screening._load_valid` từ chối mọi phiên có `timed_out_at` ⇒ ứng viên mở liên kết CÒN HẠN lại
+  nhận "đã quá hạn"; `reminded_at` đã tiêu nên không có lời nhắc thứ hai, và HR KHÔNG có nút gửi lại
+  link sàng lọc (chỉ đặt lịch mới có) ⇒ **mất bài dự tuyển, không đường cứu**. Nguy hiểm gấp bội vì
+  `reached_daily_quota` là sự cố TOÀN HỆ THỐNG còn sweep gửi nhắc theo LÔ. Đã có ngoại lệ cho bounce
+  Transient (F2) và nay cho `FAILED`; bounce **Permanent** của thư nhắc thì VẪN hạ (địa chỉ chết thì
+  liên kết còn sống cũng vô nghĩa). Hai chốt chặn RIÊNG cho cùng một bất biến ⇒ test RIÊNG từng cái
+  (`test_screener_reminder_*`), nếu không một guard chết từ lâu mà cả bộ test vẫn xanh.
+- **CHƯA XỬ LÝ — `email.suppressed` (ghi nhận, KHÔNG phải bỏ sót).** Sau một hard bounce/complaint,
+  Resend tự đưa địa chỉ vào suppression list rồi **chặn im lặng** các lượt gửi SAU: API vẫn nhận,
+  vẫn trả `id`, nên `_dispatch` vẫn ghi `EmailDelivery(SENT)` + audit `email_sent:{mode}` trong khi
+  thư KHÔNG BAO GIỜ được gửi. Hệ quả: ứng viên hard-bounce ở thư sàng lọc thì thư mời/từ chối về sau
+  câm mà dashboard vẫn báo "đã gửi" — đúng lớp "trạng thái nói dối". Bật lên = đăng ký thêm event
+  trên Resend + một `DeliveryStatus.SUPPRESSED` đi theo đúng đường đã dựng sẵn.

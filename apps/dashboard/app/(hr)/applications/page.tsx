@@ -112,7 +112,10 @@ export default function ApplicationsPage() {
                   // EMAIL-1: hai cờ này giờ có Tag RIÊNG (dòng dưới) — loại khỏi dòng cờ "cần chú ý"
                   // chung để HR không thấy trùng lặp (badge đẹp ⚠/🚫 CỘNG thêm token thô "email_bounced").
                   const otherFlags = a.uncertainty_flags.filter(
-                    (f) => f !== "email_bounced" && f !== "email_complained"
+                    (f) =>
+                      f !== "email_bounced" &&
+                      f !== "email_complained" &&
+                      f !== "email_send_failed"
                   );
                   return (
                   <tr key={a.id} className="border-b border-divider last:border-b-0 hover:bg-ink/[0.04]">
@@ -149,6 +152,7 @@ export default function ApplicationsPage() {
                             cấp bách hơn (đồng bộ thứ tự với trang chi tiết + ReviewCard). */}
                         {a.email_complained && <Tag tone="danger">🚫 Đã báo cáo spam</Tag>}
                         {a.email_bounced && <Tag tone="danger">⚠ Email không gửi được</Tag>}
+                        {a.email_send_failed && <Tag tone="danger">⛔ Hệ thống chưa gửi được thư</Tag>}
                         {/* Cờ "cần chú ý" chỉ là chỉ báo HÀNH ĐỘNG cho HR → CHỈ hiện khi còn chờ
                             quyết. Hồ sơ đã quyết chỉ hiện trạng thái cuối. */}
                         {a.status === "PENDING_REVIEW" && otherFlags.length > 0 && (

@@ -45,6 +45,11 @@ class DeliveryStatus(str, enum.Enum):
 
     SENT = "SENT"
     DELIVERED = "DELIVERED"
+    # Resend KHÔNG gửi được lá thư đi (`email.failed`): địa chỉ sai định dạng, khoá API hỏng, domain
+    # chưa xác thực, cạn hạn mức… Khác `BOUNCED` ở chỗ XẢY RA Ở ĐÂU: `FAILED` là thư CHƯA HỀ rời
+    # Resend; `BOUNCED` là thư ĐÃ tới máy chủ người nhận rồi bị máy chủ đó từ chối (nên bounce mới có
+    # `diagnosticCode` từ một phiên SMTP có thật). Với cùng một `resend_email_id`, hai cái loại trừ nhau.
+    FAILED = "FAILED"
     BOUNCED = "BOUNCED"
     COMPLAINED = "COMPLAINED"
 
@@ -56,11 +61,23 @@ class DeliveryStatus(str, enum.Enum):
 # bao giờ biết. Chỉ áp khi hạng CAO HƠN: `delivered` (1) không đè được `bounced` (2), sự kiện
 # trùng cùng hạng là no-op, và bounce tới SAU delivered (chuyện thật — máy chủ nhận báo lại) vẫn áp
 # được vì 2 > 1.
+#
+# Vị trí của `FAILED` là một QUYẾT ĐỊNH, không phải chỗ trống còn lại:
+#   - TRÊN `DELIVERED`: cùng lý lẽ với bounce — một `delivered` tới muộn không được phép xoá dấu
+#     "thư này không đi được". Hai sự kiện mâu thuẫn thì tin cái XẤU, vì bỏ sót một cảnh báo tốn
+#     kém hơn nhiều so với giữ thừa một cảnh báo.
+#   - DƯỚI `BOUNCED`: hai cái loại trừ nhau về mặt vật lý (chưa rời Resend thì không thể bị máy chủ
+#     người nhận từ chối), nên thứ tự chỉ có tác dụng khi dữ liệu đã bất thường. Khi đó bounce là
+#     tín hiệu GIÀU hơn — nó mang phản hồi SMTP thật và nói về CHÍNH địa chỉ ứng viên, trong khi
+#     `failed` thường nói về phía TA (hạn mức, domain, khoá API). Cho hai cái BẰNG hạng thì `outranks`
+#     (so sánh CHẶT) biến cả hai thành no-op của nhau: cái nào tới trước thắng vĩnh viễn, và vì mỗi
+#     hàng chỉ có MỘT `bounce_reason`, lý do của cái tới sau biến mất không dấu vết.
 _RANK: dict[str, int] = {
     DeliveryStatus.SENT.value: 0,
     DeliveryStatus.DELIVERED.value: 1,
-    DeliveryStatus.BOUNCED.value: 2,
-    DeliveryStatus.COMPLAINED.value: 3,
+    DeliveryStatus.FAILED.value: 2,
+    DeliveryStatus.BOUNCED.value: 3,
+    DeliveryStatus.COMPLAINED.value: 4,
 }
 
 

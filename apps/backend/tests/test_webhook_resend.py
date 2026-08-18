@@ -175,14 +175,31 @@ from app.services import email_delivery as svc
 def test_event_type_mapping() -> None:
     assert svc.status_for_event("email.sent") == DeliveryStatus.SENT.value
     assert svc.status_for_event("email.delivered") == DeliveryStatus.DELIVERED.value
+    assert svc.status_for_event("email.failed") == DeliveryStatus.FAILED.value
     assert svc.status_for_event("email.bounced") == DeliveryStatus.BOUNCED.value
     assert svc.status_for_event("email.complained") == DeliveryStatus.COMPLAINED.value
 
 
+def test_handled_event_set_is_exact() -> None:
+    """Khoá TẬP sự kiện được xử lý, không chỉ từng cái một.
+
+    `test_event_type_mapping` chỉ kiểm từng khoá nên nó vẫn XANH khi ai đó thêm một loại sự kiện
+    vào `_EVENT_STATUS` mà quên `_RANK`/`_STATUS_FLAG` — thứ khiến sự kiện đó rơi vào im lặng.
+    Cùng nếp `test_single_channel_map_excludes_reject`.
+    """
+    assert set(svc._EVENT_STATUS) == {
+        "email.sent", "email.delivered", "email.failed", "email.bounced", "email.complained",
+    }
+
+
 def test_unknown_event_type_ignored() -> None:
-    """Resend còn gửi `email.opened`/`email.clicked`/`email.delivery_delayed` — không phải sự kiện
-    của ta, và cũng KHÔNG được coi là lỗi (trả 204, đừng bắt Resend thử lại)."""
+    """Resend còn gửi `email.opened`/`email.clicked`/`email.delivery_delayed`/`email.suppressed`
+    — không phải sự kiện của ta, và cũng KHÔNG được coi là lỗi (trả 204, đừng bắt Resend thử lại).
+
+    `email.failed` ĐÃ RỜI nhóm này (xem `test_event_type_mapping`) — nó nay được xử lý thật.
+    """
     assert svc.status_for_event("email.opened") is None
+    assert svc.status_for_event("email.delivery_delayed") is None
     assert svc.status_for_event("") is None
 
 
@@ -213,8 +230,43 @@ def test_single_channel_map_excludes_reject() -> None:
 
 def test_demotable_excludes_complained() -> None:
     """Quyết định #I3 (adversarial review, người dùng đã chốt): complaint là bằng chứng thư ĐÃ TỚI
-    — không có gì "hỏng" để cứu bằng cách hạ trạng thái. Chỉ BOUNCED mới được phép hạ."""
-    assert svc._DEMOTABLE == {"BOUNCED"}
+    — không có gì "hỏng" để cứu bằng cách hạ trạng thái, nên nó KHÔNG được hạ.
+
+    `FAILED` thì ĐƯỢC (bổ sung khi bật `email.failed`): thư chưa hề rời hệ thống, nên ứng viên đang
+    chờ một thứ sẽ không bao giờ tới. Để nguyên trạng thái thì lưới sweep sẽ hết hạn rồi dán nhãn
+    "không phản hồi" lên người chưa từng nhận được gì.
+    """
+    assert svc._DEMOTABLE == {"BOUNCED", "FAILED"}
+    assert DeliveryStatus.COMPLAINED.value not in svc._DEMOTABLE
+
+
+def test_negative_set_is_derived_from_flag_map() -> None:
+    """`_NEGATIVE` phải LUÔN bằng tập khoá của `_STATUS_FLAG`.
+
+    Đây là bất biến thay cho cái ternary hai nhánh cũ: mọi sự kiện xấu đều phải có cờ RIÊNG. Viết
+    tay hai danh sách song song là cách một loại mới lọt vào `_NEGATIVE` rồi mượn nhầm cờ của loại
+    khác — cụ thể là `email_complained`, cờ KHÔNG BAO GIỜ được gỡ.
+    """
+    assert svc._NEGATIVE == frozenset(svc._STATUS_FLAG)
+    assert svc._DEMOTABLE <= svc._NEGATIVE
+
+
+def test_each_negative_status_has_its_own_flag() -> None:
+    """Ba sự kiện xấu, BA cờ khác nhau — không cái nào dùng chung tên với cái nào."""
+    flags = list(svc._STATUS_FLAG.values())
+    assert len(flags) == len(set(flags))
+    assert svc._STATUS_FLAG[DeliveryStatus.FAILED.value] == svc.EMAIL_SEND_FAILED_FLAG
+
+
+def test_send_failed_flag_does_not_collide_with_scheduler_audit_action() -> None:
+    """Cờ KHÔNG được trùng chuỗi `email_failed` — tên đó `scheduler._dispatch` đã dùng làm `action`
+    trong audit_log cho lượt gọi Resend NÉM lỗi tại chỗ (chuyện khác hẳn, cùng node="scheduler").
+
+    Và audit của webhook cũng phải mang tên KHÁC, nếu không hai sự kiện ngược nhau trở thành một
+    dòng log không phân biệt nổi — đúng lớp lỗi đã vá ở commit d4fbfd5.
+    """
+    assert svc.EMAIL_SEND_FAILED_FLAG != "email_failed"
+    assert svc._AUDIT_ACTION[DeliveryStatus.FAILED.value] != "email_failed"
 
 
 # ── C1 (adversarial review): payload rác KHÔNG được làm mất tín hiệu bounce ─────────────────
@@ -235,6 +287,50 @@ def test_bounce_reason_of_rejects_non_dict_data_or_bounce() -> None:
     assert svc.bounce_reason_of(None) is None
     assert svc.bounce_reason_of({"bounce": "hard bounce"}) is None  # C1: repro CHÍNH XÁC của reviewer
     assert svc.bounce_reason_of({"bounce": ["type", "Permanent"]}) is None
+
+
+# ── `email.failed`: nguyên nhân nằm ở `data.failed.reason`, KHÔNG phải `data.bounce.*` ───────────
+
+
+def test_failure_reason_extracted_and_truncated() -> None:
+    assert svc.failure_reason_of({"failed": {"reason": "reached_daily_quota"}}) == (
+        "reached_daily_quota"
+    )
+    long_reason = svc.failure_reason_of({"failed": {"reason": "x" * 900}})
+    assert long_reason is not None and len(long_reason) <= svc._MAX_REASON
+
+
+def test_failure_reason_none_when_absent() -> None:
+    assert svc.failure_reason_of({}) is None
+    assert svc.failure_reason_of({"failed": {}}) is None
+    assert svc.failure_reason_of({"failed": {"reason": ""}}) is None
+
+
+def test_failure_reason_of_rejects_garbage_shapes() -> None:
+    """Cùng kỷ luật C1 với `bounce_reason_of`: payload rác trả None, TUYỆT ĐỐI không ném — một
+    exception ở đây từng nuốt mất cả sự kiện (route đã hứa 204 nên Resend không gửi lại)."""
+    assert svc.failure_reason_of("khong-phai-dict") is None
+    assert svc.failure_reason_of(None) is None
+    assert svc.failure_reason_of({"failed": "boom"}) is None
+    assert svc.failure_reason_of({"failed": ["reason", "x"]}) is None
+
+
+def test_reason_reader_matches_event_type() -> None:
+    """Bẫy hình dạng payload: hai sự kiện để nguyên nhân ở HAI CHỖ khác nhau.
+
+    Dùng nhầm bộ đọc không ném lỗi — nó chỉ trả None, tức HR nhận cảnh báo đỏ KHÔNG kèm lý do.
+    `_reason_for` là chỗ duy nhất biết sự bất đối xứng này, nên nó phải chọn đúng cả hai chiều.
+    """
+    failed_payload = {"failed": {"reason": "reached_daily_quota"}}
+    bounce_payload = {"bounce": {"type": "Permanent", "message": "mailbox not found"}}
+
+    # Chiều đúng
+    assert svc._reason_for(DeliveryStatus.FAILED.value, failed_payload) == "reached_daily_quota"
+    assert "Permanent" in (svc._reason_for(DeliveryStatus.BOUNCED.value, bounce_payload) or "")
+    # Chiều chéo — chứng minh hai hàm KHÔNG thay thế được cho nhau (nếu ai đó gộp làm một,
+    # hai assert này đỏ ngay thay vì để lý do biến mất trong im lặng trên bản live).
+    assert svc._reason_for(DeliveryStatus.BOUNCED.value, failed_payload) is None
+    assert svc._reason_for(DeliveryStatus.FAILED.value, bounce_payload) is None
 
 
 # ── F2 (final review): Transient (hộp thư đầy/tạm thời) KHÔNG được xử lý y hệt Permanent ────────

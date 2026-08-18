@@ -189,6 +189,25 @@ export default function ApplicationDetailPage() {
               </p>
             </div>
           )}
+          {/* Banner thứ BA — KHÁC bounce ở chỗ lỗi nằm ở PHÍA TA, nên việc cần làm cũng khác: không
+              phải đi tìm địa chỉ khác của ứng viên mà là sửa cấu hình gửi rồi gửi lại. Gộp chung với
+              bounce sẽ đẩy HR đi làm đúng việc vô ích. */}
+          {app.email_send_failed && (
+            <div className="mt-4 rounded-xl border-2 border-amber-400 bg-amber-50 px-4 py-3">
+              <p className="font-heading text-[13px] font-bold text-amber-900">
+                ⛔ Hệ thống chưa gửi được thư — lỗi phía dịch vụ gửi
+              </p>
+              <p className="mt-1.5 text-[13px] text-amber-900">
+                Thư gửi tới <strong>{app.applicant_email}</strong> KHÔNG rời khỏi hệ thống (khác với
+                bounce: ở đây địa chỉ ứng viên không có lỗi gì). Thường do cạn hạn mức gửi, domain
+                chưa xác thực, hoặc khoá API hỏng — hãy kiểm tra lý do bên dưới rồi gửi lại cho chính
+                địa chỉ này.
+                {app.email_send_failure_reason ? (
+                  <> Lý do: <code>{app.email_send_failure_reason}</code></>
+                ) : null}
+              </p>
+            </div>
+          )}
 
           {/* Lý do cần HR xem xét (PRD §11) — chỉ báo HÀNH ĐỘNG. Hiện ở BA trạng thái, mỗi cái một
               lý do: còn chờ quyết; đã hẹn nhưng có cờ (SCH-2: thư xác nhận gửi hỏng → HR gọi thủ

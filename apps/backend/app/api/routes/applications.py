@@ -120,6 +120,9 @@ async def get_application(application_id: int, session: DBSession) -> Applicatio
             "email_complaint_reason": await _latest_reason(
                 session, application_id, DeliveryStatus.COMPLAINED.value
             ),
+            "email_send_failure_reason": await _latest_reason(
+                session, application_id, DeliveryStatus.FAILED.value
+            ),
         }
     )
 

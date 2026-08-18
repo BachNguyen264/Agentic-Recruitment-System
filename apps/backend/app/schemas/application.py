@@ -9,7 +9,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.core.config import settings
-from app.services.email_delivery import EMAIL_BOUNCED_FLAG, EMAIL_COMPLAINED_FLAG
+from app.services.email_delivery import (
+    EMAIL_BOUNCED_FLAG,
+    EMAIL_COMPLAINED_FLAG,
+    EMAIL_SEND_FAILED_FLAG,
+)
 from app.services.review import recommendation as _recommendation
 
 # Dev: chỉ đòi "có @, hai bên không rỗng, domain có dấu chấm, không khoảng trắng". Nới ≠ tắt — rác
@@ -117,6 +121,11 @@ class ApplicationRead(BaseModel):
     # tiết (như `interview`/`has_booking_link`, tránh N+1 ở danh sách).
     email_bounce_reason: str | None = None
     email_complaint_reason: str | None = None
+    # Lý do KỸ THUẬT khi dịch vụ gửi không đẩy được thư đi (`failed.reason` của Resend, vd
+    # `reached_daily_quota`). Cột thứ BA chứ không dùng lại `email_bounce_reason`: bounce và failed
+    # là hai câu chuyện ngược nhau, và trộn chung thì HR không biết nên đi tìm địa chỉ khác hay đi
+    # sửa cấu hình gửi.
+    email_send_failure_reason: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -139,6 +148,14 @@ class ApplicationRead(BaseModel):
     @property
     def email_complained(self) -> bool:
         return EMAIL_COMPLAINED_FLAG in (self.uncertainty_flags or [])
+
+    # Dịch vụ gửi KHÔNG đẩy được thư đi (`email.failed`) — thư chưa hề rời hệ thống. Cờ thứ BA, tách
+    # khỏi `email_bounced`: bounce ⇒ địa chỉ ứng viên có vấn đề, đi tìm kênh liên hệ khác; failed ⇒
+    # phía TA có vấn đề (hạn mức/domain/khoá API), sửa rồi gửi lại cho chính địa chỉ đó.
+    @computed_field
+    @property
+    def email_send_failed(self) -> bool:
+        return EMAIL_SEND_FAILED_FLAG in (self.uncertainty_flags or [])
 
     @computed_field  # có file CV để tải không (slice 06) — thay cho việc lộ key/path ra client.
     @property

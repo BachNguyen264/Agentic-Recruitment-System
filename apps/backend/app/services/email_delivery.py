@@ -31,7 +31,12 @@ from app.services.booking_flow import with_flag
 
 logger = get_logger("app.services.email_delivery")
 
-__all__ = ["EMAIL_BOUNCED_FLAG", "EMAIL_COMPLAINED_FLAG", "handle_event"]
+__all__ = [
+    "EMAIL_BOUNCED_FLAG",
+    "EMAIL_COMPLAINED_FLAG",
+    "EMAIL_SEND_FAILED_FLAG",
+    "handle_event",
+]
 
 EMAIL_BOUNCED_FLAG = "email_bounced"
 
@@ -46,6 +51,17 @@ EMAIL_BOUNCED_FLAG = "email_bounced"
 # rồi làm câm thư của MỌI ứng viên khác.
 EMAIL_COMPLAINED_FLAG = "email_complained"
 
+# Cờ thứ BA: Resend báo `email.failed` — lá thư KHÔNG BAO GIỜ rời khỏi Resend. Cờ RIÊNG, không gộp
+# vào `email_bounced`, vì nó chỉ về phía NGƯỢC LẠI: bounce nói "địa chỉ ứng viên có vấn đề, tìm địa
+# chỉ khác"; failed nói "PHÍA TA có vấn đề" (cạn hạn mức, domain chưa xác thực, khoá API hỏng, địa
+# chỉ sai định dạng) — hành động đúng là sửa cấu hình rồi gửi LẠI, không phải đi tìm số điện thoại.
+#
+# ⚠ TÊN: cố ý KHÔNG phải `"email_failed"`. Chuỗi đó ĐÃ được `scheduler._dispatch` dùng làm tên
+# `action` trong `audit_log` cho một chuyện KHÁC HẲN — lượt gọi Resend NÉM lỗi ngay tại chỗ, trường
+# hợp thậm chí không tạo nổi hàng `email_delivery` nào. Cùng một chuỗi mang hai nghĩa ở hai bảng là
+# đúng lớp lỗi đã phải vá một lần rồi (commit d4fbfd5, audit của complaint ghi nhầm "email_bounced").
+EMAIL_SEND_FAILED_FLAG = "email_send_failed"
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -56,28 +72,58 @@ def _now() -> datetime:
 # khớp được ĐÚNG câu này để gỡ — không xoá nhầm lý do escalation của một chuyện khác.
 _REASON_INVITE = "Thư MỜI phỏng vấn không tới được ứng viên — cần liên hệ thủ công."
 _REASON_SCREENER = "Thư SÀNG LỌC không tới được ứng viên — cần liên hệ thủ công."
-_BOUNCE_REASONS = frozenset({_REASON_INVITE, _REASON_SCREENER})
+# Câu RIÊNG cho `email.failed`: thư chưa hề rời hệ thống gửi, nên việc cần làm KHÁC hẳn bounce —
+# xem lý do kỹ thuật (hiện ngay cạnh) rồi gửi lại, thay vì đi tìm địa chỉ khác của ứng viên.
+_REASON_INVITE_FAILED = (
+    "Hệ thống KHÔNG GỬI ĐƯỢC thư mời phỏng vấn (lỗi phía dịch vụ gửi) — kiểm tra lý do rồi gửi lại."
+)
+_REASON_SCREENER_FAILED = (
+    "Hệ thống KHÔNG GỬI ĐƯỢC thư sàng lọc (lỗi phía dịch vụ gửi) — kiểm tra lý do rồi gửi lại."
+)
+_BOUNCE_REASONS = frozenset(
+    {_REASON_INVITE, _REASON_SCREENER, _REASON_INVITE_FAILED, _REASON_SCREENER_FAILED}
+)
 
-# kind -> (trạng thái mà thư đó thiết lập, lý do escalation).
+# kind -> (trạng thái mà thư đó thiết lập, lý do khi BOUNCE, lý do khi FAILED).
 # `reject` VẮNG MẶT có chủ ý (xem docstring). `submission_ack` vắng mặt vì chưa có đường phát nào.
 # Bốn loại thư đặt lịch còn lại là BIÊN NHẬN — ứng viên đã thấy màn xác nhận trên web hoặc tự bấm,
 # nên thư không tới không đổi được sự thật nào; chỉ gắn cờ.
-_SINGLE_CHANNEL: dict[str, tuple[str, str]] = {
-    EmailKind.INVITE.value: (ApplicationStatus.AWAITING_BOOKING.value, _REASON_INVITE),
-    EmailKind.SCREENER.value: (ApplicationStatus.AWAITING_SCREENER.value, _REASON_SCREENER),
+# Hai câu nằm CHUNG một hàng (thay vì hai bảng rời) để danh sách kind chỉ tồn tại MỘT bản: thêm một
+# loại thư đơn-kênh mới mà quên cập nhật bảng thứ hai là lỗi câm, không có gì bắt được.
+_SINGLE_CHANNEL: dict[str, tuple[str, str, str]] = {
+    EmailKind.INVITE.value: (
+        ApplicationStatus.AWAITING_BOOKING.value, _REASON_INVITE, _REASON_INVITE_FAILED
+    ),
+    EmailKind.SCREENER.value: (
+        ApplicationStatus.AWAITING_SCREENER.value, _REASON_SCREENER, _REASON_SCREENER_FAILED
+    ),
     EmailKind.SCREENER_REMINDER.value: (
-        ApplicationStatus.AWAITING_SCREENER.value, _REASON_SCREENER
+        ApplicationStatus.AWAITING_SCREENER.value, _REASON_SCREENER, _REASON_SCREENER_FAILED
     ),
 }
 
 _EVENT_STATUS: dict[str, str] = {
     "email.sent": DeliveryStatus.SENT.value,
     "email.delivered": DeliveryStatus.DELIVERED.value,
+    "email.failed": DeliveryStatus.FAILED.value,
     "email.bounced": DeliveryStatus.BOUNCED.value,
     "email.complained": DeliveryStatus.COMPLAINED.value,
 }
 
-_NEGATIVE = frozenset({DeliveryStatus.BOUNCED.value, DeliveryStatus.COMPLAINED.value})
+# Sự kiện XẤU -> cờ HR tương ứng. Bảng TƯỜNG MINH thay cho ternary hai nhánh cũ
+# (`BOUNCED if ... else COMPLAINED`): ternary đó ngầm giả định `_NEGATIVE` có ĐÚNG hai phần tử, nên
+# loại thứ ba lặng lẽ rơi vào nhánh `else` và bị gắn cờ "ứng viên báo spam" — một cờ KHÔNG BAO GIỜ
+# được gỡ, và chỉ HR đúng hướng hành động ngược lại hoàn toàn.
+_STATUS_FLAG: dict[str, str] = {
+    DeliveryStatus.BOUNCED.value: EMAIL_BOUNCED_FLAG,
+    DeliveryStatus.COMPLAINED.value: EMAIL_COMPLAINED_FLAG,
+    DeliveryStatus.FAILED.value: EMAIL_SEND_FAILED_FLAG,
+}
+
+# DẪN XUẤT từ `_STATUS_FLAG`, KHÔNG viết tay: "sự kiện xấu" và "sự kiện có cờ" phải là cùng một tập
+# theo định nghĩa. Hai danh sách viết tay song song chính là cách một loại mới được thêm vào một bên
+# rồi im lặng vắng mặt ở bên kia.
+_NEGATIVE = frozenset(_STATUS_FLAG)
 
 # Trạng thái ĐƯỢC PHÉP hạ ứng dụng — tập CON của `_NEGATIVE` (adversarial review I3). `COMPLAINED`
 # cố ý VẮNG MẶT: complaint là ứng viên tự bấm "đây là spam" trên một lá thư ĐÃ TỚI TAY — không có gì
@@ -85,7 +131,25 @@ _NEGATIVE = frozenset({DeliveryStatus.BOUNCED.value, DeliveryStatus.COMPLAINED.v
 # `booking_flow` / lưới sweep của `screening_timeout` (cả hai đều đòi đúng trạng thái đang chờ), tức
 # giết một liên kết đặt lịch/sàng lọc vẫn đang sống tốt. Complaint vẫn được gắn cờ + audit (xem
 # `_NEGATIVE`) — chỉ không đổi trạng thái.
-_DEMOTABLE = frozenset({DeliveryStatus.BOUNCED.value})
+#
+# `FAILED` CÓ mặt: lá thư không hề rời hệ thống, nên với `invite`/`screener` — những loại mà email là
+# kênh DUY NHẤT — ứng viên đang ngồi chờ một thứ sẽ KHÔNG BAO GIỜ tới. Chỉ gắn cờ mà để nguyên trạng
+# thái thì hồ sơ nằm ở `AWAITING_BOOKING`/`AWAITING_SCREENER` cho tới khi lưới sweep hết hạn, rồi bị
+# dán nhãn `booking_no_response` / `no_response` — tức ĐỔ LỖI CHO ỨNG VIÊN vì một lá thư ta chưa từng
+# gửi được. Đó đúng là lớp lỗi mà `booking_no_slots` (FR-BOOK-6) đã sinh ra để chặn.
+#
+# Cạn hạn mức (`reached_daily_quota`, ví dụ DUY NHẤT tài liệu Resend nêu) vẫn hạ, có chủ ý: dù nguyên
+# nhân là toàn hệ thống chứ không riêng ứng viên nào, kết quả với TỪNG ứng viên là như nhau — thư
+# không tới. Đưa về `PENDING_REVIEW` là đưa cho CON NGƯỜI quyết, không phải một quyết định cuối; và
+# như mọi nhánh khác ở đây, TUYỆT ĐỐI không auto-reject.
+_DEMOTABLE = frozenset({DeliveryStatus.BOUNCED.value, DeliveryStatus.FAILED.value})
+
+# Tên `action` ghi vào `audit_log`. Mặc định suy từ status (`email_delivered`/`email_bounced`/…) —
+# GIỮ NGUYÊN chuỗi cũ để không cắt đứt lịch sử đã ghi. RIÊNG `FAILED` phải đặt tay: công thức sẽ cho
+# ra đúng chuỗi `email_failed`, thứ mà `scheduler._dispatch` ĐÃ dùng (cùng `node="scheduler"`!) cho
+# một chuyện khác hẳn — lượt gọi Resend ném lỗi tại chỗ, chưa từng sinh hàng `email_delivery` nào.
+# Để trùng tên là biến hai sự kiện ngược nhau thành một dòng log không phân biệt được.
+_AUDIT_ACTION: dict[str, str] = {DeliveryStatus.FAILED.value: "email_send_failed"}
 
 # Lý do bounce là văn bản do BÊN NGOÀI gửi tới — cắt ngắn trước khi vào DB/UI.
 _MAX_REASON = 500
@@ -157,6 +221,39 @@ def bounce_reason_of(data: dict) -> str | None:
     return " · ".join(parts)[:_MAX_REASON]
 
 
+def failure_reason_of(data: dict | None) -> str | None:
+    """`data.failed.reason` của Resend → câu cho HR. Không có → None.
+
+    Hàm RIÊNG chứ không mở rộng `bounce_reason_of`, vì hai sự kiện mang nguyên nhân ở HAI CHỖ KHÁC
+    NHAU trong payload: `email.bounced` để ở `data["bounce"]{type,subType,message}`, còn
+    `email.failed` để ở `data["failed"]["reason"]`. Dùng nhầm hàm KHÔNG gây lỗi — nó chỉ trả `None`,
+    nghĩa là HR nhận một cảnh báo đỏ không kèm lý do nào, đúng kiểu hỏng-câm khó phát hiện nhất.
+
+    `reason` là chuỗi TỰ DO: tài liệu Resend chỉ nêu đúng một ví dụ (`reached_daily_quota`) và KHÔNG
+    có danh sách đóng — đừng `switch` trên nó, chỉ hiển thị.
+
+    Cùng kỷ luật phòng thủ với `bounce_reason_of` (C1): sai kiểu → `None`, KHÔNG ném (payload rác là
+    đường bình thường của một webhook công khai, và một exception ở đây từng nuốt mất CẢ sự kiện),
+    cắt ở `_MAX_REASON` vì đây là văn bản do bên ngoài gửi tới.
+    """
+    if not isinstance(data, dict):
+        return None
+    failed = data.get("failed")
+    if not isinstance(failed, dict):
+        return None
+    reason = failed.get("reason")
+    if not reason:
+        return None
+    return str(reason)[:_MAX_REASON]
+
+
+def _reason_for(new_status: str, data: dict | None) -> str | None:
+    """Chọn ĐÚNG bộ đọc lý do theo loại sự kiện — một chỗ duy nhất biết sự bất đối xứng payload."""
+    if new_status == DeliveryStatus.FAILED.value:
+        return failure_reason_of(data)
+    return bounce_reason_of(data)
+
+
 async def handle_event(session: AsyncSession, event: dict) -> None:
     """Điểm vào DUY NHẤT từ webhook. Nuốt lỗi HÌNH DẠNG payload (route đã trả 204 là hứa với Resend
     rằng sự kiện được nhận, và bắt Resend thử lại một payload sẽ hỏng Y HỆT là vô ích).
@@ -217,7 +314,7 @@ async def _process(session: AsyncSession, event: dict) -> None:
     # vừa tới cũng có vấn đề.
     reason_text: str | None = None
     if new_status in _NEGATIVE:
-        reason_text = bounce_reason_of(event.get("data"))
+        reason_text = _reason_for(new_status, event.get("data"))
         row.bounce_reason = reason_text
 
     if application_id is not None:
@@ -249,7 +346,7 @@ async def _process(session: AsyncSession, event: dict) -> None:
         session,
         application_id=application_id,
         node="scheduler",
-        action=f"email_{new_status.lower()}",
+        action=_AUDIT_ACTION.get(new_status, f"email_{new_status.lower()}"),
         escalation_reason=audit_flag,
         detail={
             "kind": kind, "email_id": email_id, "reason": reason_text,
@@ -291,9 +388,10 @@ async def _apply_bounce(
     nút "gửi lại link sàng lọc" (chỉ booking mới có). `bounce_data` cho phép `None` (complaint/sự
     kiện không mang `data`) — an toàn vì `_is_transient_bounce` tự canh kiểu.
     """
-    flag = (
-        EMAIL_BOUNCED_FLAG if new_status == DeliveryStatus.BOUNCED.value else EMAIL_COMPLAINED_FLAG
-    )
+    # Tra BẢNG, không ternary. `_NEGATIVE` được dẫn xuất từ `_STATUS_FLAG` nên khoá chắc chắn tồn
+    # tại ở đây (caller chỉ gọi khi `new_status in _NEGATIVE`) — không còn nhánh `else` nào để một
+    # loại sự kiện thứ ba rơi nhầm vào và tự nhận cờ "đã báo cáo spam".
+    flag = _STATUS_FLAG[new_status]
     app_row.uncertainty_flags = with_flag(app_row.uncertainty_flags, flag)
 
     if new_status not in _DEMOTABLE:
@@ -302,11 +400,35 @@ async def _apply_bounce(
     if new_status == DeliveryStatus.BOUNCED.value and _is_transient_bounce(bounce_data):
         return app_row.status, flag  # Transient: địa chỉ vẫn sống, liên kết vẫn sống — chỉ cờ, không hạ
 
+    # Thư NHẮC sàng lọc không gửi đi được → CHỈ gắn cờ. Nó chở lại CHÍNH magic-link mà thư `screener`
+    # gốc đã giao THÀNH CÔNG (`screening_timeout.send_screening_reminder` dùng lại đúng token cũ),
+    # nên "thư nhắc không đi được" KHÔNG hề nói rằng liên kết đã chết — nó chỉ nói phía TA đang trục
+    # trặc. Hạ trạng thái ở đây sẽ kéo theo `_abandon_in_flight_session` đóng phiên, và
+    # `screening._load_valid` từ chối mọi phiên có `timed_out_at` ⇒ ứng viên mở liên kết CÒN HẠN của
+    # mình thì nhận "đã quá hạn", `reminded_at` đã tiêu nên không có lời nhắc thứ hai, mà HR lại
+    # KHÔNG có nút gửi lại link sàng lọc (chỉ đặt lịch mới có). Bài dự tuyển mất, không đường cứu.
+    #
+    # Nguy hiểm gấp bội vì `reached_daily_quota` là sự cố TOÀN HỆ THỐNG còn sweep gửi nhắc theo LÔ:
+    # một lần cạn hạn mức giết liên kết của mọi ứng viên có thư nhắc rơi vào cửa sổ đó.
+    #
+    # Đây chính là ngoại lệ F2 đã dựng cho bounce Transient, nay mở rộng đúng phạm vi. KHÔNG áp cho
+    # `invite`/`screener`: hai loại đó là lần chạm ĐẦU TIÊN — gửi hỏng nghĩa là ứng viên chưa từng
+    # nhận được gì, nên hạ về tay HR mới đúng. Và KHÔNG áp cho bounce Permanent của thư nhắc (vẫn
+    # hạ, xem `test_screener_reminder_permanent_bounce_still_demotes`): bounce vĩnh viễn nói địa chỉ
+    # ĐÃ CHẾT, nên liên kết còn sống cũng vô nghĩa — khác hẳn "ta chưa gửi được".
+    if new_status == DeliveryStatus.FAILED.value and kind == EmailKind.SCREENER_REMINDER.value:
+        return app_row.status, flag
+
     mapping = _SINGLE_CHANNEL.get(kind)
     if mapping is None:
         return app_row.status, flag  # thư biên nhận / thư từ chối → chỉ cờ
 
-    expected_status, reason = mapping
+    # KHÔNG có vế transient cho `FAILED`, và đó là kết luận từ tài liệu chứ không phải bỏ sót:
+    # `email.failed` chỉ mang đúng `failed.reason` (chuỗi TỰ DO, Resend không công bố danh sách đóng)
+    # và KHÔNG hề có phân loại Transient/Permanent như `bounce.type`. Tự chế một phép phân loại bằng
+    # cách so chuỗi `reason` là dựng chốt chặn trên thứ nhà cung cấp chưa bao giờ hứa giữ nguyên.
+    expected_status, bounce_reason, failed_reason = mapping
+    reason = failed_reason if new_status == DeliveryStatus.FAILED.value else bounce_reason
     if app_row.status != expected_status:
         # Hồ sơ đã đi tiếp trong lúc webhook đang trên đường. KHÔNG kéo ngược.
         return app_row.status, flag
@@ -384,6 +506,17 @@ async def _already_moved_on(session: AsyncSession, application_id: int, *, kind:
     return bool(count)
 
 
+# Cờ được phép GỠ khi một lá thư sau giao thành công tới cùng địa chỉ. Danh sách TƯỜNG MINH, liệt kê
+# từng tên — cố ý KHÔNG lọc theo tiền tố `email_*`: `EMAIL_COMPLAINED_FLAG` phải nằm ngoài VĨNH VIỄN
+# (xem định nghĩa của nó), và một vòng lặp "mọi cờ liên quan email" sẽ nuốt nó vào ngay lần đầu ai đó
+# thấy ba dòng này trông giống nhau.
+#
+# `EMAIL_SEND_FAILED_FLAG` CÓ mặt vì một lượt giao hàng thành công về sau thật sự BÁC BỎ nó: thư đi
+# được nghĩa là hạn mức/domain/khoá API đều ổn trở lại. Còn complaint thì không — người đã bấm "spam"
+# vẫn đã bấm, dù thư sau có tới nơi.
+_CLEARABLE_FLAGS = frozenset({EMAIL_BOUNCED_FLAG, EMAIL_SEND_FAILED_FLAG})
+
+
 def _clear_bounce(app_row: Application, *, recipient: str) -> None:
     """GỠ cờ BOUNCE khi một lá thư sau ĐÃ tới cùng địa chỉ đó (bài học SCH-3: gắn cờ thì phải có
     đường gỡ). Không gỡ thì hồ sơ mang nhãn báo động vĩnh viễn kể cả sau khi địa chỉ đã hoạt động
@@ -398,9 +531,9 @@ def _clear_bounce(app_row: Application, *, recipient: str) -> None:
     if recipient != app_row.applicant_email:
         return
     flags = list(app_row.uncertainty_flags or [])
-    if EMAIL_BOUNCED_FLAG not in flags:
+    if not _CLEARABLE_FLAGS.intersection(flags):
         return
-    app_row.uncertainty_flags = [f for f in flags if f != EMAIL_BOUNCED_FLAG]
+    app_row.uncertainty_flags = [f for f in flags if f not in _CLEARABLE_FLAGS]
     # Chỉ xoá lý do NẾU nó đúng là câu ta đặt — đừng xoá lý do escalation của một chuyện khác.
     if app_row.escalation_reason in _BOUNCE_REASONS:
         app_row.escalation_reason = None
