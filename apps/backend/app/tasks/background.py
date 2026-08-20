@@ -161,9 +161,25 @@ async def process_application(application_id: int, *, force_review: bool = False
             # Mốc PARSING GHÉP vào chính session ĐỌC này — parser chạy ngay sau khi thoát khối `async
             # with` nên đây là mô tả đúng, không phải dự đoán, và KHÔNG tốn thêm lượt mượn pool nào.
             # Đặt CUỐI khối: mọi thứ pipeline cần đã nằm trong biến cục bộ, không còn đọc ORM object.
-            if application.status in IN_FLIGHT_STATUSES:
-                application.status = ApplicationStatus.PARSING.value
-                await session.commit()
+            #
+            # GÓI TRY RIÊNG: đây là `commit()` DUY NHẤT nằm trong khối ĐỌC, mà khối ĐỌC lại nằm trong
+            # `try` lớn — một lỗi ghi thoáng qua (kết nối Neon đứt ngay giữa `get` và `commit`) sẽ rơi
+            # xuống `_escalate_technical_error` và giết pipeline TRƯỚC KHI parser kịp chạy: hồ sơ ra
+            # PENDING_REVIEW[error] với `parsed_data` rỗng và `score` NULL — HR mở ReviewCard thấy một
+            # thẻ trống, tất cả vì một con số trang trí trên dashboard. Cùng CHÍNH SÁCH LỖI với
+            # `_mark_progress` (mốc RANKING): mốc hiển thị KHÔNG được phép giết pipeline.
+            # KHÔNG rollback trong `except`: thoát `async with` đã `close()` an toàn từ MỌI trạng thái
+            # transaction, còn `rollback()` là một lượt đi mạng NỮA — nó ném thì bay thẳng ra `try`
+            # lớn, tức quay lại đúng con bug vừa vá.
+            try:
+                if application.status in IN_FLIGHT_STATUSES:
+                    application.status = ApplicationStatus.PARSING.value
+                    await session.commit()
+            except Exception:  # noqa: BLE001 — mốc hiển thị KHÔNG được phép giết pipeline
+                logger.warning(
+                    "BG: không ghi được mốc tiến độ %s cho app=%s — pipeline vẫn chạy tiếp",
+                    ApplicationStatus.PARSING.value, application_id, exc_info=True,
+                )
 
         # ── 2) CHẠY pipeline — phần TỐN GIÂY (parser LLM + ranker LLM). KHÔNG giữ connection nào ──
         async def _advance(node_name: str) -> None:

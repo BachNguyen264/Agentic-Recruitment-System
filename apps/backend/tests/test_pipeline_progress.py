@@ -264,3 +264,51 @@ def test_dashboard_active_set_is_not_the_safety_set() -> None:
     # Trạng thái KẾT THÚC không được nằm trong panel "đang chạy".
     for done in (ApplicationStatus.REJECTED, ApplicationStatus.INTERVIEW_SCHEDULED):
         assert done.value not in DASHBOARD_ACTIVE_STATUSES
+
+
+async def test_parsing_mark_failure_does_not_kill_the_pipeline(monkeypatch) -> None:
+    """Mốc `PARSING` hỏng thì pipeline vẫn PHẢI chạy — cùng chính sách với `_mark_progress`.
+
+    Mốc này là dữ liệu HIỂN THỊ, y hệt mốc `RANKING`. DASH-1 ghi nó bằng một `commit()` TRẦN nằm
+    trong khối `try` lớn của `process_application`; nếu KHÔNG gói `try` riêng thì một lỗi ghi thoáng
+    qua (kết nối Neon đứt ngay giữa `get` và `commit`) rơi xuống `_escalate_technical_error` và biến
+    hồ sơ thành `PENDING_REVIEW[error]` — parser lẫn ranker không chạy lần nào, `parsed_data` rỗng,
+    `score` NULL, tất cả vì một con số trang trí. Đây là điểm hỏng DASH-1 mở ra: trước nó khối ĐỌC
+    không có `commit()` nào. Test này từng ĐỎ đúng ở dòng `await session.commit()` đó.
+
+    Khẳng định HÀNH VI (pipeline có chạy không), KHÔNG khẳng định cách vá — nên nó vẫn canh đúng
+    nếu sau này mốc PARSING chuyển sang đi qua `_mark_progress`.
+    """
+    from app.tasks import background
+
+    app_row = Application(id=43, applicant_email="c@e.com", job_id=None, status="SUBMITTED")
+
+    class _FlakyFirstCommit(_FakeSession):
+        """Chỉ lượt commit ĐẦU TIÊN hỏng — đúng lượt ghi mốc PARSING."""
+
+        async def commit(self) -> None:
+            self.commits += 1
+            if self.commits == 1:
+                # KHÔNG dùng "QueuePool timed out": lượt mượn connection xảy ra ở `session.get` ĐẦU
+                # TIÊN, không phải ở `commit()` — đường đó đã escalate CÓ CHỦ Ý (xem
+                # test_stuck_hardening). Ca thật ở đây là kết nối ĐỨT giữa `get` và `commit`.
+                raise ConnectionResetError("Neon đóng kết nối giữa get và commit")
+
+    session = _FlakyFirstCommit({(Application, 43): app_row})
+    monkeypatch.setattr(background, "AsyncSessionLocal", lambda: _Ctx(session))
+
+    ran: list[str] = []
+
+    async def _fake_run(**kw):
+        ran.append("pipeline")
+        return _clean_out(ApplicationStatus.PENDING_REVIEW.value)
+
+    monkeypatch.setattr(background, "run_with_trace", _fake_run)
+
+    await background.process_application(43)
+
+    assert ran == ["pipeline"], "mốc hiển thị hỏng đã giết pipeline của một ứng viên thật"
+    # Chuỗi phải khớp NGUYÊN VĂN `_escalate_technical_error` gọi ở nhánh `except` của
+    # `process_application` — lệch một chữ là assert này luôn xanh và không canh gì cả.
+    assert app_row.escalation_reason != "Lỗi kỹ thuật khi xử lý pipeline (error)."
+    assert app_row.status == ApplicationStatus.PENDING_REVIEW.value  # kết quả THẬT của pipeline
