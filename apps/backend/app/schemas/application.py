@@ -96,7 +96,6 @@ class PipelineSnapshot(BaseModel):
 
     counts: dict[str, int]
     active: list[PipelineItem]
-    generated_at: datetime
 
 
 class BookedInterview(BaseModel):

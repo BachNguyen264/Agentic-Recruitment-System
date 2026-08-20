@@ -36,9 +36,10 @@ export type ApplicationStatus =
   | "REJECTED";
 
 // ── Ảnh chụp pipeline cho bảng điều hành (PRD §12.1 FR-HR-DASH-1) ──
-// Đây là đường DUY NHẤT dashboard hỏi lại theo nhịp, nên payload cố ý có KÍCH THƯỚC CỐ ĐỊNH: 11 con
-// số + tối đa 6 dòng. (Trước đây dashboard poll `GET /api/applications` mỗi 5 giây — trả TOÀN BỘ hồ
-// sơ kèm parsed_data, phình theo số ứng viên, và đếm sai vì backend cắt ở 100 bản ghi mới nhất.)
+// Đây là đường bảng điều hành hỏi lại DỒN NHẤT (2s khi có tác tử chạy), nên payload cố ý có KÍCH
+// THƯỚC CỐ ĐỊNH: 11 con số + tối đa 6 dòng. (Trước đây bảng điều hành poll `GET /api/applications`
+// mỗi 5 giây — trả TOÀN BỘ hồ sơ kèm parsed_data, phình theo số ứng viên, và đếm sai vì backend cắt
+// ở 100 bản ghi mới nhất. Badge sidebar ở `(hr)/layout` thì VẪN đi đường cũ đó — chưa chuyển.)
 export interface PipelineItem {
   id: number;
   applicant_email: string;
@@ -50,7 +51,6 @@ export interface PipelineSnapshot {
   // ĐỦ mọi trạng thái PRD §13, kể cả trạng thái đang có 0 hồ sơ.
   counts: Record<ApplicationStatus, number>;
   active: PipelineItem[];
-  generated_at: string;
 }
 
 export interface Application {

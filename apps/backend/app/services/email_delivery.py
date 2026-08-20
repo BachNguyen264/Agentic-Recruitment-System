@@ -97,6 +97,13 @@ _SINGLE_CHANNEL: dict[str, tuple[str, str, str]] = {
     EmailKind.SCREENER.value: (
         ApplicationStatus.AWAITING_SCREENER.value, _REASON_SCREENER, _REASON_SCREENER_FAILED
     ),
+    # Ô thứ BA ở hàng NÀY không tới được: `_apply_bounce` chặn `FAILED` của thư nhắc bằng early-
+    # return ngay TRƯỚC lượt tra bảng. Chết đúng MỘT Ô — KHÔNG phải cả hàng (hai ô đầu chạy thật ở
+    # đường bounce Permanent của thư nhắc) và KHÔNG phải hằng `_REASON_SCREENER_FAILED` (nó sống ở
+    # hàng `SCREENER` và trong `_BOUNCE_REASONS`). Giữ nguyên câu đó chứ KHÔNG để `None`: nếu chốt
+    # chặn kia có ngày được gỡ, thứ lộ ra phải là câu ĐÚNG, không phải một hồ sơ bị hạ về
+    # PENDING_REVIEW mà HR không thấy lý do nào — và `tuple[str, str, str]` còn nguyên sức bắt hàng
+    # nào QUÊN câu FAILED.
     EmailKind.SCREENER_REMINDER.value: (
         ApplicationStatus.AWAITING_SCREENER.value, _REASON_SCREENER, _REASON_SCREENER_FAILED
     ),

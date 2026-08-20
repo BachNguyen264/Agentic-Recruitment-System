@@ -23,8 +23,9 @@ const REFRESH_IDLE_MS = 6_000;
 
 // Trạng thái đang chạy trong pipeline (chưa tới điểm dừng người/kết thúc) — PRD §13.
 // PHẢI khớp `DASHBOARD_ACTIVE_STATUSES` ở backend (`models/application.py`): backend dùng nó để chọn
-// danh sách `active`, frontend dùng để đếm và để quyết định nhịp hỏi. Lệch nhau thì con số "Đang xử
-// lý" và danh sách bên dưới nói hai chuyện khác nhau.
+// danh sách `active`, frontend dùng để ĐẾM (ô "Đang xử lý"). Lệch nhau thì con số "Đang xử lý" và
+// danh sách bên dưới nói hai chuyện khác nhau. Nhịp hỏi + animation bám `MACHINE_BUSY` bên dưới —
+// KHÔNG phải tập này (đổi từ commit 0000529).
 const IN_FLIGHT: ApplicationStatus[] = [
   "SUBMITTED", "PARSING", "RANKING", "SCREENING", "AWAITING_SCREENER", "REMINDED", "SCHEDULING",
   // SCH-2: thư mời + link đã gửi, đang chờ ứng viên tự chọn giờ — vẫn là "đang chạy", chưa kết thúc.

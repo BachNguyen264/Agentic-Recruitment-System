@@ -113,7 +113,9 @@ export const getApplications = () =>
   getJson<ApplicationListItem[]>("/api/applications");
 
 // Bảng điều hành: ảnh chụp pipeline (đếm + vài hồ sơ đang chạy). Endpoint RIÊNG, KHÔNG dùng lại
-// `getApplications`: đây là thứ DUY NHẤT được hỏi lại theo nhịp, nên nó phải rẻ và cỡ cố định.
+// `getApplications`: đây là đường được hỏi lại DỒN NHẤT (2s khi có tác tử chạy) nên nó phải rẻ và cỡ
+// cố định. Lưu ý nó CHƯA phải đường duy nhất chạy theo nhịp: badge "Hàng đợi review" ở `(hr)/layout`
+// vẫn poll `getApplications` mỗi 5s trên MỌI trang HR (đường cũ, limit=100 + kèm parsed_data).
 export const getPipeline = () => getJson<PipelineSnapshot>("/api/applications/pipeline");
 
 export const getApplication = (id: number) =>
