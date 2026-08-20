@@ -4,6 +4,17 @@ import type {
   ScoreBreakdownData,
 } from "@ars/shared-types";
 
+// Ba cờ email (EMAIL-1 · EMAIL-2) đã có banner/Tag RIÊNG bằng tiếng Việt ở mọi màn HR — KHÔNG đổ
+// THÊM token thô vào dòng cờ "cần chú ý". MỘT danh sách duy nhất, dùng chung cho mọi chỗ lọc: hai
+// danh sách viết tay song song chính là cách một cờ email thứ tư được thêm vào một bên rồi im lặng
+// vắng mặt ở bên kia — đúng lớp lỗi mà `_NEGATIVE = frozenset(_STATUS_FLAG)` bên
+// `services/email_delivery.py` đã dựng rào.
+const EMAIL_FLAGS: readonly string[] = ["email_bounced", "email_complained", "email_send_failed"];
+
+export function isEmailFlag(flag: string): boolean {
+  return EMAIL_FLAGS.includes(flag);
+}
+
 // Gộp các trường ApplicationDetail thành prop cho ScoreBreakdown (semantic_similarity nằm trong
 // score_breakdown; overall = cột score). Dùng chung: trang chi tiết + ReviewCard.
 export function toBreakdown(app: ApplicationDetail): ScoreBreakdownData {
@@ -12,7 +23,9 @@ export function toBreakdown(app: ApplicationDetail): ScoreBreakdownData {
     criteria: app.score_breakdown?.criteria ?? [],
     semantic_similarity: app.score_breakdown?.semantic_similarity ?? null,
     confidence: app.confidence,
-    uncertainty_flags: app.uncertainty_flags ?? [],
+    // Khối ĐIỂM chỉ nói chuyện của ranker (score_signal_mismatch / weak_match / near_threshold).
+    // Cờ email đã có banner riêng ở đầu trang — lọt vào đây thì vừa trùng lặp vừa đọc như lỗi ranker.
+    uncertainty_flags: (app.uncertainty_flags ?? []).filter((f) => !isEmailFlag(f)),
     summary: app.score_breakdown?.summary ?? null,
   };
 }

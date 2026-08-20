@@ -11,6 +11,7 @@ import {
   statusBucket,
   applicationStatusLabel,
   applicationStatusTone,
+  isEmailFlag,
   type StatusBucket,
 } from "@/lib/applications";
 
@@ -109,14 +110,10 @@ export default function ApplicationsPage() {
               </thead>
               <tbody>
                 {filtered.map((a) => {
-                  // EMAIL-1: hai cờ này giờ có Tag RIÊNG (dòng dưới) — loại khỏi dòng cờ "cần chú ý"
-                  // chung để HR không thấy trùng lặp (badge đẹp ⚠/🚫 CỘNG thêm token thô "email_bounced").
-                  const otherFlags = a.uncertainty_flags.filter(
-                    (f) =>
-                      f !== "email_bounced" &&
-                      f !== "email_complained" &&
-                      f !== "email_send_failed"
-                  );
+                  // EMAIL-1/EMAIL-2: các cờ email đã có Tag RIÊNG (dòng dưới) — loại khỏi dòng cờ
+                  // "cần chú ý" chung để HR không thấy trùng lặp (badge đẹp ⚠/🚫/⛔ CỘNG thêm token
+                  // thô "email_bounced"). Danh sách sống ở `lib/applications` — MỘT bản duy nhất.
+                  const otherFlags = a.uncertainty_flags.filter((f) => !isEmailFlag(f));
                   return (
                   <tr key={a.id} className="border-b border-divider last:border-b-0 hover:bg-ink/[0.04]">
                     <td className="px-3 py-2">

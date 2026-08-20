@@ -26,6 +26,21 @@ function clockOf(ms: number): string {
   return new Date(ms).toLocaleTimeString("vi-VN", { hour12: false });
 }
 
+// Nút bấm-để-kiểm. Hiện ở HAI chỗ (cạnh dòng "Tổng thể", và một mình khi lần nạp ĐẦU hỏng nên chưa
+// có gì để hiện) — cùng một hành động thì phải cùng một cái nút, không phải hai bản sao rời nhau.
+function RecheckButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className="rounded-lg border-2 border-divider bg-canvas px-2.5 py-1 text-[12px] font-semibold hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-55"
+    >
+      {busy ? "Đang kiểm…" : "Kiểm tra lại"}
+    </button>
+  );
+}
+
 export function ServiceStatus() {
   // KIỂM THEO YÊU CẦU, KHÔNG theo nhịp. Panel này không đóng góp tính năng nào — nó chỉ trả lời câu
   // "hạ tầng còn sống không", thứ HR hỏi khi NGHI NGỜ chứ không phải mỗi vài phút. Mà `/api/health`
@@ -83,14 +98,7 @@ export function ServiceStatus() {
                   <span className="text-ink/50"> · lúc {clockOf(dataUpdatedAt)}</span>
                 )}
               </span>
-              <button
-                type="button"
-                onClick={() => void refetch()}
-                disabled={isFetching}
-                className="rounded-lg border-2 border-divider bg-canvas px-2.5 py-1 text-[12px] font-semibold hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-55"
-              >
-                {isFetching ? "Đang kiểm…" : "Kiểm tra lại"}
-              </button>
+              <RecheckButton busy={isFetching} onClick={() => void refetch()} />
             </div>
           </>
         )}
@@ -99,14 +107,7 @@ export function ServiceStatus() {
             nếu không panel kẹt ở thông báo lỗi cho tới khi HR tải lại cả trang. */}
         {isError && !data && (
           <div className="px-4 py-3">
-            <button
-              type="button"
-              onClick={() => void refetch()}
-              disabled={isFetching}
-              className="rounded-lg border-2 border-divider bg-canvas px-2.5 py-1 text-[12px] font-semibold hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-55"
-            >
-              {isFetching ? "Đang kiểm…" : "Kiểm tra lại"}
-            </button>
+            <RecheckButton busy={isFetching} onClick={() => void refetch()} />
           </div>
         )}
       </div>
