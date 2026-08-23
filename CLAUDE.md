@@ -171,7 +171,20 @@ và **trạng thái dịch vụ nay KIỂM THEO YÊU CẦU** (nạp 1 lần + n�
 kiểm SÂU và nằm trong hạn mức 20 lượt/giờ). Đo thật local: `SUBMITTED → PARSING → RANKING → PENDING_
 REVIEW` hiện đúng thứ tự, parser 10s · ranker 19s. Bốn bẫy → `docs/AI_GUIDE.md` (4 gotcha cuối).
 
+**CVT-1 (kho CV mẫu — hạ rào cản đầu phễu, PRD §8.2b + FR-AP-6/7) XONG:** route CÔNG KHAI `/cv-templates`,
+lưới **3×3** cho 9 mẫu theo ngành (18 file tĩnh ở `apps/dashboard/public/cv-templates/`) — **không backend,
+không API, không migration** ⇒ cũng không tiêu hạn mức rate-limit công khai. Nguồn duy nhất
+`lib/cv-templates.ts` (`slug` suy ra CẢ HAI đường dẫn file; `googleDocsUrl: null` ⇒ **không render** nút thứ
+ba, dán link `/copy` vào là nút tự mọc). **Code-split khỏi bundle HR bằng CẤU TRÚC**: ngoài nhóm `(hr)` +
+Server Component không `"use client"` ⇒ 186 B, `○ Static`. Lối vào "Chưa có CV?" ở `/apply` (cùng tab) và
+`/apply/[jobId]` (**tab mới** — email+file là state React, rời trang là mất sạch; đã kiểm phản chứng).
+`PublicHeader` nay có prop `maxWidth` (mặc định `720px` ⇒ `/apply|/screening|/booking` KHÔNG hồi quy).
+Adversarial review 13 agent → **7 lỗi thật đã vá** (header lệch 160px · WCAG 2.5.3 Label-in-Name trên 18 link ·
+nút ghost 26px · hover hứa sai). Hai bẫy → `docs/AI_GUIDE.md` (2 gotcha cuối).
+
 **NOT yet done:** analytics; observability; anti-prompt-injection; `email.suppressed` (xem AI_GUIDE);
+9 link Google Docs cho CVT-1; mở `/cv-check` cho ứng viên (**không phải "0 dòng code"** — `/api/agents/*` sau
+`require_hr`, cần endpoint công khai + rate-limit + chống lạm dụng LLM ⇒ slice riêng);
 **runbook của 13**; test tải + scale;
 UI redesign; learning loop. Hardening tải còn nợ: semaphore chặn số pipeline song song, parser dùng
 `ainvoke` (bỏ thread pool), và **đường NHẬN CV vẫn giữ connection suốt lúc upload R2** (xem gotcha `refresh()`).

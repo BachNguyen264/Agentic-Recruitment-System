@@ -12,14 +12,28 @@ import { Logo } from "@/components/Logo";
 // `href` chỉ truyền ở /apply (ứng viên duyệt qua lại giữa danh sách và chi tiết). Ở /screening
 // ứng viên vào thẳng bằng magic-link trong email, không có gì để duyệt → để dạng chữ, không link
 // (bấm nhầm là mất form đang điền dở, mà token chỉ dùng được một lần).
-export function PublicHeader({ href, tagline }: { href?: string; tagline: string }) {
+// `maxWidth` phải khớp container nội dung của layout gọi nó — header trải hết bề ngang nhưng
+// hàng bên trong căn giữa, nên hai bề rộng lệch nhau là logo/tagline thụt vào so với tiêu đề và
+// lưới bên dưới (đo thật ở /cv-templates: lệch 160px mỗi bên khi để 720px dưới nội dung 1040px).
+// Mặc định giữ nguyên 720px cho /apply, /screening, /booking — chúng đều dùng container 720px.
+export function PublicHeader({
+  href,
+  tagline,
+  maxWidth = "max-w-[720px]",
+}: {
+  href?: string;
+  tagline: string;
+  maxWidth?: string;
+}) {
   // Chỉ "HireFlow", KHÔNG kèm hậu tố: ngữ cảnh đã nằm ở tagline bên phải ("Nộp hồ sơ trực tuyến"
   // / "Bổ sung thông tin ứng tuyển"), thêm "· Tuyển dụng" là nói hai lần cùng một ý.
   const brand = <Logo size={24} />;
 
   return (
     <header className="border-b-2 border-divider bg-canvas">
-      <div className="mx-auto flex max-w-[720px] items-center justify-between gap-3 px-4 py-3 sm:px-6">
+      <div
+        className={`mx-auto flex ${maxWidth} items-center justify-between gap-3 px-4 py-3 sm:px-6`}
+      >
         {href ? (
           <Link href={href} className="rounded focus-visible:outline-offset-4">
             {brand}

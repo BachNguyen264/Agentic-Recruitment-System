@@ -435,3 +435,20 @@
   hỏi kế tiếp: HR nhìn thẳng vào màn hình mà không thấy ô parser sáng lần nào, và kết luận tính năng
   hỏng. Hiện: rỗi 6s / đang chạy 2s. Đổi số đo pipeline (đổi model, bỏ thread pool) thì xem lại cặp
   số này. Đây là lỗi chỉ lộ ra khi chạy thử bằng trình duyệt thật — poll bằng `curl` không thấy.
+
+- **`PublicHeader` khoá cứng `max-w-[720px]` — layout công khai MỚI mà đổi bề rộng là header lệch
+  ngay (cv-templates).** Header trải hết bề ngang nhưng hàng bên trong căn giữa, nên nó chỉ thẳng
+  hàng với nội dung khi HAI bề rộng bằng nhau. `/cv-templates` cần 1040px cho lưới 3 cột (720px thì
+  mỗi thẻ còn ~210px, tên ngành xuống dòng giữa chừng) và lúc đầu chỉ đổi container → logo thụt vào
+  160px so với tiêu đề, tagline thụt 160px so với mép lưới, trông y như lỗi render. Nay
+  `PublicHeader` nhận prop `maxWidth` MẶC ĐỊNH `max-w-[720px]` (nên `/apply`, `/screening`,
+  `/booking` không đổi gì) và layout nào đổi container thì PHẢI truyền theo. Cả 4/4 lăng kính review
+  đều bắt lỗi này còn build + typecheck thì im — nó thuần thị giác, chỉ lộ khi mở trình duyệt.
+
+- **Trộn biến thể `btn()` trong một hàng `flex-wrap` thì chiều cao KHÔNG tự bằng nhau
+  (cv-templates).** `align-items: stretch` chỉ cân bằng TRONG một dòng flex — nút bị đẩy xuống dòng
+  riêng đứng một mình nên giữ chiều cao tự nhiên của nó. Đo thật ở 390px: `primary`/`secondary` 37.5px
+  còn `ghost` 26px, thành một link chữ bé tí, vùng chạm không đạt. Thêm nữa `secondary` có `border-2`
+  (+4px) nên chính NÓ mới là cái định chiều cao của dòng, `primary` chỉ ăn theo nhờ stretch. Muốn nút
+  `ghost` bằng hai nút kia phải bù CẢ HAI: `!py-2` và `border-2 border-transparent`. Đừng tin mắt
+  nhìn ở màn rộng — ở đó ba nút cùng một dòng nên stretch che mất lỗi.
