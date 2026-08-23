@@ -26,10 +26,11 @@ export default function CvTemplatesPage() {
       <p className="eyebrow">Kho mẫu</p>
       <h1 className="mt-1.5 text-[30px] sm:text-[36px]">Mẫu CV theo ngành nghề</h1>
       <p className="mt-2 max-w-[62ch] text-[14px] leading-relaxed text-ink/65">
-        Chọn mẫu gần với ngành của bạn, tải về, điền thông tin rồi quay lại nộp. Bản{" "}
-        <strong className="font-semibold text-ink">.docx</strong> để chỉnh sửa (Word, Google Docs,
-        WPS); bản <strong className="font-semibold text-ink">.pdf</strong> là bản in sẵn, mở lên
-        xem bố cục thành phẩm sau khi tải. Hệ thống nhận cả hai định dạng khi nộp.
+        <strong className="font-semibold text-ink">Xem trước</strong> để chọn mẫu hợp với bạn,
+        rồi <strong className="font-semibold text-ink">tải .docx</strong> về điền (Word, Google
+        Docs, WPS) hoặc <strong className="font-semibold text-ink">sửa thẳng trên Google Docs</strong>{" "}
+        nếu muốn làm online. Điền xong lưu lại dạng .pdf hoặc .docx rồi quay lại nộp — hệ thống
+        nhận cả hai.
       </p>
 
       <ul className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -55,8 +56,15 @@ export default function CvTemplatesPage() {
                 theo; `ghost` (không viền, `py-1`) chỉ 33.5px — trước khi vá còn 26px. Viền TRONG
                 SUỐT bù đúng 4px của border để ba nút bằng nhau dù nằm dòng nào. */}
             <div className="mt-4 flex flex-wrap gap-2">
-              {/* `download` chỉ có hiệu lực vì file cùng origin (nằm trong `public/`) — trình
-                  duyệt LƯU file thay vì mở PDF ngay trong tab.
+              {/* Ba nút = BA việc khác nhau: xem · tải về sửa · sửa online. Chỉ nút .docx mới có
+                  `download` (và nó chỉ hiệu lực vì file cùng origin, nằm trong `public/`).
+
+                  Bản .pdf CỐ Ý không `download`: mẫu CV là thứ chọn bằng MẮT, mà tên ngành + một
+                  dòng mô tả không cho biết mẫu trông ra sao. Ép tải .pdf thì người dùng phải mở
+                  Word/Docs chỉ để NHÌN, thấy không hợp lại quay ra tải mẫu khác. Next phục vụ
+                  file tĩnh KHÔNG kèm `Content-Disposition: attachment` (đã kiểm header), nên bỏ
+                  `download` là trình duyệt mở PDF ngay trong tab — kèm sẵn nút tải của trình xem
+                  PDF, nên KHÔNG mất khả năng tải, chỉ mất việc ép tải.
 
                   `aria-label` cần vì đọc màn hình gặp 9 link "Tải .docx" giống hệt nhau thì
                   không biết là mẫu ngành gì. Nhưng nó phải MỞ ĐẦU bằng ĐÚNG chữ nhìn thấy:
@@ -64,6 +72,19 @@ export default function CvTemplatesPage() {
                   tên khả truy cập KHÔNG còn chứa chuỗi "Tải .docx" — người dùng điều khiển bằng
                   giọng nói (Voice Control/Voice Access) đọc thấy nút gì thì nói đúng chữ đó, và
                   sẽ không khớp được link nào. Đó là WCAG 2.5.3 "Label in Name", mức A. */}
+              {/* Thứ tự nút = thứ tự người ta thật sự làm (xem → tải → hoặc sửa online), khớp
+                  với câu mô tả đầu trang. `primary` đứng GIỮA nên trông lạ so với thói quen đặt
+                  nút chính đầu hàng, nhưng ở đây thứ bậc do MÀU gánh (nút xanh đặc vẫn hút mắt
+                  trước), còn vị trí thì nên bám hành trình. */}
+              <a
+                href={templateFileUrl(tpl.slug, "pdf")}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`Xem trước — mẫu CV ${tpl.name} (mở tab mới)`}
+                className={btn("secondary")}
+              >
+                Xem trước
+              </a>
               <a
                 href={templateFileUrl(tpl.slug, "docx")}
                 download
@@ -71,14 +92,6 @@ export default function CvTemplatesPage() {
                 className={btn("primary")}
               >
                 Tải .docx
-              </a>
-              <a
-                href={templateFileUrl(tpl.slug, "pdf")}
-                download
-                aria-label={`Tải .pdf — mẫu CV ${tpl.name}`}
-                className={btn("secondary")}
-              >
-                Tải .pdf
               </a>
               {tpl.googleDocsUrl && (
                 <a

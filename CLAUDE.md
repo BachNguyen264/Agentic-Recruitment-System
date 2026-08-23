@@ -173,7 +173,9 @@ REVIEW` hiện đúng thứ tự, parser 10s · ranker 19s. Bốn bẫy → `doc
 
 **CVT-1 (kho CV mẫu — hạ rào cản đầu phễu, PRD §8.2b + FR-AP-6/7) XONG:** route CÔNG KHAI `/cv-templates`,
 lưới **3×3** cho 9 mẫu theo ngành (18 file tĩnh ở `apps/dashboard/public/cv-templates/`) — **không backend,
-không API, không migration** ⇒ cũng không tiêu hạn mức rate-limit công khai. Nguồn duy nhất
+không API, không migration** ⇒ cũng không tiêu hạn mức rate-limit công khai. Ba nút = **ba việc KHÁC nhau**:
+**Xem trước** (mở `.pdf` trong tab — CỐ Ý không `download`: PDF không sửa được nên tải về là ngõ cụt, còn
+chọn mẫu lại là quyết định thị giác) · **Tải .docx** (chính, có `download`) · **Sửa trên Google Docs**. Nguồn duy nhất
 `lib/cv-templates.ts` (`slug` suy ra CẢ HAI đường dẫn file; `googleDocsUrl: null` ⇒ **không render** nút thứ
 ba, dán link `/copy` vào là nút tự mọc). **Code-split khỏi bundle HR bằng CẤU TRÚC**: ngoài nhóm `(hr)` +
 Server Component không `"use client"` ⇒ 186 B, `○ Static`. Lối vào "Chưa có CV?" ở `/apply` (cùng tab) và
@@ -183,7 +185,7 @@ Adversarial review 13 agent → **7 lỗi thật đã vá** (header lệch 160px
 nút ghost 26px · hover hứa sai). Hai bẫy → `docs/AI_GUIDE.md` (2 gotcha cuối).
 
 **NOT yet done:** analytics; observability; anti-prompt-injection; `email.suppressed` (xem AI_GUIDE);
-9 link Google Docs cho CVT-1; mở `/cv-check` cho ứng viên (**không phải "0 dòng code"** — `/api/agents/*` sau
+mở `/cv-check` cho ứng viên (**không phải "0 dòng code"** — `/api/agents/*` sau
 `require_hr`, cần endpoint công khai + rate-limit + chống lạm dụng LLM ⇒ slice riêng);
 **runbook của 13**; test tải + scale;
 UI redesign; learning loop. Hardening tải còn nợ: semaphore chặn số pipeline song song, parser dùng

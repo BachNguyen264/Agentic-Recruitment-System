@@ -171,10 +171,16 @@ viên đó trước khi pipeline kịp chạy. Kho mẫu dựng để giữ họ
 
 - Trang **công khai** (không đăng nhập), liệt kê **9 mẫu CV theo nhóm ngành nghề**, mỗi mẫu có tên ngành và
   một dòng mô tả cho biết mẫu đó khác các mẫu khác ở chỗ nào.
-- Mỗi mẫu tải về được **2 định dạng**: `.docx` (để điền) và `.pdf` (bản in sẵn, xem bố cục thành phẩm).
-- Tuỳ chọn thứ ba **"Sửa trên Google Docs"** — link dạng *Tạo bản sao*: ứng viên bấm là có ngay bản riêng
-  trên Drive, sửa online trên mọi thiết bị, tự lưu, tự xuất PDF. Chi phí xây dựng = 0 vì Google lo phần soạn
-  thảo; hệ thống chỉ giữ đường link. Mẫu nào chưa có link thì **không hiện nút** (không để nút chết).
+- Mỗi mẫu có **ba hành động, ba việc KHÁC nhau** — không phải ba cách tải cùng một thứ:
+  1. **Xem trước** — mở bản `.pdf` ngay trong tab để NHÌN bố cục. Chọn CV mẫu là quyết định **thị giác**: tên
+     ngành + một dòng mô tả không cho biết mẫu trông ra sao. Không có bước này thì ứng viên phải tải `.docx`
+     rồi mở Word/Docs chỉ để nhìn, thấy không hợp lại quay ra tải mẫu khác. **Không ép tải bản `.pdf`** — PDF
+     không sửa được (phần mềm sửa PDF thường mất phí và ít phổ biến), nên tải nó về máy là ngõ cụt.
+  2. **Tải .docx** — hành động chính: bản để điền (Word, Google Docs, WPS).
+  3. **Sửa trên Google Docs** — link dạng *Tạo bản sao*: ứng viên bấm là có ngay bản riêng trên Drive, sửa
+     online trên mọi thiết bị, tự lưu, tự xuất PDF. Chi phí xây dựng = 0 vì Google lo phần soạn thảo; hệ
+     thống chỉ giữ đường link. Mẫu nào chưa có link thì **không hiện nút** (không để nút chết).
+- Ứng viên điền xong lưu lại dạng `.pdf` hoặc `.docx` rồi nộp — hệ thống nhận cả hai (FR-AP-2).
 - Lối vào: dòng *"Chưa có CV? Tải CV mẫu về ngay"* trên trang ứng tuyển.
 - **Tệp tĩnh, KHÔNG qua backend** — mẫu CV là tài liệu công khai, khác hẳn CV ứng viên nộp (lưu ở bucket
   PRIVATE, chỉ HR stream được — NFR-4). Trang không gọi API nào nên cũng không tiêu hạn mức chống lạm dụng
@@ -370,7 +376,8 @@ phải sửa nghiệp vụ.
 - FR-AP-3: nhận email Screener + trả lời qua magic-link form (cấu trúc).
 - FR-AP-4: nhận email kết quả (mời/từ chối).
 - FR-AP-5 (tùy chọn): tra cứu trạng thái đơn qua link.
-- FR-AP-6: tải **CV mẫu** theo nhóm ngành nghề (§8.2b) ở dạng `.docx` hoặc `.pdf`, không cần đăng nhập.
+- FR-AP-6: **xem trước** rồi tải **CV mẫu** theo nhóm ngành nghề (§8.2b), không cần đăng nhập — bản tải về
+  là `.docx` (sửa được); bản `.pdf` chỉ dùng để xem, KHÔNG ép tải.
 - FR-AP-7: từ trang ứng tuyển đi tới kho CV mẫu **mà không mất phần hồ sơ đang điền dở**.
 
 ### 12.3 Pipeline / Agent

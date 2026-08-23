@@ -197,9 +197,9 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 > Rào cản thật: người muốn ứng tuyển nhưng chưa có CV thì rời trang, mất ứng viên TRƯỚC khi pipeline kịp chạy.
 
 - **CVT-1 — Trang kho mẫu + lối vào — ✅ DONE (verify bằng trình duyệt thật).** Route CÔNG KHAI
-  `/cv-templates`: lưới **3×3** cho 9 mẫu theo nhóm ngành, mỗi thẻ = tên ngành + mô tả một dòng + nút
-  **Tải .docx** (chính) · **Tải .pdf** · **Sửa trên Google Docs** (chỉ hiện khi có link — hiện cả 9 để `null`,
-  dán URL vào là nút tự mọc, KHÔNG sửa code). 18 file tĩnh trong `public/cv-templates/`, **không backend,
+  `/cv-templates`: lưới **3×3** cho 9 mẫu theo nhóm ngành, mỗi thẻ = tên ngành + mô tả một dòng + **ba nút,
+  ba việc KHÁC nhau**: **Xem trước** (mở `.pdf` trong tab) · **Tải .docx** (chính) · **Sửa trên Google Docs**
+  (chỉ hiện khi có link — đã dán đủ 9). 18 file tĩnh trong `public/cv-templates/`, **không backend,
   không API, không migration** → cũng không tiêu hạn mức rate-limit công khai. Nguồn duy nhất
   `lib/cv-templates.ts` (`slug` suy ra cả hai đường dẫn file). Lối vào: dòng "Chưa có CV? Tải CV mẫu về ngay"
   ở `/apply` (cùng tab) và `/apply/[jobId]` (**tab mới** — email+file là state React, rời trang là mất sạch;
@@ -213,7 +213,14 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
     `aria-label` **thay** chữ nhìn thấy làm hỏng **WCAG 2.5.3 Label in Name** mức A trên cả 18 link (5/5 lăng
     kính); nút `ghost` cao 26px thay vì 37.5px khi xuống dòng; hover trên thẻ hứa "bấm được" nhưng ~90% diện
     tích vô tác dụng. Hai gotcha rút ra → `docs/AI_GUIDE.md`.
-  - **Chưa làm (có chủ ý):** 9 link Google Docs (chờ tải mẫu lên Drive) · mở `/cv-check` cho ứng viên — ý
+  - **CVT-1b — bỏ ép tải `.pdf`, đổi thành "Xem trước" — ✅ DONE.** Nhận ra sau khi dùng thật: PDF **không
+    sửa được** (phần mềm sửa PDF thường mất phí, ít phổ biến) nên tải nó về máy là ngõ cụt — hai trong ba
+    nút cùng làm một việc "quăng file vào máy", chỉ khác đuôi. Nhưng xoá hẳn PDF thì mất luôn khả năng
+    **nhìn mẫu trước khi chọn**, mà chọn CV mẫu vốn là quyết định thị giác (tên ngành + một dòng mô tả
+    không nói lên bố cục). Nên giữ file, đổi VIỆC: bỏ `download` + `target="_blank"` → PDF mở thẳng trong
+    tab (đã kiểm header: Next KHÔNG gửi `Content-Disposition: attachment`), trình xem PDF của trình duyệt
+    lại có sẵn nút tải nên không mất gì. Thứ tự nút đảo theo hành trình thật: xem → tải → sửa online.
+  - **Chưa làm (có chủ ý):** mở `/cv-check` cho ứng viên — ý
     "đóng khung lại, 0 dòng code" KHÔNG đúng: `/api/agents/*` nằm sau `require_hr` (main.py `_HR_ONLY`), muốn
     khách dùng phải thêm endpoint công khai + rate-limit + chống lạm dụng LLM ⇒ **slice riêng**, chưa lên lịch.
   → **Milestone:** ứng viên chưa có CV không còn là ngõ cụt.
@@ -298,8 +305,9 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
     500 thay vì 409) — đã vá + 5 test hồi quy trên DB thật.
   - [ ] **SCH-3 hoàn thiện:** nhắc trước PV 24h · link hết hạn → nhắc 1 lần → `PENDING_REVIEW[booking_no_response]`
     (**KHÔNG auto-reject**) qua sweep 08c · link hủy → nhả slot + báo HR · HR xem/dời/hủy lịch trên dashboard.
-- [x] **CVT-1 kho CV mẫu** (`/cv-templates` công khai, lưới 3×3, .docx/.pdf/Google-Docs-tuỳ-chọn, tĩnh 100%,
-  186 B `○ Static`, lối vào từ /apply; adversarial review 13 agent → 7 lỗi thật đã vá) — PRD §8.2b, FR-AP-6/7
+- [x] **CVT-1 kho CV mẫu** (`/cv-templates` công khai, lưới 3×3, tĩnh 100%, 186 B `○ Static`, lối vào từ
+  /apply; adversarial review 13 agent → 7 lỗi thật đã vá) + **CVT-1b** (ba nút ba việc: Xem trước `.pdf`
+  trong tab · Tải `.docx` · Sửa trên Google Docs — 9 link đã dán) — PRD §8.2b, FR-AP-6/7
 - [ ] Dọn: **đổi mật khẩu admin prod**
 - [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)
