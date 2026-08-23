@@ -33,55 +33,64 @@ export const CV_TEMPLATES: CvTemplate[] = [
     slug: "mau-cv-tong-quat",
     name: "Tổng quát",
     blurb: "Bố cục trung tính, dùng được cho hầu hết vị trí.",
-    googleDocsUrl: null,
+    googleDocsUrl:
+      "https://docs.google.com/document/d/1agmoMo7NlMs7kqwVTWTk2GAbK2Jq5gGt/copy",
   },
   {
     slug: "mau-cv-cong-nghe-thong-tin",
     name: "Công nghệ thông tin",
     blurb: "Làm nổi bật dự án, công nghệ sử dụng và đóng góp kỹ thuật.",
-    googleDocsUrl: null,
+    googleDocsUrl:
+      "https://docs.google.com/document/d/1_9xulaZ6LfDJA-URY4MViCBWC-AIXvY8/copy",
   },
   {
     slug: "mau-cv-kinh-doanh-ban-hang",
     name: "Kinh doanh & Bán hàng",
     blurb: "Nhấn vào chỉ tiêu, doanh số và tệp khách hàng đã phụ trách.",
-    googleDocsUrl: null,
+    googleDocsUrl:
+      "https://docs.google.com/document/d/1UxXYnWtiDbQXrHxrE9X11yIPbQEcEhQg/copy",
   },
   {
     slug: "mau-cv-marketing-truyen-thong",
     name: "Marketing & Truyền thông",
     blurb: "Nhấn vào chiến dịch, kênh triển khai và số liệu hiệu quả.",
-    googleDocsUrl: null,
+    googleDocsUrl:
+      "https://docs.google.com/document/d/16xlenypz2nkZG2tOUIuDUyqWb4IjH4Qf/copy",
   },
   {
     slug: "mau-cv-ke-toan-tai-chinh",
     name: "Kế toán & Tài chính",
     blurb: "Nhấn vào nghiệp vụ, phần mềm kế toán và chứng chỉ chuyên môn.",
-    googleDocsUrl: null,
+    googleDocsUrl:
+      "https://docs.google.com/document/d/1hGcbowq3jwfrIvyoyGmhqJRrtkwRnsHh/copy",
   },
   {
     slug: "mau-cv-hanh-chinh-nhan-su",
     name: "Hành chính & Nhân sự",
     blurb: "Nhấn vào quy trình, quản lý hồ sơ và công tác nhân sự.",
-    googleDocsUrl: null,
+    googleDocsUrl:
+      "https://docs.google.com/document/d/148SNMGFWE7GwuS_wYPooKuFYYKThFL9a/copy",
   },
   {
     slug: "mau-cv-cham-soc-khach-hang",
     name: "Chăm sóc khách hàng",
     blurb: "Nhấn vào kỹ năng giao tiếp và cách xử lý tình huống khó.",
-    googleDocsUrl: null,
+    googleDocsUrl:
+      "https://docs.google.com/document/d/13fTqudJ92kSfywRl6f09YAvOWBRvGqE-/copy",
   },
   {
     slug: "mau-cv-thiet-ke-sang-tao",
     name: "Thiết kế & Sáng tạo",
     blurb: "Chừa sẵn chỗ cho link portfolio và bộ công cụ thiết kế.",
-    googleDocsUrl: null,
+    googleDocsUrl:
+      "https://docs.google.com/document/d/1c9d4Ra6tJLxxrRpfCFqIrO-7jhp-mwGC/copy",
   },
   {
     slug: "mau-cv-sinh-vien-moi-tot-nghiep",
     name: "Sinh viên mới tốt nghiệp",
     blurb: "Chưa nhiều kinh nghiệm — đề cao học vấn, dự án và hoạt động.",
-    googleDocsUrl: null,
+    googleDocsUrl:
+      "https://docs.google.com/document/d/1FdeE1rP--W41CEw_q4-wPiphZoNBeaFI/copy",
   },
 ];
 
