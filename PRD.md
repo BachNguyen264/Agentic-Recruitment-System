@@ -160,8 +160,25 @@ pipeline đa tác tử bất đồng bộ.
 ### 8.2 Nộp (Ứng viên — web công khai)
 
 2. Ứng viên xem danh sách JD đang mở, chọn một JD, nộp CV (chỉ cần email; không bắt đăng nhập).
+   - Chưa có CV thì tải mẫu ở **kho CV mẫu** (§8.2b) rồi quay lại nộp — không rời khỏi luồng ứng tuyển.
 3. Hệ thống lưu Application (status `SUBMITTED`), đẩy vào xử lý bất đồng bộ. Mỗi CV = một pipeline độc lập,
    chạy song song với các CV khác.
+
+### 8.2b Kho CV mẫu (hỗ trợ ứng viên chưa có CV)
+
+Rào cản thật ở đầu phễu: người muốn ứng tuyển nhưng **chưa có CV** thì rời trang, và hệ thống mất luôn ứng
+viên đó trước khi pipeline kịp chạy. Kho mẫu dựng để giữ họ lại trong luồng.
+
+- Trang **công khai** (không đăng nhập), liệt kê **9 mẫu CV theo nhóm ngành nghề**, mỗi mẫu có tên ngành và
+  một dòng mô tả cho biết mẫu đó khác các mẫu khác ở chỗ nào.
+- Mỗi mẫu tải về được **2 định dạng**: `.docx` (để điền) và `.pdf` (bản in sẵn, xem bố cục thành phẩm).
+- Tuỳ chọn thứ ba **"Sửa trên Google Docs"** — link dạng *Tạo bản sao*: ứng viên bấm là có ngay bản riêng
+  trên Drive, sửa online trên mọi thiết bị, tự lưu, tự xuất PDF. Chi phí xây dựng = 0 vì Google lo phần soạn
+  thảo; hệ thống chỉ giữ đường link. Mẫu nào chưa có link thì **không hiện nút** (không để nút chết).
+- Lối vào: dòng *"Chưa có CV? Tải CV mẫu về ngay"* trên trang ứng tuyển.
+- **Tệp tĩnh, KHÔNG qua backend** — mẫu CV là tài liệu công khai, khác hẳn CV ứng viên nộp (lưu ở bucket
+  PRIVATE, chỉ HR stream được — NFR-4). Trang không gọi API nào nên cũng không tiêu hạn mức chống lạm dụng
+  của đường công khai.
 
 ### 8.3 Pipeline
 
@@ -353,6 +370,8 @@ phải sửa nghiệp vụ.
 - FR-AP-3: nhận email Screener + trả lời qua magic-link form (cấu trúc).
 - FR-AP-4: nhận email kết quả (mời/từ chối).
 - FR-AP-5 (tùy chọn): tra cứu trạng thái đơn qua link.
+- FR-AP-6: tải **CV mẫu** theo nhóm ngành nghề (§8.2b) ở dạng `.docx` hoặc `.pdf`, không cần đăng nhập.
+- FR-AP-7: từ trang ứng tuyển đi tới kho CV mẫu **mà không mất phần hồ sơ đang điền dở**.
 
 ### 12.3 Pipeline / Agent
 

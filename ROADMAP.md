@@ -191,6 +191,35 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 
 ---
 
+## ✅ CVT — Kho CV mẫu (hạ rào cản đầu phễu, PRD §8.2b) — **DONE**
+
+> Ý tưởng đến TỪ NGOÀI roadmap → lọc qua PRD trước (§8.2b + FR-AP-6/7), rồi mới xây — đúng quy tắc ở cuối file.
+> Rào cản thật: người muốn ứng tuyển nhưng chưa có CV thì rời trang, mất ứng viên TRƯỚC khi pipeline kịp chạy.
+
+- **CVT-1 — Trang kho mẫu + lối vào — ✅ DONE (verify bằng trình duyệt thật).** Route CÔNG KHAI
+  `/cv-templates`: lưới **3×3** cho 9 mẫu theo nhóm ngành, mỗi thẻ = tên ngành + mô tả một dòng + nút
+  **Tải .docx** (chính) · **Tải .pdf** · **Sửa trên Google Docs** (chỉ hiện khi có link — hiện cả 9 để `null`,
+  dán URL vào là nút tự mọc, KHÔNG sửa code). 18 file tĩnh trong `public/cv-templates/`, **không backend,
+  không API, không migration** → cũng không tiêu hạn mức rate-limit công khai. Nguồn duy nhất
+  `lib/cv-templates.ts` (`slug` suy ra cả hai đường dẫn file). Lối vào: dòng "Chưa có CV? Tải CV mẫu về ngay"
+  ở `/apply` (cùng tab) và `/apply/[jobId]` (**tab mới** — email+file là state React, rời trang là mất sạch;
+  đã kiểm phản chứng: điều hướng cùng tab rồi Back mất cả hai).
+  - **Code-split khỏi bundle HR** bằng CẤU TRÚC chứ không phải cấu hình: nằm ngoài nhóm route `(hr)` +
+    Server Component không `"use client"` → route JS 186 B, `○ Static` (nhỏ nhất app). Không nạp shell
+    sidebar lẫn guard `/api/auth/me`.
+  - **Adversarial review 13 agent** (Next.js · a11y · quy ước repo · bề mặt công khai) → **7 lỗi thật đã vá**,
+    đáng kể: `PublicHeader` khoá cứng 720px làm header lệch 160px dưới container 1040px (4/4 lăng kính cùng
+    bắt → thêm prop `maxWidth`, mặc định giữ 720px nên `/apply|/screening|/booking` KHÔNG hồi quy);
+    `aria-label` **thay** chữ nhìn thấy làm hỏng **WCAG 2.5.3 Label in Name** mức A trên cả 18 link (5/5 lăng
+    kính); nút `ghost` cao 26px thay vì 37.5px khi xuống dòng; hover trên thẻ hứa "bấm được" nhưng ~90% diện
+    tích vô tác dụng. Hai gotcha rút ra → `docs/AI_GUIDE.md`.
+  - **Chưa làm (có chủ ý):** 9 link Google Docs (chờ tải mẫu lên Drive) · mở `/cv-check` cho ứng viên — ý
+    "đóng khung lại, 0 dòng code" KHÔNG đúng: `/api/agents/*` nằm sau `require_hr` (main.py `_HR_ONLY`), muốn
+    khách dùng phải thêm endpoint công khai + rate-limit + chống lạm dụng LLM ⇒ **slice riêng**, chưa lên lịch.
+  → **Milestone:** ứng viên chưa có CV không còn là ngõ cụt.
+
+---
+
 ## 🧹 Dọn nhỏ còn treo
 
 - **Đổi mật khẩu admin prod** (`admin@ars.prod` đã lộ trong chat) — script băm mật khẩu mới cho hr_user.
@@ -269,6 +298,8 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
     500 thay vì 409) — đã vá + 5 test hồi quy trên DB thật.
   - [ ] **SCH-3 hoàn thiện:** nhắc trước PV 24h · link hết hạn → nhắc 1 lần → `PENDING_REVIEW[booking_no_response]`
     (**KHÔNG auto-reject**) qua sweep 08c · link hủy → nhả slot + báo HR · HR xem/dời/hủy lịch trên dashboard.
+- [x] **CVT-1 kho CV mẫu** (`/cv-templates` công khai, lưới 3×3, .docx/.pdf/Google-Docs-tuỳ-chọn, tĩnh 100%,
+  186 B `○ Static`, lối vào từ /apply; adversarial review 13 agent → 7 lỗi thật đã vá) — PRD §8.2b, FR-AP-6/7
 - [ ] Dọn: **đổi mật khẩu admin prod**
 - [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)
