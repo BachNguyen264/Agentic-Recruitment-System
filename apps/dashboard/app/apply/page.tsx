@@ -31,6 +31,15 @@ export default function ApplyListPage() {
         tài khoản.
       </p>
 
+      {/* Lối vào kho CV mẫu. Ở trang DANH SÁCH này điều hướng cùng tab là an toàn: chưa có form
+          nào đang điền dở để mất (khác trang chi tiết — xem ghi chú ở /apply/[jobId]). */}
+      <p className="mt-3 text-[13px] text-ink/65">
+        Chưa có CV?{" "}
+        <Link href="/cv-templates" className="font-heading font-bold text-accent hover:underline">
+          Tải CV mẫu về ngay →
+        </Link>
+      </p>
+
       {isLoading && <p className="mt-5 text-[13px] text-ink/65">Đang tải vị trí…</p>}
       {isError && (
         <p

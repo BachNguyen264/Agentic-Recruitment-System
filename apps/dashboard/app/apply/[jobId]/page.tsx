@@ -155,6 +155,29 @@ export default function ApplyDetailPage({ params }: { params: { jobId: string } 
 
               <Field label="CV (.pdf / .docx)" required>
                 <CVFilePicker onFile={setFile} disabled={mutation.isPending} />
+                {/* Lối vào kho CV mẫu — đặt NGAY dưới ô chọn file, đúng lúc ứng viên nhận ra
+                    mình chưa có CV.
+
+                    BẮT BUỘC mở tab mới: `email` và `file` là state React cục bộ, rời trang là
+                    mất sạch phần đang điền dở (và file đã chọn thì không khôi phục được bằng
+                    nút Back). Cùng lý do khiến PublicHeader không cho bấm logo ở /screening. */}
+                {/* Mũi tên ↗ (khác dấu → ở /apply) và "(mở tab mới)" trong aria-label là CÙNG
+                    một lời báo, cho hai nhóm người khác nhau. Không báo thì ứng viên trên điện
+                    thoại không nhận ra đã sang tab khác: tab mới do `target="_blank"` mở KHÔNG có
+                    lịch sử nên Back chết, họ vòng về qua /apply → danh sách → chọn lại vị trí →
+                    gặp form TRỐNG. Tức mất đúng thứ mà `target="_blank"` sinh ra để giữ. */}
+                <p className="mt-2 text-[12px] text-ink/65">
+                  Chưa có CV?{" "}
+                  <a
+                    href="/cv-templates"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="Tải CV mẫu về ngay (mở tab mới)"
+                    className="font-heading font-bold text-accent hover:underline"
+                  >
+                    Tải CV mẫu về ngay ↗
+                  </a>
+                </p>
               </Field>
             </div>
 
