@@ -473,3 +473,24 @@
   vẫn chạy nên nút kẹt "Đang xử lý…" vĩnh viễn (chỉ `onSettled` mới xoá cờ), rồi
   `resumePausedMutations()` TỰ PHÁT LẠI khi có mạng — phát lại một quyết định HR có thể đã bỏ dở, mà
   quyết định đó gửi email THẬT cho ứng viên (FR-HR-4) và ghi `audit_log` (FR-HR-5).
+
+- **Giả lập "Offline" của DevTools/CDP không chạm tới fetch do CHÍNH service worker phát ra (PWA-1).**
+  `emulate networkConditions: Offline` áp lên target của TRANG. Một fetch mà SW gọi từ bên trong
+  `event.respondWith(fetch(...))` chạy trong target của SW nên vẫn ra mạng bình thường. Đo thật trên
+  repo này: lúc "offline", fetch phát từ trang tới `/api/health/live?<fresh>` ném `Failed to fetch`,
+  còn `/applications?_rsc=<fresh>` do SW xử lý vẫn trả **200 trong 6 ms**, và một lượt tải lại (cold
+  navigation) hiện nhánh lỗi server của app thay vì `/offline`. Hệ quả: không thể kiểm trang offline
+  bằng network emulation — nó cho ra false negative rất thuyết phục. Cách kiểm THẬT là **tắt hẳn
+  server** (origin chết hẳn), đúng cách slice này đã dùng để chứng minh fallback hoạt động.
+
+- **Sửa `app/offline/page.tsx` mà không đổi `public/sw.js` thì mọi client đang cài giữ NGUYÊN trang
+  offline CŨ mãi mãi (PWA-1).** SW chỉ precache `/offline` trong handler `install`, mà `install` chỉ
+  chạy khi byte của `sw.js` đổi. Vấp thật trong lúc làm PWA-1: sửa link "Thử lại" ở source, `curl
+  /offline` trả đúng HTML mới, mà trình duyệt vẫn hiện link cũ — bản precache cũ còn nằm đó đấy. ⇒ Mọi
+  lần sửa trang offline sau này PHẢI bump `CACHE` trong `sw.js` trong CÙNG một commit.
+
+- **Chạy `pnpm --filter dashboard build` trong lúc `next dev` đang sống thì server dev hỏng theo
+  (PWA-1).** Cả hai cùng ghi vào `apps/dashboard/.next`; bản build thay các chunk framework mà dev
+  server đang phục vụ, nên mọi route 404 phần JS của nó rồi kẹt ở trạng thái loading. Trông y hệt một
+  lỗi code chứ không phải hệ quả thao tác. Cách hồi phục: tắt dev, xoá `.next`, bật dev lại. Trong một
+  slice: kiểm trình duyệt TRƯỚC, build là bước CUỐI.

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   ApplicationDetail,
@@ -24,9 +25,28 @@ function decisionErrorMessage(err: unknown): string {
 }
 
 export default function ReviewPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-ink/65">Đang tải hàng đợi…</div>}>
+      <ReviewQueue />
+    </Suspense>
+  );
+}
+
+function ReviewQueue() {
   const qc = useQueryClient();
   const [submittingId, setSubmittingId] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // PWA-1: guard ở layout đưa người dùng tới đây khi họ mở một màn chỉ có trên bản máy tính.
+  // Tự tắt sau 6s — đây là lời giải thích một lần, không phải cảnh báo thường trực.
+  const searchParams = useSearchParams();
+  const [hiddenNotice, setHiddenNotice] = useState(false);
+  useEffect(() => {
+    if (searchParams.get("pwa_hidden") !== "1") return;
+    setHiddenNotice(true);
+    const t = setTimeout(() => setHiddenNotice(false), 6000);
+    return () => clearTimeout(t);
+  }, [searchParams]);
 
   // Hàng đợi = ca PENDING_REVIEW (lấy từ list, tái dùng 03a) → fetch detail cho mỗi ca (ReviewCard
   // cần parsed_data + breakdown + recommendation).
@@ -96,6 +116,15 @@ export default function ReviewPage() {
           </>
         }
       />
+
+      {hiddenNotice && (
+        <p
+          role="status"
+          className="mb-4 rounded-lg border-2 border-divider bg-ink/[0.03] px-4 py-2.5 text-sm text-ink/70"
+        >
+          Màn bạn vừa mở chỉ có trên bản máy tính. Đã đưa bạn về hàng đợi duyệt.
+        </p>
+      )}
 
       {errorMsg && (
         <p

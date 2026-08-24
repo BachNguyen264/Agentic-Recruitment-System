@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ApplicationListItem } from "@ars/shared-types";
 import { Logo } from "@/components/Logo";
 import { getApplications, getMe, logout } from "@/lib/api";
+import { isHiddenOnPwa, PWA_NAV_HREFS, usePwaMode } from "@/lib/pwa";
 
 // Guard khu vực HR (slice 09, PRD §4): mọi trang trong nhóm (hr) — /, /applications, /review, /jobs,
 // /cv-check — yêu cầu ĐĂNG NHẬP. Kiểm qua GET /api/auth/me (KHÔNG middleware: cookie httpOnly ở domain
@@ -17,7 +18,15 @@ import { getApplications, getMe, logout } from "@/lib/api";
 // UI redesign: guard giữ NGUYÊN logic; phần hiển thị đổi sang shell sidebar cố định (236px) theo
 // bản thiết kế — điều hướng luôn thấy, không còn link "← Về dashboard" rải rác từng trang.
 
-type NavItem = { href: string; label: string; icon: React.ReactNode; exact?: boolean };
+type NavItem = {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+  exact?: boolean;
+  // Nhãn ngắn hơn cho thanh trên cùng (điện thoại, chế độ đã cài): ở 360px hai nhãn đầy đủ tràn xuống
+  // hàng thứ hai. Sidebar (desktop) LUÔN dùng `label` đầy đủ — chỉ thanh trên cùng đọc trường này.
+  shortLabel?: string;
+};
 
 const ICON = "h-[17px] w-[17px]";
 const strokeProps = {
@@ -58,6 +67,7 @@ const NAV: NavItem[] = [
   {
     href: "/review",
     label: "Hàng đợi review",
+    shortLabel: "Hàng đợi",
     icon: (
       <svg viewBox="0 0 24 24" className={ICON} {...strokeProps}>
         <path d="M11 12H3" />
@@ -102,6 +112,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const qc = useQueryClient();
+  const isPwa = usePwaMode();
 
   const { data: me, isLoading, isError, refetch, fetchStatus } = useQuery({
     queryKey: ["me"],
@@ -137,6 +148,18 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
     }
   }, [isLoading, me, pathname, router]);
 
+  // PWA-1: màn bị ẩn mà vẫn vào được bằng URL thì coi như chưa ẩn. `?pwa_hidden=1` để trang đích
+  // giải thích vì sao người dùng bị đưa đi chỗ khác — chuyển hướng câm lặng đọc như lỗi.
+  //
+  // NGOẠI LỆ `/`: đó là `start_url` trong app/manifest.ts, nên mở app từ màn hình chính LUÔN khởi đầu
+  // ở `/` — đây là một lượt MỞ APP bình thường, không phải một deep-link vào màn máy tính bị chặn.
+  // Gắn `pwa_hidden=1` cho trường hợp này sẽ hiện banner "màn bạn vừa mở..." dù người dùng chưa mở gì.
+  useEffect(() => {
+    if (isPwa && isHiddenOnPwa(pathname)) {
+      router.replace(pathname === "/" ? "/review" : "/review?pwa_hidden=1");
+    }
+  }, [isPwa, pathname, router]);
+
   const logoutMutation = useMutation({
     mutationFn: logout,
     onSuccess: async () => {
@@ -144,6 +167,21 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
       router.replace("/login");
     },
   });
+
+  // PWA-1: chưa biết đang standalone hay không thì CHƯA vẽ gì. Không có cổng này, lần render đầu
+  // vẽ đủ 5 mục điều hướng rồi effect mới rút còn 2 — người dùng thấy menu nháy.
+  //
+  // Trước BUG-1, cổng `isLoading` bên dưới vô tình che được việc này (query `me` luôn "fetching" ở
+  // render đầu). BUG-1 seed `onlineManager` từ `navigator.onLine`, nên mở app lúc offline làm query
+  // bị *paused* ⇒ `isLoading` false ngay từ đầu ⇒ cổng đó KHÔNG còn giữ. Phải có cổng riêng.
+  if (isPwa === undefined) {
+    return <div className="p-8 text-sm text-ink/65">Đang kiểm tra phiên đăng nhập…</div>;
+  }
+
+  // Đang chuyển hướng (effect ở trên) — không vẽ nội dung màn bị ẩn dù chỉ một khung hình.
+  if (isPwa && isHiddenOnPwa(pathname)) {
+    return <div className="p-8 text-sm text-ink/65">Đang chuyển về hàng đợi…</div>;
+  }
 
   if (isLoading) {
     return <div className="p-8 text-sm text-ink/65">Đang kiểm tra phiên đăng nhập…</div>;
@@ -195,6 +233,10 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
   // me === null: đang redirect (useEffect) — không nháy nội dung HR.
   if (!me) return null;
 
+  // PWA-1 (PRD §14): ở chế độ đã cài chỉ còn Ứng viên + Hàng đợi review. Bảng điều hành, Tin tuyển
+  // dụng, Kiểm tra CV đều là ❌ ở cột "Điện thoại". Mở cùng địa chỉ bằng TRÌNH DUYỆT vẫn đủ 5 mục.
+  const navItems = isPwa ? NAV.filter((item) => PWA_NAV_HREFS.includes(item.href)) : NAV;
+
   return (
     <div className="flex h-screen overflow-hidden bg-canvas">
       {/* Nền mờ khi mở ngăn kéo (chỉ điện thoại) */}
@@ -221,7 +263,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav className="flex flex-col gap-0.5 p-2">
-          {NAV.map((item) => {
+          {navItems.map((item) => {
             const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
             return (
               <Link
@@ -280,6 +322,10 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Thanh trên — CHỈ điện thoại (dưới lg sidebar ẩn thành ngăn kéo) */}
         <div className="flex flex-none items-center gap-3 border-b-2 border-divider px-4 py-2.5 lg:hidden">
+          {/* PWA-1: hamburger chỉ để mở ngăn kéo — ở chế độ đã cài ngăn kéo không còn dùng để điều
+              hướng nữa (chỉ còn 2 đích, vẽ thẳng vào thanh này ở nhánh isPwa ngay dưới), nên ẩn nút
+              này đi trong standalone; giữ lại thì thành một nút bấm không làm gì. */}
+          {!isPwa && (
           <button
             type="button"
             onClick={() => setNavOpen(true)}
@@ -293,15 +339,68 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
               <path d="M4 18h16" />
             </svg>
           </button>
+          )}
           <Logo size={24} suffix="HR" />
-          {reviewCount > 0 && (
-            <Link
-              href="/review"
-              aria-label={`${reviewCount} hồ sơ chờ duyệt`}
-              className="ml-auto inline-flex h-6 min-w-[24px] items-center justify-center rounded bg-accent px-2 text-xs font-bold text-white"
+          {isPwa ? (
+            <>
+            {/* PWA-1: ở chế độ đã cài, ngăn kéo không mở được nữa (không còn hamburger) nên HAI đích
+                phải nằm thẳng trên thanh này. Không có nhánh này thì hàng đợi rỗng = thanh trên cùng
+                không còn một phần tử bấm được nào, và app tự nhốt người dùng trong màn đang mở. */}
+            <nav aria-label="Điều hướng chính" className="ml-auto flex items-center gap-1.5">
+              {navItems.map((item) => {
+                const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? "page" : undefined}
+                    className={`inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-semibold transition-colors ${
+                      active ? "bg-accent text-white" : "text-ink/70 hover:bg-ink/[0.06]"
+                    }`}
+                  >
+                    {item.shortLabel ?? item.label}
+                    {item.href === "/review" && reviewCount > 0 && (
+                      <span
+                        aria-label={`${reviewCount} hồ sơ chờ duyệt`}
+                        className={`inline-flex h-5 min-w-[20px] items-center justify-center rounded px-1.5 text-xs font-bold ${
+                          active ? "bg-white text-accent" : "bg-accent text-white"
+                        }`}
+                      >
+                        {reviewCount}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </nav>
+            {/* PWA-1: ngăn kéo không mở được ở chế độ đã cài, mà nút Đăng xuất lại nằm trong chân
+                sidebar — thiếu nút này thì app trên điện thoại KHÔNG THỂ đăng xuất, trong khi phiên
+                kéo dài 8 giờ và máy có thể là máy dùng chung. */}
+            <button
+              type="button"
+              onClick={() => logoutMutation.mutate()}
+              disabled={logoutMutation.isPending}
+              title="Đăng xuất"
+              aria-label="Đăng xuất"
+              className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border-2 border-divider text-ink/70 hover:bg-ink/5 hover:text-ink disabled:opacity-50"
             >
-              {reviewCount}
-            </Link>
+              <svg viewBox="0 0 24 24" className="h-[15px] w-[15px]" {...strokeProps}>
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" x2="9" y1="12" y2="12" />
+              </svg>
+            </button>
+            </>
+          ) : (
+            reviewCount > 0 && (
+              <Link
+                href="/review"
+                aria-label={`${reviewCount} hồ sơ chờ duyệt`}
+                className="ml-auto inline-flex h-6 min-w-[24px] items-center justify-center rounded bg-accent px-2 text-xs font-bold text-white"
+              >
+                {reviewCount}
+              </Link>
+            )
           )}
         </div>
 

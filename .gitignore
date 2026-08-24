@@ -57,3 +57,6 @@ apps/backend/data/uploads/
 .cache/
 tmp/
 .playwright-mcp/
+
+# Superpowers SDD scratch (ledger, briefs, review packages) — không commit
+.superpowers/
