@@ -25,6 +25,7 @@ import {
 } from "@/lib/applications";
 // Cùng hàm với trang chọn giờ của ứng viên: HR và ứng viên phải đọc ra CÙNG một mốc (lib/datetime).
 import { formatVnDateTime } from "@/lib/datetime";
+import { usePwaMode } from "@/lib/pwa";
 
 function initialsOf(email: string): string {
   const name = email.split("@")[0] ?? "";
@@ -78,6 +79,14 @@ export default function ApplicationDetailPage() {
     Boolean(app?.has_booking_link) &&
     (app?.status === "PENDING_REVIEW" || app?.status === "AWAITING_BOOKING");
 
+  // PWA-1 (PRD §14): trên bản đã cài, màn chi tiết là CHỈ ĐỌC. Ba hành động ở đây — tải CV gốc, huỷ
+  // lịch, gửi lại link — đều rời khỏi app hoặc GỬI EMAIL THẬT cho ứng viên, và không hành động nào
+  // nằm trong cột "Điện thoại" của §14. Mọi quyết định dồn về /review.
+  //
+  // Đây là lựa chọn HIỂN THỊ, KHÔNG phải siết backend: endpoint vẫn mở, và mở cùng địa chỉ này bằng
+  // trình duyệt trên chính máy đó vẫn thấy đủ nút. Đừng "làm chắc" nó thành thay đổi backend.
+  const readOnly = usePwaMode() === true;
+
   return (
     <div className="mx-auto max-w-[1120px] px-4 pb-8 pt-5 sm:px-8">
       <Link href="/applications" className={btn("ghost", "mb-3 !pl-0")}>
@@ -119,7 +128,7 @@ export default function ApplicationDetailPage() {
             </div>
 
             {/* Tải CV gốc (slice 06): stream qua backend có kiểm đăng nhập — KHÔNG public URL. */}
-            {app.has_cv && (
+            {app.has_cv && !readOnly && (
               <div className="flex flex-none flex-col items-end gap-1">
                 <button
                   type="button"
@@ -271,7 +280,7 @@ export default function ApplicationDetailPage() {
 
               {/* Huỷ lịch (SCH-3). Hai bước: huỷ một buổi phỏng vấn đã hẹn là hành động ứng viên
                   sẽ nhận email ngay, không được để lỡ tay bấm trúng. */}
-              {app.status === "INTERVIEW_SCHEDULED" &&
+              {app.status === "INTERVIEW_SCHEDULED" && !readOnly &&
                 (confirmingCancel ? (
                   <div className="mt-3">
                     <p className="text-[13px] text-emerald-900">
@@ -327,7 +336,7 @@ export default function ApplicationDetailPage() {
 
           {/* Gửi lại link đặt lịch — nửa còn lại của "đổi lịch", và cũng là đường cứu khi thư mời
               đầu rơi vào thư rác hoặc liên kết đã hết hạn. */}
-          {canResend && (
+          {canResend && !readOnly && (
             <div className="mt-4 rounded-xl border-2 border-divider bg-surface px-4 py-3">
               <p className="font-heading text-[13px] font-bold">Gửi lại link đặt lịch</p>
               <p className="mt-1 text-[13px] text-ink/70">
@@ -345,7 +354,7 @@ export default function ApplicationDetailPage() {
             </div>
           )}
 
-          {scheduleError && (
+          {scheduleError && !readOnly && (
             <p
               role="alert"
               className="mt-3 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700"
