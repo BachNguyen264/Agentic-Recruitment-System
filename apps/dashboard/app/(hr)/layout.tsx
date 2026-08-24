@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ApplicationListItem } from "@ars/shared-types";
 import { Logo } from "@/components/Logo";
 import { getApplications, getMe, logout } from "@/lib/api";
-import { PWA_NAV_HREFS, usePwaMode } from "@/lib/pwa";
+import { isHiddenOnPwa, PWA_NAV_HREFS, usePwaMode } from "@/lib/pwa";
 
 // Guard khu vực HR (slice 09, PRD §4): mọi trang trong nhóm (hr) — /, /applications, /review, /jobs,
 // /cv-check — yêu cầu ĐĂNG NHẬP. Kiểm qua GET /api/auth/me (KHÔNG middleware: cookie httpOnly ở domain
@@ -139,6 +139,14 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
     }
   }, [isLoading, me, pathname, router]);
 
+  // PWA-1: màn bị ẩn mà vẫn vào được bằng URL thì coi như chưa ẩn. `?pwa_hidden=1` để trang đích
+  // giải thích vì sao người dùng bị đưa đi chỗ khác — chuyển hướng câm lặng đọc như lỗi.
+  useEffect(() => {
+    if (isPwa && isHiddenOnPwa(pathname)) {
+      router.replace("/review?pwa_hidden=1");
+    }
+  }, [isPwa, pathname, router]);
+
   const logoutMutation = useMutation({
     mutationFn: logout,
     onSuccess: async () => {
@@ -155,6 +163,11 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
   // bị *paused* ⇒ `isLoading` false ngay từ đầu ⇒ cổng đó KHÔNG còn giữ. Phải có cổng riêng.
   if (isPwa === undefined) {
     return <div className="p-8 text-sm text-ink/65">Đang tải…</div>;
+  }
+
+  // Đang chuyển hướng (effect ở trên) — không vẽ nội dung màn bị ẩn dù chỉ một khung hình.
+  if (isPwa && isHiddenOnPwa(pathname)) {
+    return <div className="p-8 text-sm text-ink/65">Đang chuyển về hàng đợi…</div>;
   }
 
   if (isLoading) {
