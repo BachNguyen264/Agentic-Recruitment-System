@@ -386,6 +386,10 @@ phải sửa nghiệp vụ.
 - FR-PIPE-2: thứ tự cố định `parser → ranker → screener → scheduler` + human_review có điều kiện.
 - FR-PIPE-3: mỗi agent ghi confidence + uncertainty_flags vào state; routing dựa trên đó (§9, §10).
 - FR-PIPE-4: mọi bước agent ghi `audit_log`.
+- **FR-PWA-1 (PWA rút gọn + offline):** khi chạy ở chế độ đã cài, PWA chỉ hiển thị Đăng nhập, Ứng
+  viên (danh sách + chi tiết rút gọn, CHỈ ĐỌC) và Hàng đợi review; các màn còn lại theo cột "Điện
+  thoại" của §14 bị ẩn khỏi điều hướng VÀ chặn ở đường dẫn (đưa về hàng đợi kèm giải thích). Mất kết
+  nối thì hiện trang "Mất kết nối" có thương hiệu, KHÔNG hiện dữ liệu nghiệp vụ đã cache (NFR-4).
 
 ### 12.4 Thông báo
 
@@ -460,9 +464,13 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 | Dashboard giám sát agent (live trace) | ✅     | ❌                   | —             |
 | Bật/tắt gate                          | ✅     | ❌                   | —             |
 | Thống kê / vòng học                   | ✅     | ❌                   | —             |
+| Kiểm tra CV                           | ✅     | ❌                   | —             |
+| Huỷ / gửi lại link đặt lịch           | ✅     | ❌                   | —             |
 
-> Chỉ một app web (Next.js), responsive; cột "Điện thoại" là ưu tiên hiển thị trên màn hình nhỏ,
-> không phải app riêng.
+> Chỉ một app web (Next.js), responsive — KHÔNG có codebase mobile riêng (§6). Cột "Điện thoại" áp
+> dụng khi app chạy ở **chế độ đã cài (standalone)**: mở cùng địa chỉ bằng trình duyệt trên điện
+> thoại vẫn thấy ĐỦ mọi màn. Chọn standalone thay vì theo bề rộng màn hình để một cửa sổ desktop bị
+> thu nhỏ không bị cắt mất chức năng.
 
 ---
 
@@ -472,7 +480,9 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 - NFR-2 (bền vững): state pipeline lưu bền (Postgres checkpointer) để chịu suspend/resume dài ngày + khởi động lại.
 - NFR-3 (kiểm toán): mọi hành động agent và quyết định HR ghi `audit_log` đầy đủ, truy vết được.
 - NFR-4 (an toàn dữ liệu): CV chứa dữ liệu cá nhân; demo dùng dữ liệu tổng hợp/ẩn danh; có phương án chạy
-  local (không đẩy dữ liệu ra cloud nước ngoài) khi cần.
+  local (không đẩy dữ liệu ra cloud nước ngoài) khi cần. PWA **không lưu dữ liệu nghiệp vụ xuống đĩa thiết bị**: service worker chỉ cache tài nguyên tĩnh
+  có content-hash và trang "Mất kết nối"; tuyệt đối không cache phản hồi API, không cache trang mang
+  token (`/screening/{token}`, `/booking/{token}`).
 - NFR-5 (chống lạm dụng): chống prompt injection từ nội dung CV / câu trả lời ứng viên (phase sau).
 - NFR-6 (observability): giám sát chi phí token, độ trễ, tỉ lệ lỗi (Langfuse — phase sau).
 - NFR-7 (chi phí): ưu tiên dịch vụ managed free-tier; lường trần free-tier khi test tải.
