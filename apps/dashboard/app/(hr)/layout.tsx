@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ApplicationListItem } from "@ars/shared-types";
 import { Logo } from "@/components/Logo";
 import { getApplications, getMe, logout } from "@/lib/api";
+import { usePwaMode } from "@/lib/pwa";
 
 // Guard khu vực HR (slice 09, PRD §4): mọi trang trong nhóm (hr) — /, /applications, /review, /jobs,
 // /cv-check — yêu cầu ĐĂNG NHẬP. Kiểm qua GET /api/auth/me (KHÔNG middleware: cookie httpOnly ở domain
@@ -102,6 +103,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const qc = useQueryClient();
+  const isPwa = usePwaMode();
 
   const { data: me, isLoading, isError, refetch, fetchStatus } = useQuery({
     queryKey: ["me"],
@@ -144,6 +146,16 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
       router.replace("/login");
     },
   });
+
+  // PWA-1: chưa biết đang standalone hay không thì CHƯA vẽ gì. Không có cổng này, lần render đầu
+  // vẽ đủ 5 mục điều hướng rồi effect mới rút còn 2 — người dùng thấy menu nháy.
+  //
+  // Trước BUG-1, cổng `isLoading` bên dưới vô tình che được việc này (query `me` luôn "fetching" ở
+  // render đầu). BUG-1 seed `onlineManager` từ `navigator.onLine`, nên mở app lúc offline làm query
+  // bị *paused* ⇒ `isLoading` false ngay từ đầu ⇒ cổng đó KHÔNG còn giữ. Phải có cổng riêng.
+  if (isPwa === undefined) {
+    return <div className="p-8 text-sm text-ink/65">Đang tải…</div>;
+  }
 
   if (isLoading) {
     return <div className="p-8 text-sm text-ink/65">Đang kiểm tra phiên đăng nhập…</div>;
