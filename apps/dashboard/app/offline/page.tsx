@@ -23,8 +23,12 @@ export default function OfflinePage() {
         máy nên trang này chưa hiển thị được nội dung nào — hãy kiểm tra kết nối rồi thử lại.
       </p>
       <p className="mt-6">
+        {/* href="" trỏ về CHÍNH URL hiện tại: service worker trả trang này TẠI địa chỉ người dùng
+            vừa yêu cầu, nên "Thử lại" = gọi lại đúng trang đó. Cố định "/review" thì HR thì đúng
+            nhưng ứng viên mất sóng ở /apply hay /booking/{token} sẽ bị ném vào khu vực HR rồi đá ra
+            /login — mà trang này phục vụ CẢ HAI (PWARegister đăng ký SW ở scope "/"). */}
         <a
-          href="/review"
+          href=""
           className="inline-flex min-h-11 items-center justify-center rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-white hover:bg-accent-600"
         >
           Thử lại
