@@ -21,8 +21,17 @@ function initialsOf(email: string): string {
   return ((parts.length >= 2 ? parts[0][0] + parts[1][0] : name.slice(0, 2)) || "??").toUpperCase();
 }
 
-// Dùng chung cho bảng (desktop) và thẻ (điện thoại) — hai bản chép tay song song chính là cách cờ
-// email thứ tư được thêm vào một bên rồi im lặng vắng mặt ở bên kia.
+// Ô trạng thái — dùng chung cho bảng (desktop) và thẻ (điện thoại). Hai bản chép tay song song
+// chính là cách một cờ email thứ tư được thêm vào một bên rồi im lặng vắng mặt ở bên kia.
+//
+// EMAIL-1: ba cờ email KHÁC cờ "cần chú ý" ở chỗ chúng hiện với MỌI trạng thái. Ca đáng lo nhất
+// chính là ca đã quyết xong: "Đã từ chối" / "Đã hẹn phỏng vấn" mà thư không tới nơi thì dòng trạng
+// thái đó đang nói dối, và nếu giấu nhãn đi vì hồ sơ "đã xong" thì không ai phát hiện ra nữa.
+// Bounce và complaint là HAI nhãn riêng vì đòi hai cách xử TRÁI NGƯỢC: bounce ⇒ tìm địa chỉ đúng
+// rồi liên hệ lại; complaint ⇒ NGỪNG gửi cho người này. Complaint hiện TRƯỚC vì hành động cấp bách
+// hơn (đồng bộ thứ tự với trang chi tiết + ReviewCard).
+//
+// Cờ "cần chú ý" thì ngược lại — nó là chỉ báo HÀNH ĐỘNG cho HR nên CHỈ hiện khi còn chờ quyết.
 function StatusCell({ a }: { a: ApplicationListItem }) {
   const otherFlags = a.uncertainty_flags.filter((f) => !isEmailFlag(f));
   return (
@@ -110,87 +119,87 @@ export default function ApplicationsPage() {
 
         {filtered.length > 0 && (
           <>
-          <div className="hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[640px] border-collapse text-sm">
-              <thead>
-                <tr>
-                  {["Ứng viên", "Vị trí", "Điểm", "Trạng thái"].map((h, i) => (
-                    <th
-                      key={h}
-                      className={`border-b-2 border-divider px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink/65 ${
-                        i === 2 ? "text-right" : "text-left"
-                      }`}
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((a) => (
-                  <tr key={a.id} className="border-b border-divider last:border-b-0 hover:bg-ink/[0.04]">
-                    <td className="px-3 py-2">
-                      <Link href={`/applications/${a.id}`} className="flex items-center gap-2.5">
-                        <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-lg bg-steel-200 font-heading text-[13px] font-bold">
-                          {initialsOf(a.applicant_email)}
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block truncate font-semibold">
-                            {a.applicant_email.split("@")[0]}
-                          </span>
-                          <span className="block truncate text-xs text-ink/65">
-                            {a.applicant_email}
-                          </span>
-                        </span>
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2 text-ink/75">
-                      {a.job_id ? (jobTitle.get(a.job_id) ?? `JD #${a.job_id}`) : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-right font-heading text-base font-bold">
-                      {a.score != null ? a.score : "—"}
-                    </td>
-                    <td className="px-3 py-2">
-                      <StatusCell a={a} />
-                    </td>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full min-w-[640px] border-collapse text-sm">
+                <thead>
+                  <tr>
+                    {["Ứng viên", "Vị trí", "Điểm", "Trạng thái"].map((h, i) => (
+                      <th
+                        key={h}
+                        className={`border-b-2 border-divider px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink/65 ${
+                          i === 2 ? "text-right" : "text-left"
+                        }`}
+                      >
+                        {h}
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {filtered.map((a) => (
+                    <tr key={a.id} className="border-b border-divider last:border-b-0 hover:bg-ink/[0.04]">
+                      <td className="px-3 py-2">
+                        <Link href={`/applications/${a.id}`} className="flex items-center gap-2.5">
+                          <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-lg bg-steel-200 font-heading text-[13px] font-bold">
+                            {initialsOf(a.applicant_email)}
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block truncate font-semibold">
+                              {a.applicant_email.split("@")[0]}
+                            </span>
+                            <span className="block truncate text-xs text-ink/65">
+                              {a.applicant_email}
+                            </span>
+                          </span>
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2 text-ink/75">
+                        {a.job_id ? (jobTitle.get(a.job_id) ?? `JD #${a.job_id}`) : "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right font-heading text-base font-bold">
+                        {a.score != null ? a.score : "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        <StatusCell a={a} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
-          {/* Điện thoại: bảng min-w-[640px] buộc cuộn ngang và đẩy cột Trạng thái ra ngoài tầm nhìn.
-              Thẻ xếp dọc cho cả bốn thông tin cùng lúc. CẢ THẺ là link (bảng chỉ ô đầu là link, mà
-              cả hàng lại đổi màu khi rê chuột — hứa một vùng bấm không tồn tại). */}
-          <ul className="divide-y divide-divider md:hidden">
-            {filtered.map((a) => (
-              <li key={a.id}>
-                <Link
-                  href={`/applications/${a.id}`}
-                  className="flex flex-col gap-2 px-4 py-3 hover:bg-ink/[0.04]"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-lg bg-steel-200 font-heading text-[13px] font-bold">
-                      {initialsOf(a.applicant_email)}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold">
-                        {a.applicant_email.split("@")[0]}
+            {/* Điện thoại: bảng min-w-[640px] buộc cuộn ngang và đẩy cột Trạng thái ra ngoài tầm nhìn.
+                Thẻ xếp dọc cho cả bốn thông tin cùng lúc. CẢ THẺ là link (bảng chỉ ô đầu là link, mà
+                cả hàng lại đổi màu khi rê chuột — hứa một vùng bấm không tồn tại). */}
+            <ul className="divide-y divide-divider md:hidden">
+              {filtered.map((a) => (
+                <li key={a.id}>
+                  <Link
+                    href={`/applications/${a.id}`}
+                    className="flex flex-col gap-2 px-4 py-3 hover:bg-ink/[0.04]"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-[34px] w-[34px] flex-none items-center justify-center rounded-lg bg-steel-200 font-heading text-[13px] font-bold">
+                        {initialsOf(a.applicant_email)}
                       </span>
-                      <span className="block truncate text-xs text-ink/65">{a.applicant_email}</span>
-                    </span>
-                    <span className="flex-none font-heading text-base font-bold">
-                      {a.score != null ? a.score : "—"}
-                    </span>
-                  </div>
-                  <p className="text-[13px] text-ink/75">
-                    {a.job_id ? (jobTitle.get(a.job_id) ?? `JD #${a.job_id}`) : "—"}
-                  </p>
-                  <StatusCell a={a} />
-                </Link>
-              </li>
-            ))}
-          </ul>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-semibold">
+                          {a.applicant_email.split("@")[0]}
+                        </span>
+                        <span className="block truncate text-xs text-ink/65">{a.applicant_email}</span>
+                      </span>
+                      <span className="flex-none font-heading text-base font-bold">
+                        {a.score != null ? a.score : "—"}
+                      </span>
+                    </div>
+                    <p className="text-[13px] text-ink/75">
+                      {a.job_id ? (jobTitle.get(a.job_id) ?? `JD #${a.job_id}`) : "—"}
+                    </p>
+                    <StatusCell a={a} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
           </>
         )}
       </div>
