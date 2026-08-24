@@ -480,9 +480,11 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 - NFR-2 (bền vững): state pipeline lưu bền (Postgres checkpointer) để chịu suspend/resume dài ngày + khởi động lại.
 - NFR-3 (kiểm toán): mọi hành động agent và quyết định HR ghi `audit_log` đầy đủ, truy vết được.
 - NFR-4 (an toàn dữ liệu): CV chứa dữ liệu cá nhân; demo dùng dữ liệu tổng hợp/ẩn danh; có phương án chạy
-  local (không đẩy dữ liệu ra cloud nước ngoài) khi cần. PWA **không lưu dữ liệu nghiệp vụ xuống đĩa thiết bị**: service worker chỉ cache tài nguyên tĩnh
-  có content-hash và trang "Mất kết nối"; tuyệt đối không cache phản hồi API, không cache trang mang
-  token (`/screening/{token}`, `/booking/{token}`).
+  local (không đẩy dữ liệu ra cloud nước ngoài) khi cần. **Ở tầng service worker / CacheStorage**, PWA
+  không lưu dữ liệu nghiệp vụ xuống đĩa thiết bị: service worker chỉ cache tài nguyên tĩnh có
+  content-hash và trang "Mất kết nối"; tuyệt đối không cache phản hồi API, không cache trang mang token
+  (`/screening/{token}`, `/booking/{token}`). Bảo vệ ở tầng HTTP cache của trình duyệt cho `/api/*`
+  (`Cache-Control: no-store`) CHƯA có — còn để ngỏ.
 - NFR-5 (chống lạm dụng): chống prompt injection từ nội dung CV / câu trả lời ứng viên (phase sau).
 - NFR-6 (observability): giám sát chi phí token, độ trễ, tỉ lệ lỗi (Langfuse — phase sau).
 - NFR-7 (chi phí): ưu tiên dịch vụ managed free-tier; lường trần free-tier khi test tải.

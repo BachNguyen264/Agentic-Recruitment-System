@@ -2,15 +2,18 @@
 
 import { useEffect, useState } from "react";
 
-// Hai đích DUY NHẤT còn lại trên PWA (PRD §14 cột "Điện thoại"). Đây là nguồn sự thật cho CẢ điều
-// hướng lẫn guard đường dẫn — hai danh sách viết tay song song chính là cách một màn được gỡ khỏi
-// menu nhưng vẫn vào được bằng URL.
+// Hai đích DUY NHẤT còn lại trên PWA (PRD §14 cột "Điện thoại"). Đây là nguồn sự thật DUY NHẤT — guard
+// bên dưới SUY RA trực tiếp từ danh sách này, không phải một danh sách viết tay song song. Trước đây
+// `isHiddenOnPwa` tự liệt kê `/jobs`/`/cv-check`, nghĩa là route (hr) tiếp theo ai đó thêm vào sẽ bị
+// gỡ khỏi menu (không nằm trong mảng này) nhưng vẫn vào được bằng URL (không nằm trong deny-list) —
+// đúng lỗ hổng mà một-nguồn-sự-thật phải chặn. Suy từ allow-list này ra guard thì route mới mặc định
+// BỊ ẨN cho tới khi chủ động thêm vào đây (an toàn theo hướng đóng), thay vì mặc định HIỆN.
 export const PWA_NAV_HREFS: readonly string[] = ["/applications", "/review"];
 
-// `/` phải khớp CHÍNH XÁC — nó là tiền tố của mọi đường dẫn khác.
+// Hiện = khớp CHÍNH XÁC một href trong PWA_NAV_HREFS, hoặc là route con của nó (`/applications/42`).
+// Mọi pathname khác — kể cả `/`, tiền tố của mọi đường dẫn — đều bị ẩn vì không khớp phần tử nào.
 export function isHiddenOnPwa(pathname: string): boolean {
-  if (pathname === "/") return true; // bảng điều hành
-  return pathname.startsWith("/jobs") || pathname.startsWith("/cv-check");
+  return !PWA_NAV_HREFS.some((href) => pathname === href || pathname.startsWith(`${href}/`));
 }
 
 // Hỏi CẢ BA display-mode chứ không riêng `standalone`: Android đôi khi cài ra `minimal-ui`, và

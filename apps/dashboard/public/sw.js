@@ -30,10 +30,14 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
+  // `.catch` trước `clients.claim()` — KHÔNG như install (nơi `.catch` chặn brick), ở đây mục đích là
+  // không để dọn cache CŨ thất bại (caches.keys()/caches.delete() reject) kéo theo claim() không chạy.
+  // Thiếu nó thì worker mới không giành quyền kiểm soát client đang mở cho tới lần điều hướng kế tiếp.
   event.waitUntil(
     caches
       .keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .catch(() => {})
       .then(() => self.clients.claim())
   );
 });

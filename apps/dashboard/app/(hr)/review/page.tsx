@@ -118,7 +118,10 @@ function ReviewQueue() {
       />
 
       {hiddenNotice && (
-        <p className="mb-4 rounded-lg border-2 border-divider bg-ink/[0.03] px-4 py-2.5 text-sm text-ink/70">
+        <p
+          role="status"
+          className="mb-4 rounded-lg border-2 border-divider bg-ink/[0.03] px-4 py-2.5 text-sm text-ink/70"
+        >
           Màn bạn vừa mở chỉ có trên bản máy tính. Đã đưa bạn về hàng đợi duyệt.
         </p>
       )}

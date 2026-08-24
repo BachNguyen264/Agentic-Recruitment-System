@@ -188,8 +188,9 @@ nút ghost 26px · hover hứa sai). Hai bẫy → `docs/AI_GUIDE.md` (2 gotcha 
 (`display-mode: standalone`), KHÔNG theo breakpoint — nav HR 5 mục còn 2 (`/applications`, `/review`);
 ba route ẩn (`/`, `/jobs`, `/cv-check`) redirect sang `/review?pwa_hidden=1` khi chạy standalone. Màn
 ứng viên (`/apply`, `/screening`, `/booking`) trên bản cài chỉ ĐỌC — không đổi hành vi nghiệp vụ. Thêm
-`app/offline/page.tsx` (route tĩnh) + service worker **v3** (`ars-static-v3`) precache CHỈ `/offline` +
-tài nguyên tĩnh đã hash, KHÔNG BAO GIỜ cache `/api/*` hay URL mang token (NFR-4). Web push (NOTI-1)
+`app/offline/page.tsx` (route tĩnh) + service worker **v3** (`ars-static-v3`) precache CHỈ `/offline`;
+tài nguyên tĩnh đã hash cache-first ở LẦN FETCH ĐẦU (không precache), KHÔNG BAO GIỜ cache `/api/*` hay
+URL mang token (NFR-4). Web push (NOTI-1)
 KHÔNG thuộc slice này. Ba bẫy → `docs/AI_GUIDE.md` (3 gotcha cuối).
 
 **NOT yet done:** analytics; observability; anti-prompt-injection; `email.suppressed` (xem AI_GUIDE);

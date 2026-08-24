@@ -18,7 +18,15 @@ import { isHiddenOnPwa, PWA_NAV_HREFS, usePwaMode } from "@/lib/pwa";
 // UI redesign: guard giữ NGUYÊN logic; phần hiển thị đổi sang shell sidebar cố định (236px) theo
 // bản thiết kế — điều hướng luôn thấy, không còn link "← Về dashboard" rải rác từng trang.
 
-type NavItem = { href: string; label: string; icon: React.ReactNode; exact?: boolean };
+type NavItem = {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+  exact?: boolean;
+  // Nhãn ngắn hơn cho thanh trên cùng (điện thoại, chế độ đã cài): ở 360px hai nhãn đầy đủ tràn xuống
+  // hàng thứ hai. Sidebar (desktop) LUÔN dùng `label` đầy đủ — chỉ thanh trên cùng đọc trường này.
+  shortLabel?: string;
+};
 
 const ICON = "h-[17px] w-[17px]";
 const strokeProps = {
@@ -59,6 +67,7 @@ const NAV: NavItem[] = [
   {
     href: "/review",
     label: "Hàng đợi review",
+    shortLabel: "Hàng đợi",
     icon: (
       <svg viewBox="0 0 24 24" className={ICON} {...strokeProps}>
         <path d="M11 12H3" />
@@ -141,9 +150,13 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
 
   // PWA-1: màn bị ẩn mà vẫn vào được bằng URL thì coi như chưa ẩn. `?pwa_hidden=1` để trang đích
   // giải thích vì sao người dùng bị đưa đi chỗ khác — chuyển hướng câm lặng đọc như lỗi.
+  //
+  // NGOẠI LỆ `/`: đó là `start_url` trong app/manifest.ts, nên mở app từ màn hình chính LUÔN khởi đầu
+  // ở `/` — đây là một lượt MỞ APP bình thường, không phải một deep-link vào màn máy tính bị chặn.
+  // Gắn `pwa_hidden=1` cho trường hợp này sẽ hiện banner "màn bạn vừa mở..." dù người dùng chưa mở gì.
   useEffect(() => {
     if (isPwa && isHiddenOnPwa(pathname)) {
-      router.replace("/review?pwa_hidden=1");
+      router.replace(pathname === "/" ? "/review" : "/review?pwa_hidden=1");
     }
   }, [isPwa, pathname, router]);
 
@@ -162,7 +175,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
   // render đầu). BUG-1 seed `onlineManager` từ `navigator.onLine`, nên mở app lúc offline làm query
   // bị *paused* ⇒ `isLoading` false ngay từ đầu ⇒ cổng đó KHÔNG còn giữ. Phải có cổng riêng.
   if (isPwa === undefined) {
-    return <div className="p-8 text-sm text-ink/65">Đang tải…</div>;
+    return <div className="p-8 text-sm text-ink/65">Đang kiểm tra phiên đăng nhập…</div>;
   }
 
   // Đang chuyển hướng (effect ở trên) — không vẽ nội dung màn bị ẩn dù chỉ một khung hình.
@@ -309,9 +322,9 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Thanh trên — CHỈ điện thoại (dưới lg sidebar ẩn thành ngăn kéo) */}
         <div className="flex flex-none items-center gap-3 border-b-2 border-divider px-4 py-2.5 lg:hidden">
-          {/* PWA-1: ở chế độ đã cài, ngăn kéo không mở được nữa (không còn hamburger) nên HAI đích
-              được vẽ thẳng vào thanh này (nhánh isPwa bên dưới). Giữ hamburger lại thì thành hai
-              lớp điều hướng cho hai màn. */}
+          {/* PWA-1: hamburger chỉ để mở ngăn kéo — ở chế độ đã cài ngăn kéo không còn dùng để điều
+              hướng nữa (chỉ còn 2 đích, vẽ thẳng vào thanh này ở nhánh isPwa ngay dưới), nên ẩn nút
+              này đi trong standalone; giữ lại thì thành một nút bấm không làm gì. */}
           {!isPwa && (
           <button
             type="button"
@@ -345,7 +358,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
                       active ? "bg-accent text-white" : "text-ink/70 hover:bg-ink/[0.06]"
                     }`}
                   >
-                    {item.label}
+                    {item.shortLabel ?? item.label}
                     {item.href === "/review" && reviewCount > 0 && (
                       <span
                         aria-label={`${reviewCount} hồ sơ chờ duyệt`}
