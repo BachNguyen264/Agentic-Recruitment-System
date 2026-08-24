@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ApplicationListItem } from "@ars/shared-types";
 import { Logo } from "@/components/Logo";
 import { getApplications, getMe, logout } from "@/lib/api";
-import { usePwaMode } from "@/lib/pwa";
+import { PWA_NAV_HREFS, usePwaMode } from "@/lib/pwa";
 
 // Guard khu vực HR (slice 09, PRD §4): mọi trang trong nhóm (hr) — /, /applications, /review, /jobs,
 // /cv-check — yêu cầu ĐĂNG NHẬP. Kiểm qua GET /api/auth/me (KHÔNG middleware: cookie httpOnly ở domain
@@ -207,6 +207,10 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
   // me === null: đang redirect (useEffect) — không nháy nội dung HR.
   if (!me) return null;
 
+  // PWA-1 (PRD §14): ở chế độ đã cài chỉ còn Ứng viên + Hàng đợi review. Bảng điều hành, Tin tuyển
+  // dụng, Kiểm tra CV đều là ❌ ở cột "Điện thoại". Mở cùng địa chỉ bằng TRÌNH DUYỆT vẫn đủ 5 mục.
+  const navItems = isPwa ? NAV.filter((item) => PWA_NAV_HREFS.includes(item.href)) : NAV;
+
   return (
     <div className="flex h-screen overflow-hidden bg-canvas">
       {/* Nền mờ khi mở ngăn kéo (chỉ điện thoại) */}
@@ -233,7 +237,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav className="flex flex-col gap-0.5 p-2">
-          {NAV.map((item) => {
+          {navItems.map((item) => {
             const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
             return (
               <Link
@@ -292,6 +296,9 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Thanh trên — CHỈ điện thoại (dưới lg sidebar ẩn thành ngăn kéo) */}
         <div className="flex flex-none items-center gap-3 border-b-2 border-divider px-4 py-2.5 lg:hidden">
+          {/* PWA-1: ở chế độ đã cài chỉ còn 2 đích, mà thanh trên cùng đã có link "/review" kèm số
+              đếm — ngăn kéo không còn gì để mở. Giữ lại thì thành hai lớp điều hướng cho hai màn. */}
+          {!isPwa && (
           <button
             type="button"
             onClick={() => setNavOpen(true)}
@@ -305,6 +312,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
               <path d="M4 18h16" />
             </svg>
           </button>
+          )}
           <Logo size={24} suffix="HR" />
           {reviewCount > 0 && (
             <Link
