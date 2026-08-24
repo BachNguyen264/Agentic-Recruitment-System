@@ -227,6 +227,20 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 
 ---
 
+## ⚪ PWA — HR dashboard rút gọn + offline
+
+> **Ngoại lệ Phase-7 ("UI polish is end-phase"):** PWA-1 kéo giao diện lên sớm vì phần UI của nó là
+> **hành vi tính năng, không phải trang trí** — lọc điều hướng, guard route, danh sách responsive.
+> Sau khi cắt 6 hạng mục theo spec (§10), phần còn lại **không chứa thiết kế nguyên tử nào mới**.
+
+- **PWA-1 — HR dashboard rút gọn + offline trang "Mất kết nối" — ⏳ TO-DO** (PRD §14, FR-PWA-1, NFR-4):
+  khi chạy ở chế độ đã cài (`standalone`), PWA hiển thị **CHỈ ba màn:** Đăng nhập / Ứng viên
+  (chi tiết rút gọn, chỉ đọc) / Hàng đợi review. Các màn còn lại (JD management, stat, live trace,
+  gate toggle) **ẩn khỏi sidebar VÀ chặn ở đường dẫn** (redirect + lời giải thích). Offline: service
+  worker cache tài nguyên tĩnh (không cache API/token-pages); trang offline có thương hiệu.
+
+---
+
 ## 🧹 Dọn nhỏ còn treo
 
 - **Đổi mật khẩu admin prod** (`admin@ars.prod` đã lộ trong chat) — script băm mật khẩu mới cho hr_user.
@@ -309,20 +323,6 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   /apply; adversarial review 13 agent → 7 lỗi thật đã vá) + **CVT-1b** (ba nút ba việc: Xem trước `.pdf`
   trong tab · Tải `.docx` · Sửa trên Google Docs — 9 link đã dán) — PRD §8.2b, FR-AP-6/7
 - [ ] **PWA-1 — HR dashboard rút gọn + offline** (PRD §14, FR-PWA-1, NFR-4)
-
----
-
-## ⚪ PHASE 6+ — PWA rút gọn + offline (PWA-1)
-
-> **Ngoại lệ Phase-7 ("UI polish is end-phase"):** PWA-1 kéo giao diện lên sớm vì phần UI của nó là
-> **hành vi tính năng, không phải trang trí** — lọc điều hướng, guard route, danh sách responsive.
-> Sau khi cắt 6 hạng mục theo spec (§10), phần còn lại **không chứa thiết kế nguyên tử nào mới**.
-
-- [ ] **PWA-1 — HR dashboard rút gọn + offline trang "Mất kết nối"** (PRD §14, FR-PWA-1, NFR-4):
-  khi chạy ở chế độ đã cài (`standalone`), PWA hiển thị **CHỈ ba màn:** Đăng nhập / Ứng viên (chi tiết rút gọn, chỉ đọc) / Hàng đợi review; các màn còn lại (JD management, stat, live trace, gate toggle) **ẩn khỏi sidebar VÀ chặn ở đường dẫn** (redirect + lời giải thích); offline → service worker cache tài nguyên tĩnh (không cache API/token-pages); trang offline có thương hiệu.
-
----
-
 - [ ] Dọn: **đổi mật khẩu admin prod**
 - [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)
