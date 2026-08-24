@@ -329,9 +329,10 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
           )}
           <Logo size={24} suffix="HR" />
           {isPwa ? (
-            // PWA-1: ở chế độ đã cài, ngăn kéo không mở được nữa (không còn hamburger) nên HAI đích
-            // phải nằm thẳng trên thanh này. Không có nhánh này thì hàng đợi rỗng = thanh trên cùng
-            // không còn một phần tử bấm được nào, và app tự nhốt người dùng trong màn đang mở.
+            <>
+            {/* PWA-1: ở chế độ đã cài, ngăn kéo không mở được nữa (không còn hamburger) nên HAI đích
+                phải nằm thẳng trên thanh này. Không có nhánh này thì hàng đợi rỗng = thanh trên cùng
+                không còn một phần tử bấm được nào, và app tự nhốt người dùng trong màn đang mở. */}
             <nav aria-label="Điều hướng chính" className="ml-auto flex items-center gap-1.5">
               {navItems.map((item) => {
                 const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
@@ -359,6 +360,24 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
                 );
               })}
             </nav>
+            {/* PWA-1: ngăn kéo không mở được ở chế độ đã cài, mà nút Đăng xuất lại nằm trong chân
+                sidebar — thiếu nút này thì app trên điện thoại KHÔNG THỂ đăng xuất, trong khi phiên
+                kéo dài 8 giờ và máy có thể là máy dùng chung. */}
+            <button
+              type="button"
+              onClick={() => logoutMutation.mutate()}
+              disabled={logoutMutation.isPending}
+              title="Đăng xuất"
+              aria-label="Đăng xuất"
+              className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border-2 border-divider text-ink/70 hover:bg-ink/5 hover:text-ink disabled:opacity-50"
+            >
+              <svg viewBox="0 0 24 24" className="h-[15px] w-[15px]" {...strokeProps}>
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" x2="9" y1="12" y2="12" />
+              </svg>
+            </button>
+            </>
           ) : (
             reviewCount > 0 && (
               <Link
