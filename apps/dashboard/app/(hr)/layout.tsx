@@ -296,8 +296,9 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Thanh trên — CHỈ điện thoại (dưới lg sidebar ẩn thành ngăn kéo) */}
         <div className="flex flex-none items-center gap-3 border-b-2 border-divider px-4 py-2.5 lg:hidden">
-          {/* PWA-1: ở chế độ đã cài chỉ còn 2 đích, mà thanh trên cùng đã có link "/review" kèm số
-              đếm — ngăn kéo không còn gì để mở. Giữ lại thì thành hai lớp điều hướng cho hai màn. */}
+          {/* PWA-1: ở chế độ đã cài, ngăn kéo không mở được nữa (không còn hamburger) nên HAI đích
+              được vẽ thẳng vào thanh này (nhánh isPwa bên dưới). Giữ hamburger lại thì thành hai
+              lớp điều hướng cho hai màn. */}
           {!isPwa && (
           <button
             type="button"
@@ -314,14 +315,47 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
           </button>
           )}
           <Logo size={24} suffix="HR" />
-          {reviewCount > 0 && (
-            <Link
-              href="/review"
-              aria-label={`${reviewCount} hồ sơ chờ duyệt`}
-              className="ml-auto inline-flex h-6 min-w-[24px] items-center justify-center rounded bg-accent px-2 text-xs font-bold text-white"
-            >
-              {reviewCount}
-            </Link>
+          {isPwa ? (
+            // PWA-1: ở chế độ đã cài, ngăn kéo không mở được nữa (không còn hamburger) nên HAI đích
+            // phải nằm thẳng trên thanh này. Không có nhánh này thì hàng đợi rỗng = thanh trên cùng
+            // không còn một phần tử bấm được nào, và app tự nhốt người dùng trong màn đang mở.
+            <nav aria-label="Điều hướng chính" className="ml-auto flex items-center gap-1.5">
+              {navItems.map((item) => {
+                const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? "page" : undefined}
+                    className={`inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-semibold transition-colors ${
+                      active ? "bg-accent text-white" : "text-ink/70 hover:bg-ink/[0.06]"
+                    }`}
+                  >
+                    {item.label}
+                    {item.href === "/review" && reviewCount > 0 && (
+                      <span
+                        aria-label={`${reviewCount} hồ sơ chờ duyệt`}
+                        className={`inline-flex h-5 min-w-[20px] items-center justify-center rounded px-1.5 text-xs font-bold ${
+                          active ? "bg-white text-accent" : "bg-accent text-white"
+                        }`}
+                      >
+                        {reviewCount}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </nav>
+          ) : (
+            reviewCount > 0 && (
+              <Link
+                href="/review"
+                aria-label={`${reviewCount} hồ sơ chờ duyệt`}
+                className="ml-auto inline-flex h-6 min-w-[24px] items-center justify-center rounded bg-accent px-2 text-xs font-bold text-white"
+              >
+                {reviewCount}
+              </Link>
+            )
           )}
         </div>
 
