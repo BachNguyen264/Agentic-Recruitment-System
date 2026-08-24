@@ -452,3 +452,24 @@
   (+4px) nên chính NÓ mới là cái định chiều cao của dòng, `primary` chỉ ăn theo nhờ stretch. Muốn nút
   `ghost` bằng hai nút kia phải bù CẢ HAI: `!py-2` và `border-2 border-transparent`. Đừng tin mắt
   nhìn ở màn rộng — ở đó ba nút cùng một dòng nên stretch che mất lỗi.
+
+- **Node 24 CÓ sẵn `globalThis.navigator` — guard SSR bằng `typeof navigator` là VÔ HIỆU (BUG-1).**
+  Node thêm global `navigator` từ v21, và máy này chạy v24. Nó KHÔNG có `onLine`, nên
+  `navigator.onLine` ra `undefined` chứ không ném lỗi — guard trông như chạy đúng. Vấp thật khi seed
+  `onlineManager.setOnline(navigator.onLine)` trong `app/providers.tsx`: lúc SSR guard không chặn,
+  ta gọi `setOnline(undefined)`, mà `onlineManager` của TanStack là **singleton CẤP MODULE dùng chung
+  cho MỌI request trên server** ⇒ cả tiến trình Next thành "offline" vĩnh viễn ⇒ query bị *paused*
+  khi SSR ⇒ HTML server thiếu nhánh `isLoading` mà client lại có ⇒ **vỡ hydration trên mọi trang, kể
+  cả luồng ứng viên công khai** (`/apply` báo `Expected server HTML to contain a matching <p> in
+  <main>` rồi React bỏ toàn bộ SSR, chuyển sang client-render). Guard đúng là **`typeof window ===
+  "undefined"`**; thêm `typeof navigator.onLine !== "boolean"` cho chắc. Bẫy này `tsc` không thấy,
+  `next build` KHÔNG đỏ, và console chỉ kêu ở lần tải trang đầu — chỉ lộ ra khi mở trình duyệt thật
+  và ĐỌC console ở một trang CÔNG KHAI (đường HR không lộ vì nó vốn phải chờ `getMe`).
+
+- **Sửa hành vi offline của TanStack: `networkMode` phải đặt TẠI mutation, KHÔNG ở `QueryClient` gốc
+  (BUG-1).** `app/providers.tsx` là provider GỐC (`app/layout.tsx` bọc toàn app), nên mọi
+  `defaultOptions` ở đó đổi luôn hành vi của nộp CV / đặt lịch / trả lời sàng lọc của KHÁCH VÃNG LAI.
+  Mặc định `networkMode: "online"` khiến mutation lúc mất mạng bị *paused* chứ không hỏng: `onMutate`
+  vẫn chạy nên nút kẹt "Đang xử lý…" vĩnh viễn (chỉ `onSettled` mới xoá cờ), rồi
+  `resumePausedMutations()` TỰ PHÁT LẠI khi có mạng — phát lại một quyết định HR có thể đã bỏ dở, mà
+  quyết định đó gửi email THẬT cho ứng viên (FR-HR-4) và ghi `audit_log` (FR-HR-5).

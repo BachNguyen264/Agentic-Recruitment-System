@@ -103,7 +103,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const qc = useQueryClient();
 
-  const { data: me, isLoading, isError, refetch } = useQuery({
+  const { data: me, isLoading, isError, refetch, fetchStatus } = useQuery({
     queryKey: ["me"],
     queryFn: getMe,
     retry: false,
@@ -149,7 +149,32 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
     return <div className="p-8 text-sm text-ink/65">Đang kiểm tra phiên đăng nhập…</div>;
   }
 
-  // Lỗi mạng (backend sập) — KHÁC với 401 (đã redirect). Cho thử lại, không kẹt màn trắng.
+  // BUG-1: MẤT MẠNG thì query bị TẠM DỪNG chứ không lỗi (`networkMode: "online"` mặc định):
+  // `isLoading` false, `isError` false, `data` undefined. Không có nhánh này thì rơi thẳng xuống
+  // `if (!me) return null` bên dưới = MÀN HÌNH TRẮNG, không một chữ nào giải thích.
+  // Điều kiện `!me`: đang mất mạng nhưng phiên đã xác thực rồi thì GIỮ NGUYÊN giao diện, không đá
+  // HR ra khỏi app chỉ vì rớt sóng một nhịp.
+  // "máy chủ" chứ không phải "Internet": `navigator.onLine` vẫn true khi dính captive portal hoặc
+  // router mất upstream, nên đừng khẳng định hộ người dùng là họ không có mạng.
+  if (fetchStatus === "paused" && !me) {
+    return (
+      <div className="mx-auto max-w-md space-y-3 p-8 text-center">
+        <p className="text-sm text-ink/65">
+          Mất kết nối máy chủ. Ứng dụng sẽ tự thử lại khi có mạng trở lại.
+        </p>
+        <button
+          type="button"
+          onClick={() => refetch()}
+          className="rounded-lg border-2 border-divider px-4 py-2 text-sm font-semibold hover:bg-ink/5"
+        >
+          Thử lại
+        </button>
+      </div>
+    );
+  }
+
+  // Lỗi mạng (backend sập) — KHÁC với 401 (đã redirect) và KHÁC với mất mạng (nhánh paused ở trên).
+  // Cho thử lại, không kẹt màn trắng.
   if (isError) {
     return (
       <div className="mx-auto max-w-md space-y-3 p-8 text-center">

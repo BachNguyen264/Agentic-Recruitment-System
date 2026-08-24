@@ -12,6 +12,17 @@ import { ReviewCard } from "@/components/ReviewCard";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { getApplication, getApplications, getJobs, submitReview } from "@/lib/api";
 
+// BUG-1: `fetch` ném TypeError khi không dựng nổi kết nối (mất mạng, DNS hỏng, máy chủ không với
+// tới được) — thông điệp gốc là "Failed to fetch", tiếng Anh, không được đổ thẳng vào giao diện
+// toàn tiếng Việt. Nói rõ quyết định CHƯA gửi: đây là chỗ HR cần biết chắc mình phải làm lại.
+function decisionErrorMessage(err: unknown): string {
+  if (err instanceof TypeError) {
+    return "Mất kết nối máy chủ — quyết định CHƯA được gửi. Hãy thử lại khi có mạng.";
+  }
+  const msg = (err as Error)?.message;
+  return msg ? `Lỗi khi gửi quyết định: ${msg}` : "Lỗi khi gửi quyết định.";
+}
+
 export default function ReviewPage() {
   const qc = useQueryClient();
   const [submittingId, setSubmittingId] = useState<number | null>(null);
@@ -44,6 +55,15 @@ export default function ReviewPage() {
   const jobTitle = new Map((jobs ?? []).map((j) => [j.id, j.title]));
 
   const mutation = useMutation({
+    // BUG-1: mặc định `networkMode: "online"` khiến mutation lúc mất mạng bị TẠM DỪNG chứ không
+    // hỏng — `onMutate` vẫn chạy (nút kẹt "Đang xử lý…" vĩnh viễn vì chỉ `onSettled` mới xoá cờ),
+    // rồi `resumePausedMutations()` TỰ PHÁT LẠI khi có mạng trở lại, có thể là lúc HR đã bỏ đi.
+    // Quyết định đó GỬI EMAIL THẬT cho ứng viên (FR-HR-4) và ghi audit_log (FR-HR-5) — không được
+    // phép tự chạy sau lưng người bấm. "always" = bắn ngay, hỏng ngay, không bao giờ xếp hàng.
+    //
+    // Đặt TẠI ĐÂY chứ TUYỆT ĐỐI KHÔNG ở QueryClient gốc: `app/providers.tsx` bọc CẢ luồng ứng viên
+    // công khai (nộp CV, đặt lịch, trả lời sàng lọc) — đổi ở đó là âm thầm đổi hành vi của khách.
+    networkMode: "always",
     mutationFn: ({ id, decision, note }: { id: number; decision: ReviewDecision; note: string }) =>
       submitReview(id, decision, note),
     onMutate: ({ id }) => {
@@ -55,7 +75,7 @@ export default function ReviewPage() {
       qc.invalidateQueries({ queryKey: ["applications"] });
       qc.invalidateQueries({ queryKey: ["application", id] });
     },
-    onError: (err) => setErrorMsg(String((err as Error)?.message) || "Lỗi khi gửi quyết định."),
+    onError: (err) => setErrorMsg(decisionErrorMessage(err)),
     onSettled: () => setSubmittingId(null),
   });
 
@@ -87,6 +107,13 @@ export default function ReviewPage() {
       )}
 
       {listQuery.isLoading && <p className="text-sm text-ink/65">Đang tải hàng đợi…</p>}
+      {/* BUG-1: mất mạng thì query bị TẠM DỪNG chứ không lỗi — isLoading/isError đều false và data
+          undefined, nên không có dòng này thì trang chỉ còn tiêu đề và một khoảng trống câm. */}
+      {listQuery.fetchStatus === "paused" && !listQuery.data && (
+        <p className="rounded-lg border-2 border-divider bg-ink/[0.03] px-4 py-2.5 text-sm text-ink/65">
+          Mất kết nối máy chủ — chưa tải được hàng đợi. Sẽ tự thử lại khi có mạng trở lại.
+        </p>
+      )}
       {listQuery.isError && (
         <p className="rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
           Không tải được hàng đợi ({String((listQuery.error as Error)?.message)}). Vui lòng thử lại.
