@@ -25,13 +25,27 @@ import sys
 
 from sqlalchemy import bindparam, delete, func, select, text
 
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.application import Application
 from app.models.audit_log import AuditLog
+from app.models.booking import BookingSession, InterviewBooking
+from app.models.email_delivery import EmailDelivery
 from app.models.job_posting import JobPosting
 from app.models.screening_session import ScreeningSession
 from app.services.qdrant_service import delete_jd_vector, jd_point_id
 from app.services.storage import StorageError, get_storage
+
+# MỌI bảng có FK `application_id ... ondelete=CASCADE` — tức mọi thứ biến mất KÈM một application.
+# Giữ danh sách này ĐẦY ĐỦ là điều kiện để bản kiểm kê trước khi xoá nói đúng sự thật; thiếu một
+# bảng thì dry-run im lặng về đúng phần dữ liệu mà người đọc cần biết nhất.
+_CASCADE_CHILDREN = {
+    "audit_log": AuditLog,
+    "screening_session": ScreeningSession,
+    "booking_session": BookingSession,
+    "interview_booking": InterviewBooking,
+    "email_delivery": EmailDelivery,
+}
 
 # Bảng checkpoint của LangGraph AsyncPostgresSaver (khóa theo thread_id). checkpoint_migrations =
 # version schema, KHÔNG đụng. Thứ tự con→cha (không có FK giữa chúng nhưng giữ cho rõ ràng).
@@ -69,6 +83,31 @@ async def _count_thread_rows(session, tables: list[str], thread_id: str) -> int:
     return total
 
 
+def _db_host() -> str:
+    """Host của DATABASE_URL, KHÔNG kèm user/mật khẩu — đủ để phân biệt dev với prod, đủ an toàn để in."""
+    url = settings.database_url or ""
+    tail = url.rsplit("@", 1)[-1]  # bỏ scheme + credential
+    return tail.split("/", 1)[0] or "(không rõ)"
+
+
+def _print_environment() -> None:
+    """In ĐÍCH THẬT SỰ của lệnh này trước khi liệt kê bất cứ thứ gì — kể cả ở DRY-RUN.
+
+    Đây không phải trang trí. `LocalStorage.delete` là `unlink(missing_ok=True)`: nó KHÔNG BAO GIỜ
+    raise. Nên chạy script với `STORAGE_BACKEND=local` (mặc định trong `.env` của máy dev) trong khi
+    file CV thật nằm trên R2 sẽ in ra đủ "+206/206 file CV" mà chưa xoá một byte nào trên bucket —
+    một báo cáo thành công hoàn hảo cho một việc chưa hề xảy ra. Cách duy nhất để bắt là NHÌN THẤY
+    backend và host DB trước khi gõ `--commit`.
+    """
+    backend = (settings.storage_backend or "").lower()
+    target = settings.r2_bucket if backend == "r2" else settings.cv_upload_dir
+    print("== Môi trường của lệnh này — ĐỌC TRƯỚC KHI GÕ --commit ==")
+    print(f"  app_env = {settings.app_env}")
+    print(f"  storage = {backend or '(chưa đặt)'} → {target}")
+    print(f"  db host = {_db_host()}")
+    print()
+
+
 async def _delete_thread_rows(session, tables: list[str], thread_ids: list[str]) -> int:
     deleted = 0
     for t in tables:  # t từ hằng cố định; thread_ids bind tham số (expanding IN) — an toàn.
@@ -83,6 +122,7 @@ async def _delete_thread_rows(session, tables: list[str], thread_ids: list[str])
 async def reset(
     app_ids: list[int], job_ids: list[int], thread_ids: list[str], *, commit: bool
 ) -> None:
+    _print_environment()
     async with AsyncSessionLocal() as session:
         apps = (
             (await session.execute(select(Application).where(Application.id.in_(app_ids)))).scalars().all()
@@ -95,24 +135,27 @@ async def reset(
             else []
         )
 
-        print(f"== Application sẽ xóa ({len(apps)}) — audit_log + screening_session con cascade theo ==")
+        # ĐỦ 5 bảng con cascade từ `application` (ondelete=CASCADE). Bản trước chỉ đếm 2 —
+        # interview_booking / booking_session / email_delivery được thêm SAU khi script này ra đời,
+        # nên bản kiểm kê trước khi xoá vẫn im lặng về chúng: người đọc dry-run tưởng không có gì.
+        totals = {name: 0 for name in _CASCADE_CHILDREN}
+        print(f"== Application sẽ xóa ({len(apps)}) — {len(_CASCADE_CHILDREN)} bảng con cascade theo ==")
         for a in apps:
-            n_audit = (
-                await session.execute(
-                    select(func.count()).select_from(AuditLog).where(AuditLog.application_id == a.id)
-                )
-            ).scalar_one()
-            n_screen = (
-                await session.execute(
-                    select(func.count())
-                    .select_from(ScreeningSession)
-                    .where(ScreeningSession.application_id == a.id)
-                )
-            ).scalar_one()
+            counts: dict[str, int] = {}
+            for name, model in _CASCADE_CHILDREN.items():
+                counts[name] = (
+                    await session.execute(
+                        select(func.count()).select_from(model).where(model.application_id == a.id)
+                    )
+                ).scalar_one()
+                totals[name] += counts[name]
+            children = " ".join(f"{n}={c}" for n, c in counts.items() if c)
             print(
                 f"  id={a.id} job_id={a.job_id} status={a.status} email={a.applicant_email} "
-                f"audit_children={n_audit} screening_sessions={n_screen} cv={a.cv_file_ref or '—'}"
+                f"{children or '(không có bản ghi con)'} cv={a.cv_file_ref or '—'}"
             )
+        if apps:
+            print("  ── tổng bản ghi con: " + ", ".join(f"{n}={c}" for n, c in totals.items()))
 
         print(f"\n== Job_posting sẽ xóa ({len(jobs)}) — kèm xóa vector Qdrant ==")
         for j in jobs:
@@ -163,20 +206,36 @@ async def reset(
         # 3) File CV qua SEAM STORAGE (slice 06) — SAU commit. Không để file mồ côi: CV là dữ liệu
         #    cá nhân, không giữ lại sau khi xóa hồ sơ (NFR-4). Lỗi xóa một file KHÔNG chặn cả lệnh
         #    (file có thể đã bị xóa tay) — chỉ cảnh báo để dọn thủ công.
-        storage = get_storage()
         n_cv_deleted = 0
+        try:
+            # `get_storage()` PHẢI nằm trong try: đặt STORAGE_BACKEND=r2 mà thiếu một biến R2_* thì
+            # nó ném NGAY — và ở vị trí cũ (ngoài try) traceback đó bay ra SAU `session.commit()`,
+            # tức DB đã xoá xong còn file thì chưa, mà người chạy chỉ thấy một stack trace.
+            storage = get_storage()
+        except Exception as exc:  # noqa: BLE001 — cấu hình storage sai không được che mất việc DB ĐÃ xoá
+            print(f"\n  [CHÚ Ý] DB đã xoá xong nhưng KHÔNG mở được storage ({exc}).")
+            print(f"  {len(cv_keys)} file CV còn nguyên trên kho — chạy lại phần xoá file sau khi sửa env.")
+            cv_keys = []
+            storage = None
+
         for app_id, key in cv_keys:
             try:
-                await storage.delete(key)
+                await storage.delete(key)  # type: ignore[union-attr]
                 n_cv_deleted += 1
-                print(f"  Storage: đã xóa CV key={key} (app {app_id})")
+                # "đã gọi xóa" chứ KHÔNG phải "đã xóa": `delete` idempotent theo hợp đồng trên CẢ HAI
+                # backend (LocalStorage dùng `unlink(missing_ok=True)`), nên thành công ở đây chỉ có
+                # nghĩa "không có lỗi", không hề chứng minh file từng tồn tại hay vừa biến mất.
+                print(f"  Storage: đã gọi xóa (idempotent) key={key} (app {app_id})")
             except StorageError as exc:
                 # Gồm cv_file_ref ĐỊNH DẠNG CŨ (path tuyệt đối, trước slice 06) — key không hợp lệ.
                 print(f"  [chú ý] KHÔNG xóa được CV của app {app_id} ({key}): {exc} — dọn thủ công.")
 
-        # Đếm số file THỰC SỰ xóa được (không phải số lượt thử) — báo cáo phải đúng sự thật.
+        # Số LƯỢT XÓA KHÔNG LỖI — KHÔNG phải "số file thực sự biến mất" (xem chú thích idempotent
+        # ngay trên). Muốn biết bucket đã sạch chưa thì phải liệt kê prefix `cv/` trên bucket.
         n_failed = len(cv_keys) - n_cv_deleted
-        cv_note = f"+{n_cv_deleted}/{len(cv_keys)} file CV" + (f", {n_failed} lỗi" if n_failed else "")
+        cv_note = f"+{n_cv_deleted}/{len(cv_keys)} lượt xóa file CV không lỗi" + (
+            f", {n_failed} lỗi" if n_failed else ""
+        )
         print(
             f"\nĐã xóa {len(apps)} application (+audit_log +checkpoint {cv_note}), "
             f"{len(jobs)} job_posting (+vector Qdrant), {len(thread_ids)} thread checkpoint lẻ."
