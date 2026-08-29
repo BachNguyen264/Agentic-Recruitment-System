@@ -1,6 +1,7 @@
 import type {
   ApplicationDetail,
   ApplicationListItem,
+  ApplicationStatus,
   HrUser,
   JobMutationResult,
   JobPosting,
@@ -109,8 +110,25 @@ export async function getMe(): Promise<HrUser | null> {
 }
 
 // ── Màn HR ứng viên (slice 03a, CHỈ ĐỌC) ──
-export const getApplications = () =>
-  getJson<ApplicationListItem[]>("/api/applications");
+// Một TRANG hồ sơ. Lọc trạng thái đi xuống SERVER — trước B1, `/review` tải "100 hồ sơ mới nhất"
+// rồi mới lọc PENDING_REVIEW phía client, nên trên prod (206 hồ sơ) cửa sổ đó rơi trọn vào mẻ probe
+// và hàng đợi giấu mất 86 ca đã chấm điểm sạch. Tổng số KHÔNG lấy từ đây mà từ `getPipeline().counts`
+// (GROUP BY toàn bảng) — một trang không bao giờ biết được tổng.
+export type ApplicationQuery = {
+  status?: readonly ApplicationStatus[];
+  limit?: number;
+  offset?: number;
+};
+
+export const getApplications = (q: ApplicationQuery = {}) => {
+  const p = new URLSearchParams();
+  // Lặp `status=` nhiều lần (FastAPI đọc thành list) — KHÔNG phải chuỗi ngăn bằng dấu phẩy.
+  for (const s of q.status ?? []) p.append("status", s);
+  if (q.limit != null) p.set("limit", String(q.limit));
+  if (q.offset != null) p.set("offset", String(q.offset));
+  const qs = p.toString();
+  return getJson<ApplicationListItem[]>(`/api/applications${qs ? `?${qs}` : ""}`);
+};
 
 // Bảng điều hành: ảnh chụp pipeline (đếm + vài hồ sơ đang chạy). Endpoint RIÊNG, KHÔNG dùng lại
 // `getApplications`: đây là đường được hỏi lại DỒN NHẤT (2s khi có tác tử chạy) nên nó phải rẻ và cỡ

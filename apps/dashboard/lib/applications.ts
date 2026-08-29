@@ -107,3 +107,51 @@ export const BUCKET_FILTERS: { key: StatusBucket | "all"; label: string }[] = [
   { key: "passed", label: "Đạt" },
   { key: "rejected", label: "Từ chối" },
 ];
+
+// Mọi trạng thái PRD §13, theo đúng thứ tự pipeline. NGUỒN DUY NHẤT cho hai suy dẫn bên dưới.
+export const ALL_STATUSES: readonly ApplicationStatus[] = [
+  "SUBMITTED",
+  "PARSING",
+  "RANKING",
+  "SCREENING",
+  "AWAITING_SCREENER",
+  "REMINDED",
+  "SCHEDULING",
+  "AWAITING_BOOKING",
+  "PENDING_REVIEW",
+  "INTERVIEW_SCHEDULED",
+  "REJECTED",
+];
+
+// B1: rổ → danh sách trạng thái để LỌC Ở SERVER (`?status=` lặp nhiều lần).
+//
+// SUY RA từ `statusBucket` chứ KHÔNG chép tay: hai bảng song song là cách một trạng thái mới được
+// thêm vào `statusBucket` rồi im lặng vắng mặt ở bộ lọc — hồ sơ mang trạng thái đó sẽ biến mất khỏi
+// mọi rổ mà không có lỗi nào. `all` = undefined (không gửi `?status=`) chứ KHÔNG phải liệt kê đủ 11
+// trạng thái: URL ngắn hơn, và hồ sơ mang trạng thái lạ (dữ liệu cũ) vẫn hiện ra thay vì bị nuốt.
+export const STATUSES_IN_BUCKET: Record<
+  StatusBucket | "all",
+  readonly ApplicationStatus[] | undefined
+> = {
+  all: undefined,
+  processing: ALL_STATUSES.filter((s) => statusBucket(s) === "processing"),
+  review: ALL_STATUSES.filter((s) => statusBucket(s) === "review"),
+  passed: ALL_STATUSES.filter((s) => statusBucket(s) === "passed"),
+  rejected: ALL_STATUSES.filter((s) => statusBucket(s) === "rejected"),
+};
+
+// Tổng số hồ sơ của một rổ, tính từ `counts` của `/applications/pipeline` (GROUP BY toàn bảng).
+// Việc gom trạng thái nào vào rổ nào VẪN do client giữ — đúng như docstring `PipelineSnapshot` yêu
+// cầu ("đó là cách đọc PRD, không phải dữ liệu; nhân đôi nó xuống backend chỉ tạo thêm một chỗ để
+// hai bên lệch nhau").
+export function bucketTotal(
+  counts: Record<string, number> | undefined,
+  bucket: StatusBucket | "all",
+): number | null {
+  if (!counts) return null;
+  const entries = Object.entries(counts);
+  if (bucket === "all") return entries.reduce((t, [, n]) => t + n, 0);
+  return entries
+    .filter(([s]) => statusBucket(s as ApplicationStatus) === bucket)
+    .reduce((t, [, n]) => t + n, 0);
+}

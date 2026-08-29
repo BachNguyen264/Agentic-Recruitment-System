@@ -4,9 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ApplicationListItem } from "@ars/shared-types";
 import { Logo } from "@/components/Logo";
-import { getApplications, getMe, logout } from "@/lib/api";
+import { getMe, getPipeline, logout } from "@/lib/api";
 import { isHiddenOnPwa, PWA_NAV_HREFS, usePwaMode } from "@/lib/pwa";
 
 // Guard khu vực HR (slice 09, PRD §4): mọi trang trong nhóm (hr) — /, /applications, /review, /jobs,
@@ -120,15 +119,23 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
     retry: false,
   });
 
-  // Badge "Hàng đợi review": số ca PENDING_REVIEW (PRD §12.4 FR-NOTI-2). Dùng chung queryKey
-  // ["applications"] với /review + /applications → duyệt xong badge tự giảm.
-  const { data: apps } = useQuery<ApplicationListItem[]>({
-    queryKey: ["applications"],
-    queryFn: getApplications,
-    refetchInterval: 5000,
+  // Badge "Hàng đợi review": số ca PENDING_REVIEW (PRD §12.4 FR-NOTI-2).
+  //
+  // Đọc `/applications/pipeline` (payload 205 B, cỡ CỐ ĐỊNH) thay vì poll `/applications`. Đường cũ
+  // sai theo HAI cách cùng lúc, và cả hai đều đã đo trên prod:
+  //   1) SỐ SAI — nó đếm trong 100 dòng mới nhất, nên với 206 hồ sơ chờ duyệt badge đứng ở 100 và
+  //      MÂU THUẪN với ô "Chờ HR duyệt: 206" của chính bảng điều hành, ngay trên cùng một màn.
+  //   2) NẶNG — 81.5 KB mỗi 5 giây, trên MỌI trang HR (đây là layout), kèm cả parsed_data. Với 100
+  //      CV thật thì ~300 KB/lượt ⇒ ~215 MB/giờ cho mỗi tab đang mở, chỉ để vẽ một con số.
+  // `counts` là GROUP BY toàn bảng nên badge nay ĐÚNG. Nhịp 15s: badge không phải đồng hồ thời gian
+  // thực, và mọi hành động đổi nó (duyệt/từ chối) đều đã invalidate ["pipeline"] tại chỗ.
+  const { data: pipeline } = useQuery({
+    queryKey: ["pipeline"],
+    queryFn: getPipeline,
+    refetchInterval: 15_000,
     enabled: !!me,
   });
-  const reviewCount = (apps ?? []).filter((a) => a.status === "PENDING_REVIEW").length;
+  const reviewCount = pipeline?.counts?.PENDING_REVIEW ?? 0;
 
   // Điều hướng trên điện thoại: sidebar thành ngăn kéo (PRD §6 — HR cài PWA lên máy điện thoại).
   const [navOpen, setNavOpen] = useState(false);

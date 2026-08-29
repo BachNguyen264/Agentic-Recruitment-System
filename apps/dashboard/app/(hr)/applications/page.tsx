@@ -5,15 +5,20 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ApplicationListItem, JobPosting } from "@ars/shared-types";
 import { PageHeader, Tag } from "@/components/ui";
-import { getApplications, getJobs } from "@/lib/api";
+import { getApplications, getJobs, getPipeline } from "@/lib/api";
 import {
   BUCKET_FILTERS,
-  statusBucket,
+  bucketTotal,
+  STATUSES_IN_BUCKET,
   applicationStatusLabel,
   applicationStatusTone,
   isEmailFlag,
   type StatusBucket,
 } from "@/lib/applications";
+
+// Một trang. 50 dòng là bảng đọc được mà không cần ảo hoá (mỗi dòng nay chỉ ~800 B vì danh sách
+// không còn chở parsed_data/score_breakdown — xem `response_model_exclude` ở routes/applications.py).
+const PAGE_SIZE = 50;
 
 function initialsOf(email: string): string {
   const name = email.split("@")[0] ?? "";
@@ -49,10 +54,31 @@ function StatusCell({ a }: { a: ApplicationListItem }) {
 
 export default function ApplicationsPage() {
   const [bucket, setBucket] = useState<StatusBucket | "all">("all");
+  const [offset, setOffset] = useState(0);
+
+  // Đổi rổ = xem một TẬP khác, nên phải về trang 1. Không reset thì bấm "Từ chối" lúc đang ở trang 3
+  // sẽ ra bảng rỗng dù có hồ sơ bị từ chối — trông hệt như "không có dữ liệu".
+  const selectBucket = (b: StatusBucket | "all") => {
+    setBucket(b);
+    setOffset(0);
+  };
+
+  // Lọc chạy ở SERVER. Trước B1 nó là `apps.filter(...)` trên "100 hồ sơ mới nhất" — nghĩa là chip
+  // "Từ chối (0)" không phân biệt được "hệ thống chưa từ chối ai" với "mọi ca từ chối đều nằm ngoài
+  // cửa sổ 100 dòng". Hai câu trả lời trái ngược nhau, cùng một giao diện.
   const { data, isLoading, isError, error } = useQuery<ApplicationListItem[]>({
-    queryKey: ["applications"],
-    queryFn: getApplications,
-    refetchInterval: 5000, // pipeline chạy nền — cập nhật khi CV chuyển trạng thái.
+    queryKey: ["applications", "list", bucket, offset],
+    queryFn: () =>
+      getApplications({ status: STATUSES_IN_BUCKET[bucket], limit: PAGE_SIZE, offset }),
+    refetchInterval: 15_000, // pipeline chạy nền — cập nhật khi CV chuyển trạng thái.
+    placeholderData: (prev) => prev,
+  });
+
+  // Số trên chip + tổng lấy từ `counts` (GROUP BY TOÀN BẢNG), không đếm trong trang đang xem.
+  const { data: pipeline } = useQuery({
+    queryKey: ["pipeline"],
+    queryFn: getPipeline,
+    refetchInterval: 15_000,
   });
   // Tên vị trí cho từng hồ sơ (thiết kế hiện cột "Vị trí" thay cho "JD #id").
   const { data: jobs } = useQuery<JobPosting[]>({
@@ -61,13 +87,10 @@ export default function ApplicationsPage() {
   });
   const jobTitle = new Map((jobs ?? []).map((j) => [j.id, j.title]));
 
-  const apps = data ?? [];
-  const counts = apps.reduce<Record<string, number>>((acc, a) => {
-    const b = statusBucket(a.status);
-    acc[b] = (acc[b] ?? 0) + 1;
-    return acc;
-  }, {});
-  const filtered = bucket === "all" ? apps : apps.filter((a) => statusBucket(a.status) === bucket);
+  // `data` ĐÃ được server lọc theo rổ → không lọc lại ở client (lọc hai lần chính là bug cũ).
+  const filtered = data ?? [];
+  const total = bucketTotal(pipeline?.counts, bucket);
+  const hasMore = total != null && offset + filtered.length < total;
 
   return (
     <div className="mx-auto max-w-[1120px] px-4 pb-8 pt-6 sm:px-8">
@@ -80,13 +103,15 @@ export default function ApplicationsPage() {
       {/* Bộ lọc theo rổ trạng thái */}
       <div className="flex flex-wrap gap-2">
         {BUCKET_FILTERS.map((f) => {
-          const n = f.key === "all" ? apps.length : (counts[f.key] ?? 0);
+          // Số TOÀN HỆ THỐNG (GROUP BY), không phải số đếm được trong trang đang xem. `null` khi
+          // chưa tải xong `counts` → hiện "…" thay vì "(0)": "(0)" là một KHẲNG ĐỊNH sai.
+          const n = bucketTotal(pipeline?.counts, f.key);
           const active = bucket === f.key;
           return (
             <button
               key={f.key}
               type="button"
-              onClick={() => setBucket(f.key)}
+              onClick={() => selectBucket(f.key)}
               aria-pressed={active}
               className={`rounded-lg border-2 px-3 py-1.5 text-[13px] font-semibold transition-colors ${
                 active
@@ -94,24 +119,42 @@ export default function ApplicationsPage() {
                   : "border-divider text-ink/70 hover:bg-ink/[0.06]"
               }`}
             >
-              {f.label} <span className={active ? "text-white" : "text-ink/65"}>({n})</span>
+              {f.label}{" "}
+              <span className={active ? "text-white" : "text-ink/65"}>({n ?? "…"})</span>
             </button>
           );
         })}
       </div>
 
       {isError && (
-        <p className="mt-4 rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+        <p
+          role="alert"
+          className="mt-4 rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700"
+        >
           Không tải được danh sách ({String((error as Error)?.message)}). Vui lòng thử lại.
+        </p>
+      )}
+
+      {/* "Đang hiện X trong Y" — thiếu dòng này thì một trang đầy trông y hệt "toàn bộ dữ liệu". */}
+      {total != null && filtered.length > 0 && (
+        <p className="mt-4 text-[13px] text-ink/65">
+          Đang hiện{" "}
+          <strong className="font-semibold text-ink">
+            {offset + 1}–{offset + filtered.length}
+          </strong>{" "}
+          trong <strong className="font-semibold text-ink">{total}</strong> hồ sơ.
         </p>
       )}
 
       <div className="mt-4 overflow-hidden rounded-xl border-2 border-divider bg-canvas">
         {isLoading && <p className="px-4 py-6 text-sm text-ink/65">Đang tải danh sách…</p>}
 
-        {!isLoading && filtered.length === 0 && (
+        {/* Cổng `data &&`: khi fetch HỎNG thì `data` là undefined, và nếu không có cổng này màn hình
+            in "Chưa có ứng viên nào" như một SỰ THẬT — ngay bên dưới một banner đỏ báo lỗi tải. Đó
+            là "0 GIẢ" mà `(hr)/page.tsx` đã gọi đúng tên; trang này là chỗ duy nhất còn sót. */}
+        {!isLoading && data && filtered.length === 0 && (
           <p className="px-6 py-10 text-center text-[13px] text-ink/65">
-            {apps.length === 0
+            {bucket === "all"
               ? "Chưa có ứng viên nào — nộp CV qua cổng tuyển dụng công khai để pipeline chạy."
               : "Không có ứng viên trong rổ này."}
           </p>
@@ -203,6 +246,31 @@ export default function ApplicationsPage() {
           </>
         )}
       </div>
+
+      {(hasMore || offset > 0) && (
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
+            disabled={offset === 0 || isLoading}
+            className="rounded-lg border-2 border-divider px-4 py-2 text-[13px] font-semibold text-ink/70 transition-colors hover:bg-ink/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            ← Trang trước
+          </button>
+          <span className="text-[13px] text-ink/65">
+            Trang {Math.floor(offset / PAGE_SIZE) + 1}
+            {total != null && ` / ${Math.max(1, Math.ceil(total / PAGE_SIZE))}`}
+          </span>
+          <button
+            type="button"
+            onClick={() => setOffset((o) => o + PAGE_SIZE)}
+            disabled={!hasMore || isLoading}
+            className="rounded-lg border-2 border-divider px-4 py-2 text-[13px] font-semibold text-ink/70 transition-colors hover:bg-ink/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Trang sau →
+          </button>
+        </div>
+      )}
     </div>
   );
 }
