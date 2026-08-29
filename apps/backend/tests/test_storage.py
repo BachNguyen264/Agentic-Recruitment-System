@@ -319,3 +319,85 @@ def test_factory_picks_backend(monkeypatch) -> None:
     with pytest.raises(StorageError):
         get_storage()
     get_storage.cache_clear()
+
+
+# ── (6) Đường NHẬN CV KHÔNG được giữ connection qua lượt upload storage ──────────────────────────
+
+
+async def test_intake_releases_connection_before_storage_upload(monkeypatch) -> None:
+    """BẤT BIẾN TẢI (đo được trên prod): lúc upload CV lên storage, KHÔNG transaction nào đang mở.
+
+    Vì sao cần test này: `commit()` NHẢ connection, nhưng `refresh()` ngay sau đó **autobegin một
+    transaction MỚI** và mượn lại connection tới lần commit kế tiếp — mà ở `routes/public.py` lần
+    commit kế tiếp nằm SAU `storage.save()` (R2 = qua MẠNG). Số đo trên prod trước khi vá: 20 lượt
+    nộp đồng thời làm cạn SẠCH pool 15 connection, độ trễ nhận p50 = 13.4s.
+
+    Lỗi này KHÔNG có triệu chứng nào ở local (`STORAGE_BACKEND=local` ghi đĩa, ~0ms) và `refresh()`
+    trông hoàn toàn vô hại khi đọc code — nên nó cần một cái chốt tự động, không thể trông vào review.
+    """
+    import httpx
+
+    from app.api.deps import get_session
+    from app.api.routes import public as public_mod
+    from app.main import app
+    from app.models.application import Application
+
+    seen: dict[str, object] = {}
+
+    class _Session:
+        """Session giả MÔ PHỎNG đúng vòng đời transaction của SQLAlchemy (đây là điểm mấu chốt).
+
+        `add`/`execute`/`refresh` → autobegin (in_txn=True). `commit` → kết thúc (in_txn=False).
+        Nếu ai đó thêm lại `refresh()` trước lượt upload, `in_txn` sẽ là True và test này ĐỎ.
+        """
+
+        def __init__(self) -> None:
+            self.in_txn = False
+
+        def add(self, obj):  # noqa: ANN001, ANN202
+            self.in_txn = True
+            if getattr(obj, "id", None) is None:
+                obj.id = 4242  # INSERT ... RETURNING id điền sẵn, y như thật
+
+        async def commit(self) -> None:
+            self.in_txn = False
+
+        async def refresh(self, _obj) -> None:  # noqa: ANN001
+            self.in_txn = True
+
+        async def delete(self, _obj) -> None:  # noqa: ANN001
+            self.in_txn = True
+
+    session = _Session()
+
+    async def _fake_session():
+        yield session
+
+    class _RecordingStorage:
+        async def save(self, *_a, **_kw) -> None:
+            # Chụp trạng thái transaction NGAY LÚC upload — đây là toàn bộ mục đích của test.
+            seen["in_txn_during_upload"] = session.in_txn
+
+    job = type("J", (), {"id": 2})()
+    monkeypatch.setattr(public_mod.job_service, "get_open_job", lambda *a, **k: _async(job))
+    monkeypatch.setattr(public_mod, "get_storage", lambda: _RecordingStorage())
+    monkeypatch.setattr(public_mod, "process_application", lambda *_a, **_kw: None)
+    app.dependency_overrides[get_session] = _fake_session
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/public/applications",
+                data={"job_id": "2", "applicant_email": "x@e.com"},
+                files={"file": ("cv.pdf", _PDF, "application/pdf")},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 201
+    assert resp.json()["application_id"] == 4242  # id vẫn đúng dù KHÔNG refresh
+    assert seen["in_txn_during_upload"] is False, (
+        "Đường nhận CV đang GIỮ connection suốt lượt upload storage — "
+        "gần như chắc chắn có `refresh()` đã bị thêm lại sau `commit()`."
+    )

@@ -18,7 +18,13 @@ async def create_application(session: AsyncSession, data: ApplicationCreate) -> 
     )
     session.add(app_row)
     await session.commit()
-    await session.refresh(app_row)
+    # KHÔNG `refresh()` — nó là NGUYÊN NHÂN GỐC của một nút thắt đo được trên prod, không phải một
+    # dòng vô hại. `commit()` NHẢ connection; `refresh()` ngay sau đó autobegin một transaction MỚI
+    # và MƯỢN LẠI connection, giữ tới lần commit kế tiếp — mà ở `routes/public.py` lần commit kế
+    # tiếp nằm SAU lượt upload CV lên R2 (qua mạng). Hệ quả đo được: 20 lượt nộp đồng thời trên prod
+    # làm cạn SẠCH pool 15 connection, độ trễ nhận p50 = 13.4s.
+    # An toàn bỏ vì `AsyncSessionLocal` đặt `expire_on_commit=False` (core/database.py) ⇒ sau commit
+    # các thuộc tính KHÔNG bị hết hạn, và `id` đã được điền từ RETURNING lúc INSERT flush.
     return app_row
 
 

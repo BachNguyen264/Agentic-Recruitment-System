@@ -94,12 +94,15 @@ async def submit_application(
             status_code=503, detail="Hệ thống đang lỗi lưu trữ hồ sơ. Vui lòng thử lại sau ít phút."
         ) from None
     app_row.cv_file_ref = key
+    # Chụp id ra biến cục bộ TRƯỚC commit rồi KHÔNG `refresh()`: chỉ cần đúng một con số để đẩy sang
+    # BackgroundTasks. `refresh()` ở đây mở lại một transaction (mượn lại connection) chỉ để đọc lại
+    # thứ ta đã có — xem ghi chú ở `application_service.create_application`.
+    application_id = app_row.id
     await session.commit()
-    await session.refresh(app_row)
-    background_tasks.add_task(process_application, app_row.id)
+    background_tasks.add_task(process_application, application_id)
 
     # 5) Xác nhận gọn — KHÔNG trả điểm/parsed_data/trạng thái cho ứng viên.
-    return PublicSubmitResponse(application_id=app_row.id)
+    return PublicSubmitResponse(application_id=application_id)
 
 
 @router.get(
