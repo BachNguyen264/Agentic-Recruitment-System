@@ -295,12 +295,16 @@ async def test_endpoint_llm_error_502_no_count_bump(monkeypatch) -> None:
         raise rubric_suggester.RubricSuggestError("OpenAI down")
 
     monkeypatch.setattr(rubric_suggester, "suggest_rubric", boom_suggest)
-    session = EndpointSession(job=_job(rubric_suggestion_count=0), user=_user())
+    job = _job(rubric_suggestion_count=0)
+    session = EndpointSession(job=job, user=_user())
     async with _client(session) as c:
         _authed(c)
         r = await c.post("/api/jobs/1/suggest-rubric")
     assert r.status_code == 502
-    assert session.commits == 0  # KHÔNG tiêu lượt khi LLM lỗi
+    # Kiểm BẤT BIẾN THẬT (lượt chưa bị tiêu), KHÔNG đếm `session.commits`: từ khi handler áp
+    # ĐỌC → CHẠY → GHI, nó commit MỘT LẦN trước lượt gọi LLM chỉ để NHẢ connection khỏi pool. Đếm
+    # commit là đo cơ chế chứ không đo nghiệp vụ — proxy đó sai ngay khi cơ chế đổi, đúng như ở đây.
+    assert job.rubric_suggestion_count == 0  # KHÔNG tiêu lượt khi LLM lỗi
 
 
 async def test_endpoint_404_missing_job(monkeypatch) -> None:

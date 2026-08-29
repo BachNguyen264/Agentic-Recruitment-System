@@ -75,17 +75,22 @@ def build_suggester_chat():
     """
     from langchain_openai import ChatOpenAI
 
+    # `timeout` BẮT BUỘC ở CẢ HAI nhánh: mặc định langchain truyền request_timeout=None xuống httpx
+    # = CHỜ VÔ HẠN. Đây là client OpenAI DUY NHẤT trong app từng thiếu nó (parser/ranker/embedding đã
+    # có) — một lượt treo giữ luôn LUỒNG executor dùng chung và một SUẤT của MAX_CONCURRENT_PIPELINES.
     effort = (settings.rubric_suggest_reasoning_effort or "").strip()
     if effort:
         return ChatOpenAI(
             model=settings.rubric_suggest_model,
             reasoning_effort=effort,
             api_key=settings.openai_api_key,
+            timeout=settings.openai_timeout_seconds,
         )
     return ChatOpenAI(
         model=settings.rubric_suggest_model,
         temperature=0,
         api_key=settings.openai_api_key,
+        timeout=settings.openai_timeout_seconds,
     )
 
 

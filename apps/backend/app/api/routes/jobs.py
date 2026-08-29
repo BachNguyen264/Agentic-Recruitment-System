@@ -146,12 +146,20 @@ async def suggest_rubric(job_id: int, session: DBSession) -> RubricSuggestRespon
             "Sửa nội dung JD (tiêu đề/mô tả/yêu cầu) rồi lưu để đặt lại lượt gợi ý.",
         )
 
+    # ĐỌC → CHẠY → GHI (Load boundary, slice 14): chép field ra biến CỤC BỘ rồi `commit()` để NHẢ
+    # connection TRƯỚC lượt gọi LLM. Trước đây một session (1/15 connection của pool) bị giữ mở suốt
+    # cả lượt gọi OpenAI — cùng lớp lỗi mà `process_application` đã phải tách vòng đời để chữa.
+    # An toàn vì `expire_on_commit=False` (core/database.py) ⇒ biến cục bộ vẫn dùng được sau commit.
+    title, description = job.title, job.description or ""
+    requirements, level = job.requirements or "", job.level
+    await session.commit()
+
     try:
         criteria = await rubric_suggester.suggest_rubric(
-            title=job.title,
-            description=job.description or "",
-            requirements=job.requirements or "",
-            level=job.level,
+            title=title,
+            description=description,
+            requirements=requirements,
+            level=level,
         )
     except rubric_suggester.RubricSuggestError as exc:
         # Lỗi LLM → 502 (KHÔNG tiêu lượt: count chỉ tăng SAU khi có đề xuất). HR thử lại được.

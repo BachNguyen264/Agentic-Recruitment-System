@@ -8,6 +8,7 @@ CHỈ HR Admin đăng nhập; ứng viên là GUEST (không tài khoản). JWT t
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Response, status
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 
 from app.api.deps import CurrentHr, DBSession
@@ -70,7 +71,13 @@ async def login(payload: LoginRequest, response: Response, session: DBSession) -
     # THÔNG BÁO CHUNG cho cả "email không tồn tại" lẫn "sai mật khẩu" — không lộ email nào có thật.
     # Vẫn verify khi user=None (dùng hash THẬT _DUMMY_HASH) để thời gian phản hồi không rò rỉ (timing).
     hashed = user.password_hash if user else _DUMMY_HASH
-    if user is None or not verify_password(payload.password, hashed):
+    # bcrypt là CPU-bound đồng bộ (~300ms theo cost hiện tại): gọi thẳng trên event loop thì mỗi lượt
+    # thử mật khẩu ĐÓNG BĂNG toàn bộ tiến trình — và `/login` là endpoint công khai, không đăng nhập.
+    # `run_in_threadpool` (Starlette) chứ KHÔNG `asyncio.to_thread`: executor mặc định của asyncio đã
+    # bị các lượt gọi OpenAI ĐỒNG BỘ của parser chiếm (xem services/storage/_executor.py) — đẩy vào đó
+    # là biến một khựng 300ms thành khựng 30s. Vẫn verify khi user=None để không rò rỉ timing.
+    ok = await run_in_threadpool(verify_password, payload.password, hashed)
+    if user is None or not ok:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Email hoặc mật khẩu không đúng."
         )
