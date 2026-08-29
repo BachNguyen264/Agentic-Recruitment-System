@@ -75,12 +75,14 @@ def build_ranker_chat():
             model=settings.ranker_model,
             reasoning_effort=effort,
             api_key=settings.openai_api_key,
+            timeout=settings.openai_timeout_seconds,
         )
     # Non-reasoning (vd gpt-4.1): temperature=0 cho ổn định.
     return ChatOpenAI(
         model=settings.ranker_model,
         temperature=0,
         api_key=settings.openai_api_key,
+        timeout=settings.openai_timeout_seconds,
     )
 
 

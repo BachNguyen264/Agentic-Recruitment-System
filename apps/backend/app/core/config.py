@@ -42,6 +42,14 @@ class Settings(BaseSettings):
     # KHÔNG hardcode key/model. PARSER_MODEL mặc định gpt-4.1-mini (rẻ, đủ tốt cho trích xuất).
     openai_api_key: str | None = None
     parser_model: str = "gpt-4.1-mini"
+    # Trần thời gian cho MỘT lượt gọi OpenAI (parser/ranker/embedding/suggester). Mặc định langchain
+    # truyền `request_timeout=None` xuống httpx = CHỜ VÔ HẠN — đo tải cho thấy đó là cái bẫy: một
+    # request treo giữ luôn LUỒNG của executor dùng chung (parser gọi ĐỒNG BỘ) và, nếu có semaphore
+    # giới hạn pipeline, giữ luôn MỘT SUẤT mãi mãi ⇒ hàng đợi tắc vĩnh viễn chứ không chỉ chậm.
+    # 120s = ~5× thời gian ranker thật (24.7s đo được). CỐ Ý rộng: mục đích của số này là chặn treo
+    # VÔ HẠN, KHÔNG phải áp SLA. Đặt sát quá (vd 60s) thì trên máy yếu/lúc OpenAI chậm sẽ giết những
+    # lượt chấm VẪN ĐANG CHẠY TỐT — biến một bản vá thành một nguồn lỗi mới.
+    openai_timeout_seconds: float = 120.0
 
     # ── Embedding (slice-02a JD → Qdrant — PRD §7.2, §16) ─────────────
     # EMBEDDING_DIM phải khớp model (text-embedding-3-small = 1536); đổi model thì đổi cả dim
@@ -106,6 +114,23 @@ class Settings(BaseSettings):
     # Phải LỚN HƠN NHIỀU thời gian chạy pipeline thật (parser+ranker, đơn vị chục giây) để không cướp
     # hồ sơ đang chạy khoẻ mạnh. float để verify đặt ngưỡng nhỏ; <= 0 = TẮT lưới.
     stuck_application_timeout_minutes: float = 30.0
+
+    # Trần số pipeline chạy ĐỒNG THỜI (`tasks/background.process_application`). ĐO ĐƯỢC vì sao cần:
+    # 200 CV nộp cùng lúc → 200 pipeline cùng đua, checkpointer LangGraph (một `asyncio.Lock` DUY
+    # NHẤT cho cả tiến trình) nối đuôi chúng lại, và 93/200 hồ sơ vỡ `PoolTimeout sau 30s` → tất cả
+    # rơi về PENDING_REVIEW[error]. Nâng pool checkpointer 5→25 chỉ giảm 107→93 (KHÔNG phải pool,
+    # là cái khoá). Chặn ĐẦU VÀO mới đúng chỗ: quá tải thành HÀNG ĐỢI CÓ TRẬT TỰ thay vì lỗi hàng
+    # loạt — cùng một lượng việc, nhưng không hồ sơ nào phải đi đường cứu hộ.
+    # <= 0 = TẮT trần (hành vi cũ). Đi CẶP với `openai_timeout_seconds`: không có timeout thì một
+    # lượt gọi treo giữ một suất vĩnh viễn.
+    #
+    # VÌ SAO MẶC ĐỊNH 15 chứ không phải 40 (số đã đo tốt trên máy dev 16 CPU): mặc định phải an toàn
+    # trên đích NHỎ NHẤT, là Render free 512MB. Mỗi pipeline đang parse GIỮ TOÀN BỘ bytes CV trong
+    # RAM (trần 10MB/CV) ⇒ 40 × 10MB = 400MB, gần chạm 512MB và OOM-kill là SIGKILL: lifespan không
+    # chạy, mọi BackgroundTask đang bay bốc hơi. 15 khớp luôn với `pool_size + max_overflow` = 15.
+    # Máy to hơn thì nâng bằng env `MAX_CONCURRENT_PIPELINES` — 15 × ~35s/CV vẫn là ~26 CV/phút,
+    # thừa sức cho tải thật của hệ này.
+    max_concurrent_pipelines: int = 15
 
     # ── Đặt lịch phỏng vấn (SCH-1 — PRD §10b.7, FR-BOOK-5) ───────────
     # Khả dụng là TOÀN CỤC (không theo từng JD) — đúng mô hình single-tenant. Đọc/validate qua

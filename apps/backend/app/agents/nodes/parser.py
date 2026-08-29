@@ -72,7 +72,14 @@ def _build_parser_llm():
     """ChatOpenAI structured-output cho ParsedCV. Tách ra để test mock/inject dễ."""
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model=settings.parser_model, temperature=0, api_key=settings.openai_api_key)
+    # `timeout`: KHÔNG có nó langchain truyền None xuống httpx = chờ vô hạn. Parser gọi ĐỒNG BỘ qua
+    # `asyncio.to_thread` nên một request treo giam luôn một luồng của executor dùng chung.
+    llm = ChatOpenAI(
+        model=settings.parser_model,
+        temperature=0,
+        api_key=settings.openai_api_key,
+        timeout=settings.openai_timeout_seconds,
+    )
     return llm.with_structured_output(ParsedCV)
 
 

@@ -20,7 +20,11 @@ def _embeddings():
     # Khởi tạo lười + cache: import langchain_openai chỉ khi thật sự cần embed.
     from langchain_openai import OpenAIEmbeddings
 
-    return OpenAIEmbeddings(model=settings.embedding_model, api_key=settings.openai_api_key)
+    return OpenAIEmbeddings(
+        model=settings.embedding_model,
+        api_key=settings.openai_api_key,
+        timeout=settings.openai_timeout_seconds,
+    )
 
 
 async def embed_text(text: str) -> list[float]:
