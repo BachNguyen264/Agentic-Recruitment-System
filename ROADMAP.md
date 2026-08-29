@@ -326,3 +326,25 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - [ ] Dọn: **đổi mật khẩu admin prod**
 - [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)
+
+---
+
+## ✅ LOAD-1 — Test tải + scale (NFR-1) — **DONE**
+
+> Mục tiêu do user chốt: **con số bảo vệ được trước hội đồng**, không phải scale tới enterprise.
+> Toàn bộ số đo + hướng mở rộng → **`docs/load-and-scale.md`**.
+
+- **Phương pháp:** `scripts/mock_openai.py` + env `OPENAI_API_BASE` ⇒ chạy ĐÚNG đường code thật
+  (parser `invoke` đồng bộ → thread pool) với **0 đồng, 0 email**. `ENABLE_LLM=false` KHÔNG dùng được
+  vì nó stub cả parser lẫn ranker = xoá đúng nút thắt cần đo. Đo local → xác nhận prod với LLM thật.
+- **Công cụ mới:** `mock_openai.py` · `loadtest_booking.py` (chưa từng có) · `loadtest_apply.py` vá
+  hai chỗ báo XANH GIẢ · `GET /api/health/metrics` (HR-only, KHÔNG I/O: pool DB · pool checkpointer ·
+  executor asyncio · thread pool anyio · storage executor · pipeline đang bay).
+- **Kết quả:** ≤80 CV cùng lúc xử lý trọn vẹn 0 mất · 200 CV: 107 lỗi → **0** sau vá · đặt lịch trần
+  **~15 người xem đồng thời** (lưới **75** khung, KHÔNG phải ~90 như tài liệu cũ) · chống đặt trùng
+  chịu được đua 12 chiều.
+- **Chẩn đoán bất ngờ:** nút thắt là **khoá của `AsyncPostgresSaver`**, không phải thread pool
+  (đối chứng: pool 5→25 chỉ giảm lỗi 13%) ⇒ phải chặn ở **đầu vào**, không nới ở **đầu ra**.
+- **Còn nợ (đã ghi trong `docs/load-and-scale.md` §10):** `no_slots_at` giả · TOCTOU sinh khung giờ ·
+  **rate limit công khai vô hiệu với người dùng thật** (ưu tiên cao — lỗ hổng chi phí LLM) ·
+  `list_applications(limit=100)` làm HR mất ứng viên sau hồ sơ thứ 100 · dọn dữ liệu test trên prod.

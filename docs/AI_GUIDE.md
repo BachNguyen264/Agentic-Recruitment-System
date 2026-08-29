@@ -123,7 +123,7 @@
   mượn lại connection và GIỮ tới lần commit/close kế tiếp. Đo thực nghiệm (pool event checkout/checkin):
   `commit` + `refresh` rồi I/O 1s ⇒ giữ **1.00s**; `commit` trần rồi I/O 1s ⇒ giữ **0.00s**. Hai hệ quả
   đã cắn thật: (a) `create_application` commit+refresh nên đường NHẬN CV giữ connection SUỐT lúc upload R2
-  (`routes/public.py` — CHƯA sửa); (b) session thoát khối `async with` khi còn transaction mở ⇒ teardown
+  (`routes/public.py` — **ĐÃ SỬA**, xem gotcha "refresh() thừa" bên dưới); (b) session thoát khối `async with` khi còn transaction mở ⇒ teardown
   bắn một ROLLBACK QUA MẠNG và ROLLBACK đó NÉM ĐƯỢC (xem gotcha kế). Muốn biết chỗ nào thật sự giữ
   connection thì ĐO bằng `event.listens_for(engine.sync_engine, "checkout"/"checkin")` — đừng suy luận.
 - **Đóng session KHÔNG vô hại — đừng để nó hạ trạng thái hồ sơ (14).** Khi bọc `try` ra NGOÀI `async with`
@@ -494,3 +494,31 @@
   server đang phục vụ, nên mọi route 404 phần JS của nó rồi kẹt ở trạng thái loading. Trông y hệt một
   lỗi code chứ không phải hệ quả thao tác. Cách hồi phục: tắt dev, xoá `.next`, bật dev lại. Trong một
   slice: kiểm trình duyệt TRƯỚC, build là bước CUỐI.
+
+- **Nút thắt tải đọc-code-đoán-sai: KHÔNG phải thread pool mà là KHOÁ của checkpointer (lát tải+scale).**
+  Đọc code thì ai cũng đoán parser gọi LLM đồng bộ ⇒ thread pool cạn trước. **Đo thì sai.** Tài nguyên
+  chạm trần ĐẦU TIÊN là **pool checkpointer LangGraph, ngay từ N=10** — mà thật ra cũng không phải pool:
+  `AsyncPostgresSaver` giữ **MỘT** `asyncio.Lock` cho cả tiến trình (`aio.py:46`, giữ ở cả ba nhánh
+  `_cursor()`), và **lấy connection TRƯỚC rồi mới xếp hàng vào khoá** (`aio.py:328`). App lại chỉ dựng
+  MỘT saver (`checkpointer.py:71`) ⇒ **đồng thời hoá SQL của checkpointer thực tế là 1**.
+  Đối chứng đã chạy: nâng `CHECKPOINTER_POOL_MAX_SIZE` 5→25 (**gấp 5×**) chỉ kéo lỗi 107→93. Nới ở
+  ĐẦU RA vô ích; phải chặn ở ĐẦU VÀO (`MAX_CONCURRENT_PIPELINES`). Đụng lại tải ⇒ **đừng nâng pool, hãy
+  giảm số việc vào cùng lúc.**
+- **Semaphore mà không có timeout là nút cổ chai CHẾT (lát tải+scale).** `MAX_CONCURRENT_PIPELINES` và
+  `OPENAI_TIMEOUT_SECONDS` là một CẶP, không phải hai tính năng rời. langchain mặc định truyền
+  `timeout=None` xuống httpx = **chờ vô hạn**; một request treo sẽ giữ MỘT SUẤT của van vĩnh viễn và
+  hàng đợi tắc luôn chứ không chỉ chậm. Thêm van ở bất kỳ đâu ⇒ hỏi ngay "thứ bên trong van có thể
+  treo vô hạn không?".
+- **`ENABLE_LLM=false` KHÔNG dùng để đo tải được (lát tải+scale).** Nó stub **cả** parser lẫn ranker,
+  tức xoá đúng cái nút thắt cần đo (parser gọi ĐỒNG BỘ ⇒ chiếm luồng). Cách đúng: `scripts/mock_openai.py`
+  + env **`OPENAI_API_BASE`** — chuyển hướng được **cả** `ChatOpenAI` lẫn `OpenAIEmbeddings`, chạy ĐÚNG
+  đường code thật, **0 dòng sửa code sản phẩm, 0 đồng**.
+- **Đo tải ở local KHÔNG thấy lỗi của prod (lát tải+scale).** `STORAGE_BACKEND=local` ghi **đĩa** (~0ms)
+  còn prod đẩy **R2 qua mạng**. Chính vì vậy lỗi "giữ connection suốt lượt upload" **hoàn toàn tàng hình**
+  ở local (nhận p50 2.5s) nhưng trên prod làm **cạn sạch pool 15** và đẩy p50 lên **13.4s**. Mọi kết luận
+  về đường NHẬN CV phải xác nhận trên prod, hoặc ít nhất chạy local với `STORAGE_BACKEND=r2`.
+- **Windows: tiến trình python cũ GIỮ SOCKET, server mới im lặng không bind được (lát tải+scale).** Kill
+  tiến trình cha là CHƯA đủ — cổng vẫn LISTEN và server mới khởi động, **in banner như bình thường**, rồi
+  phục vụ… KHÔNG gì cả, trong khi client nói chuyện với server CŨ. Đã mất một lượt đo vì tưởng mock hỏng.
+  Trước mỗi lượt đo: `Get-NetTCPConnection -LocalPort <p> -State Listen` rồi `Stop-Process -Force` **lặp
+  cho tới khi cổng thật sự trống**. (Cùng họ với gotcha uvicorn-fork đã ghi.)

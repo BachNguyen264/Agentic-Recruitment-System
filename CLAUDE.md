@@ -99,8 +99,11 @@ tác DB đầu tiên trước nằm NGOÀI → pool cạn là ném thẳng ra Ba
 `services/stuck_applications` (SUBMITTED/PARSING/RANKING quá `STUCK_APPLICATION_TIMEOUT_MINUTES`=30 →
 PENDING_REVIEW[error], KHÔNG auto-reject) đi chung sweep loop 08c. **Số đo thật (5 CV, tuần tự):**
 T=34.3s (parser 9.4s · ranker 24.7s ⇒ ranker chiếm 72%); connection giữ 0.68s = **2% của T** (trước:
-100%) ⇒ trần một đợt **28 → 678 hồ sơ**. Nút thắt kế tiếp: thread pool 14 luồng (parser gọi LLM ĐỒNG BỘ,
-~1.5 CV/s bền) rồi RAM (~11MB/CV 10MB đang bay). Công cụ: `scripts/loadtest_apply.py`.
+100%) ⇒ trần một đợt **28 → 678 hồ sơ**. Công cụ: `scripts/loadtest_apply.py`.
+⚠️ **Dự đoán "nút thắt kế tiếp là thread pool 14 luồng" ĐÃ ĐO VÀ SAI** — tài nguyên cạn TRƯỚC TIÊN là
+**pool checkpointer LangGraph**, mà thật ra cũng không phải pool: `AsyncPostgresSaver` giữ MỘT
+`asyncio.Lock` toàn tiến trình ⇒ đồng thời hoá SQL checkpoint = **1**. Đã vá bằng
+`MAX_CONCURRENT_PIPELINES` + timeout LLM. **Số đo đầy đủ + hướng scale → `docs/load-and-scale.md`.**
 
 **Đặt lịch — ứng viên tự chọn giờ (SCH-1 + SCH-2 + SCH-3 XONG — FEATURE ĐÃ KHÉP, PRD §10b):** CHẠY THẬT
 end-to-end. **SCH-3 (vòng đời sau khi gửi link):** `services/booking_lifecycle.sweep_once` ghép vào **sweep
@@ -112,7 +115,9 @@ loop 08c** (KHÔNG cơ chế nền mới) chạy BA lưới — nhắc trước 
 KHÔNG gia hạn), hết hạn thì `PENDING_REVIEW`. HR có **Huỷ lịch** + **Gửi lại link** (ghép lại = "đổi lịch",
 không có luồng dời riêng). Hết khung giờ → `no_slots_at` + nhãn dashboard RIÊNG "Hết khung giờ — cần mở thêm
 lịch" (cờ tự tắt khi có slot lại). Sức chứa nâng: `MAX_PER_DAY=6` · `WINDOW_DAYS=21` · `HOLD_MINUTES=5`
-(≈90 khung ⇒ ~18 người xem đồng thời; trước 4/14/10 ≈ 36 khung ⇒ ~7 người).
+(**ĐO THẬT: 75 khung ⇒ ~15 người xem đồng thời**, người thứ 19 nhận danh sách rỗng — con số cũ
+"≈90 khung ⇒ ~18 người" là SUY TỪ CÔNG THỨC và SAI: lưới giờ làm việc chỉ sinh 5 mốc/ngày chứ không
+phải 6, nên `MAX_PER_DAY=6` là **config chết**, không bao giờ chạm tới. Xem `docs/load-and-scale.md`).
 **SCH-2:** cả BA đường quyết định mời (gate lần-đầu, gate sau-screener, HR duyệt) đi chung
 `services/booking_flow.dispatch_booking_invite` → thư mời KÈM LINK `/booking/{token}` → **`AWAITING_BOOKING`**
 (chỉ sau khi email gửi THÀNH CÔNG — bất biến 08d); `INTERVIEW_SCHEDULED` nay đặt lúc ứng viên CHỌN XONG giờ.
@@ -196,9 +201,19 @@ KHÔNG thuộc slice này. Ba bẫy → `docs/AI_GUIDE.md` (3 gotcha cuối).
 **NOT yet done:** analytics; observability; anti-prompt-injection; `email.suppressed` (xem AI_GUIDE);
 mở `/cv-check` cho ứng viên (**không phải "0 dòng code"** — `/api/agents/*` sau
 `require_hr`, cần endpoint công khai + rate-limit + chống lạm dụng LLM ⇒ slice riêng);
-**runbook của 13**; test tải + scale;
-UI redesign; learning loop. Hardening tải còn nợ: semaphore chặn số pipeline song song, parser dùng
-`ainvoke` (bỏ thread pool), và **đường NHẬN CV vẫn giữ connection suốt lúc upload R2** (xem gotcha `refresh()`).
+**runbook của 13**; UI redesign; learning loop.
+
+**LOAD-1 (test tải + scale) XONG — số đo thật, xem `docs/load-and-scale.md`:** đo local (LLM giả lập
+đúng thời gian thật qua `OPENAI_API_BASE` → `scripts/mock_openai.py`, **0 đồng**) rồi xác nhận trên
+prod với LLM THẬT. **≤80 CV cùng lúc: xử lý trọn vẹn, 0 mất.** Ở 200 CV: trước vá 6 CV mất ở cửa nhận
++ 107 hồ sơ vào `[error]`; **sau vá 200/200 chấm điểm sạch**. **Đặt lịch: trần ~15 người xem đồng thời**
+(lưới 75 khung), và **đảm bảo không đặt trùng chịu được đua 12 chiều** (1×200 · 11×409 · 0×500).
+Nút thắt KHÔNG phải thread pool như đọc-code đoán, mà là **khoá `asyncio.Lock` duy nhất của
+`AsyncPostgresSaver`** (nâng pool 5→25 chỉ giảm lỗi 13%) ⇒ vá bằng `MAX_CONCURRENT_PIPELINES=15`
++ `OPENAI_TIMEOUT_SECONDS=120` (**đi CẶP**), bỏ `refresh()` thừa ở đường nhận (+test hồi quy 2 chiều),
+executor riêng cho storage, và làm ấm R2/DB lúc khởi động. Còn nợ: cảnh báo `no_slots_at` giả, TOCTOU
+sinh khung giờ, **rate limit công khai KHÔNG chạm được người dùng thật** (Vercel xoay IP egress —
+lỗ hổng chi phí LLM), `list_applications(limit=100)` làm HR **mất ứng viên sau hồ sơ thứ 100**.
 
 `ENABLE_LLM=true` enables real parser+ranker; `false` keeps stubs (for `test_graph`).
 
