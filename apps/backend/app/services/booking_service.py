@@ -59,6 +59,7 @@ __all__ = [
     "create_booking_session",
     "generate_slots",
     "has_any_session",
+    "has_no_slot_flag",
     "latest_booking",
     "load_valid_session",
     "lock_application",
@@ -660,6 +661,27 @@ async def no_slot_application_ids(session: AsyncSession) -> set[int]:
         BookingSession.booked_at.is_(None),
     )
     return set((await session.execute(stmt)).scalars().all())
+
+
+async def has_no_slot_flag(session: AsyncSession, application_id: int) -> bool:
+    """Bản MỘT HỒ SƠ của `no_slot_application_ids` — cùng WHERE, thêm `application_id ==` + LIMIT 1.
+
+    Vì sao cần cả hai: dạng tập hợp là ĐÚNG cho route danh sách (một truy vấn cho cả trang), nhưng
+    endpoint CHI TIẾT gọi nó để hỏi về ĐÚNG MỘT hồ sơ — tức quét cả bảng `booking_session` rồi vứt
+    gần hết kết quả. Bình thường thì không ai để ý; nhưng `/review` bắn một request chi tiết mỗi ca
+    chờ duyệt, nên chính hàm được viết ra để TRÁNH N+1 lại bị gọi theo đúng kiểu N+1.
+    """
+    stmt = (
+        select(BookingSession.id)
+        .where(
+            BookingSession.application_id == application_id,
+            BookingSession.no_slots_at.is_not(None),
+            BookingSession.cancelled_at.is_(None),
+            BookingSession.booked_at.is_(None),
+        )
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none() is not None
 
 
 async def has_any_session(session: AsyncSession, application_id: int) -> bool:

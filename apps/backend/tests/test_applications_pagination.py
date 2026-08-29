@@ -26,6 +26,7 @@ from app.core.database import get_session
 from app.core.security import create_access_token, hash_password
 from app.main import app
 from app.models.application import Application
+from app.models.email_delivery import DeliveryStatus
 from app.models.hr_user import HrUser
 from app.services import application_service
 
@@ -138,8 +139,8 @@ async def test_detail_still_has_heavy_fields(monkeypatch: pytest.MonkeyPatch) ->
     async def _none(*_a, **_k):
         return None
 
-    async def _empty_set(*_a, **_k):
-        return set()
+    async def _false(*_a, **_k):
+        return False
 
     async def _list(*_a, **_k):
         return []
@@ -147,7 +148,8 @@ async def test_detail_still_has_heavy_fields(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(routes_mod.application_service, "get_application", fake_get)
     monkeypatch.setattr(routes_mod.screening, "latest_answers", _list)
     monkeypatch.setattr(routes_mod.booking_service, "latest_booking", _none)
-    monkeypatch.setattr(routes_mod.booking_service, "no_slot_application_ids", _empty_set)
+    # C1: endpoint chi tiết nay hỏi MỘT hồ sơ (`has_no_slot_flag`), không quét cả bảng.
+    monkeypatch.setattr(routes_mod.booking_service, "has_no_slot_flag", _false)
     monkeypatch.setattr(routes_mod.booking_service, "has_any_session", _none)
     monkeypatch.setattr(routes_mod, "_latest_reason", _none)
 
@@ -268,3 +270,87 @@ async def test_no_status_filter_means_no_where() -> None:
     cap = _CapturingExec()
     await application_service.list_applications(cap)
     assert "where" not in str(cap.stmt).lower()
+
+
+# ── 5) C1: endpoint chi tiết không bắn truy vấn thừa ─────────────────────────
+
+
+async def test_detail_skips_email_reason_queries_when_flags_clear(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ba truy vấn `_latest_reason` chỉ chạy khi cờ email tương ứng đã bật.
+
+    Cờ suy ra từ `uncertainty_flags` sẵn có trên hàng (0 truy vấn) và UI chỉ render lý do BÊN TRONG
+    guard của cờ — nên với hồ sơ bình thường đây là 3 truy vấn thuần lãng phí, NHÂN LÊN theo số ca
+    trong hàng đợi `/review`.
+    """
+    from app.api.routes import applications as routes_mod
+
+    calls: list[str] = []
+
+    async def counting_reason(_session, _app_id, delivery_status):  # noqa: ANN001
+        calls.append(delivery_status)
+        return "lý do nào đó"
+
+    async def _none(*_a, **_k):
+        return None
+
+    async def _false(*_a, **_k):
+        return False
+
+    async def _list(*_a, **_k):
+        return []
+
+    async def fake_get(_session, _id):  # noqa: ANN001
+        return _app_row(3)  # uncertainty_flags=[] → cả ba cờ đều tắt
+
+    monkeypatch.setattr(routes_mod.application_service, "get_application", fake_get)
+    monkeypatch.setattr(routes_mod.screening, "latest_answers", _list)
+    monkeypatch.setattr(routes_mod.booking_service, "latest_booking", _none)
+    monkeypatch.setattr(routes_mod.booking_service, "has_no_slot_flag", _false)
+    monkeypatch.setattr(routes_mod.booking_service, "has_any_session", _none)
+    monkeypatch.setattr(routes_mod, "_latest_reason", counting_reason)
+
+    async with _client(RecordingSession([], _user())) as c:
+        _authed(c)
+        r = await c.get("/api/applications/3")
+    assert r.status_code == 200
+    assert calls == [], f"vẫn bắn {len(calls)} truy vấn lý do email dù không có cờ nào bật"
+
+
+async def test_detail_still_queries_reason_when_flag_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ngược lại: cờ BẬT thì lý do vẫn phải tới được HR — tối ưu không được nuốt thông tin thật."""
+    from app.api.routes import applications as routes_mod
+
+    calls: list[str] = []
+
+    async def counting_reason(_session, _app_id, delivery_status):  # noqa: ANN001
+        calls.append(delivery_status)
+        return "hộp thư không tồn tại"
+
+    async def _none(*_a, **_k):
+        return None
+
+    async def _false(*_a, **_k):
+        return False
+
+    async def _list(*_a, **_k):
+        return []
+
+    async def fake_get(_session, _id):  # noqa: ANN001
+        row = _app_row(4)
+        row.uncertainty_flags = ["email_bounced"]
+        return row
+
+    monkeypatch.setattr(routes_mod.application_service, "get_application", fake_get)
+    monkeypatch.setattr(routes_mod.screening, "latest_answers", _list)
+    monkeypatch.setattr(routes_mod.booking_service, "latest_booking", _none)
+    monkeypatch.setattr(routes_mod.booking_service, "has_no_slot_flag", _false)
+    monkeypatch.setattr(routes_mod.booking_service, "has_any_session", _none)
+    monkeypatch.setattr(routes_mod, "_latest_reason", counting_reason)
+
+    async with _client(RecordingSession([], _user())) as c:
+        _authed(c)
+        r = await c.get("/api/applications/4")
+    body = r.json()
+    assert body["email_bounce_reason"] == "hộp thư không tồn tại"
+    assert calls == [DeliveryStatus.BOUNCED.value], "chỉ hỏi ĐÚNG loại sự kiện đang có cờ"
+    assert body["email_complaint_reason"] is None

@@ -170,12 +170,19 @@ async def get_application(application_id: int, session: DBSession) -> Applicatio
     # Chi tiết: kèm câu trả lời sàng lọc + lịch phỏng vấn đã chốt (nếu có) cho HR (PRD §7.3, §10b, §11).
     answers = await screening.latest_answers(session, application_id)
     booking = await booking_service.latest_booking(session, application_id)
-    no_slots = await booking_service.no_slot_application_ids(session)
-    return ApplicationRead.model_validate(app_row).model_copy(
+    # `has_no_slot_flag` (một hồ sơ) THAY CHO `no_slot_application_ids` (quét cả bảng rồi vứt gần
+    # hết): endpoint này hỏi về ĐÚNG MỘT hồ sơ, và `/review` gọi nó một lần MỖI ca chờ duyệt.
+    no_slots = await booking_service.has_no_slot_flag(session, application_id)
+    # Ba lý do email chỉ được TRUY VẤN khi cờ tương ứng đã bật. Cờ suy ra từ `uncertainty_flags` sẵn
+    # có trên hàng (0 truy vấn), và UI ở cả ReviewCard lẫn `/applications/[id]` chỉ render lý do BÊN
+    # TRONG guard của cờ — nên với hồ sơ bình thường (tuyệt đại đa số) đây là 3 truy vấn thuần lãng
+    # phí, nhân lên theo số ca trong hàng đợi.
+    read = ApplicationRead.model_validate(app_row)
+    return read.model_copy(
         update={
             "screener_answers": answers,
             "interview": BookedInterview.model_validate(booking) if booking else None,
-            "booking_no_slots": application_id in no_slots,
+            "booking_no_slots": no_slots,
             # Đã từng được mời chưa — quyết định UI có hiện nút "Gửi lại link đặt lịch" hay không.
             # Hỏi ĐÚNG câu mà `resend_booking_link` hỏi, để nút chỉ xuất hiện khi nó bấm được.
             "has_booking_link": await booking_service.has_any_session(session, application_id),
@@ -183,13 +190,19 @@ async def get_application(application_id: int, session: DBSession) -> Applicatio
             # gộp chung (xem `_latest_reason`), để HR không đọc nhầm lý do complaint thành lý do bounce.
             "email_bounce_reason": await _latest_reason(
                 session, application_id, DeliveryStatus.BOUNCED.value
-            ),
+            )
+            if read.email_bounced
+            else None,
             "email_complaint_reason": await _latest_reason(
                 session, application_id, DeliveryStatus.COMPLAINED.value
-            ),
+            )
+            if read.email_complained
+            else None,
             "email_send_failure_reason": await _latest_reason(
                 session, application_id, DeliveryStatus.FAILED.value
-            ),
+            )
+            if read.email_send_failed
+            else None,
         }
     )
 
