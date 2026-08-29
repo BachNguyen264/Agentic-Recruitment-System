@@ -67,6 +67,38 @@ async def _interview_ics(
     return ([("phong-van.ics", event.ics, _ICS_MIME)] if event.ics else None), event.ref
 
 
+async def _flag_send_failure(session: AsyncSession, application_id: int) -> None:
+    """Gắn `email_send_failed` lên hồ sơ khi Resend TỪ CHỐI ngay lúc gửi. KHÔNG đổi trạng thái.
+
+    Vì sao cần (quan sát trên PROD 29/08/2026): một hồ sơ bị **auto-từ-chối** rồi thư từ chối gửi
+    hỏng sẽ nằm lại ở `REJECTED` với `uncertainty_flags` RỖNG — không màn HR nào nói rằng ứng viên
+    chưa hề được báo. Vết duy nhất là một dòng `audit_log`, mà HR không có giao diện để đọc. Đường
+    MỜI thì đã được `booking_flow.dispatch_booking_invite` xử riêng (hạ về PENDING_REVIEW + ghi lý
+    do); đường TỪ CHỐI thì không có ai xử ⇒ đúng loại "thất bại im lặng" mà PRD §13 cấm.
+
+    Dùng ĐÚNG cờ mà webhook `email.failed` dùng (EMAIL-2): gửi-hỏng-đồng-bộ và báo-hỏng-qua-webhook
+    là CÙNG một sự kiện với hai đường vào, nên phải cho CÙNG một tín hiệu. Cờ này đã được mọi màn HR
+    render sẵn ở MỌI trạng thái, nên không cần đụng gì tới giao diện.
+
+    KHÔNG đổi `status`: đó là quyết định của caller (chỉ caller biết thư này đứng sau việc gì).
+    KHÔNG bao giờ ném — hàm này chạy trong nhánh `except` của một lượt gửi đã hỏng; ném ở đây sẽ
+    thay một lỗi email bằng một lỗi 500.
+    """
+    try:
+        # Import CỤC BỘ: `booking_flow` import chính module này ⇒ import ở đầu file là vòng tròn.
+        from app.models.application import Application
+        from app.services.booking_flow import with_flag
+        from app.services.email_delivery import EMAIL_SEND_FAILED_FLAG
+
+        app_row = await session.get(Application, application_id)
+        if app_row is not None:
+            app_row.uncertainty_flags = with_flag(
+                app_row.uncertainty_flags, EMAIL_SEND_FAILED_FLAG
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("[scheduler] app=%s: không gắn được cờ email_send_failed", application_id)
+
+
 async def _dispatch(
     session: AsyncSession,
     *,
@@ -94,6 +126,8 @@ async def _dispatch(
             "[scheduler] app=%s: GỬI EMAIL %s THẤT BẠI tới %s: %s",
             application_id, mode, applicant_email, exc,
         )
+        # Gắn cờ TRƯỚC audit: `record(commit=True)` commit một lần cho cả hai (cùng một sự kiện).
+        await _flag_send_failure(session, application_id)
         await audit_service.record(
             session, application_id=application_id, node="scheduler", action="email_failed",
             detail={"mode": mode, "to": applicant_email, "error": str(exc)}, commit=True,

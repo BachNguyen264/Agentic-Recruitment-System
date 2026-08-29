@@ -139,3 +139,109 @@ async def test_notify_swallows_send_error(monkeypatch) -> None:
 
     assert out["email_sent"] is False
     assert "email_failed" in _audit_actions(session)
+
+
+# ── Gửi hỏng ĐỒNG BỘ → cờ email_send_failed (phát hiện khi verify prod 29/08/2026) ──────────────
+
+
+class _AppSession(FakeSession):
+    """FakeSession + `get()` trả về một Application — `_flag_send_failure` cần đọc hàng để gắn cờ."""
+
+    def __init__(self, app_row) -> None:  # noqa: ANN001
+        super().__init__()
+        self._app = app_row
+
+    async def get(self, _model, pk):  # noqa: ANN001
+        return self._app if (self._app is not None and self._app.id == pk) else None
+
+
+def _app(status: str = "REJECTED"):
+    from app.models.application import Application
+
+    row = Application(applicant_email="a@b.cc", status=status, uncertainty_flags=[])
+    row.id = 1
+    return row
+
+
+async def test_send_failure_flags_application(monkeypatch) -> None:
+    """Resend từ chối NGAY lúc gửi ⇒ hồ sơ PHẢI mang cờ `email_send_failed`.
+
+    Ca thật quan sát trên prod: hồ sơ auto-từ-chối, thư từ chối gửi hỏng, hồ sơ nằm lại REJECTED với
+    cờ RỖNG — không màn HR nào nói ứng viên chưa được báo; vết duy nhất là một dòng audit_log mà HR
+    không có giao diện để đọc. Đúng loại thất bại IM LẶNG mà PRD §13 cấm. Đường MỜI đã được
+    `dispatch_booking_invite` xử riêng; đường TỪ CHỐI thì không có ai xử.
+    """
+    from app.agents.nodes import scheduler as sched
+    from app.services.email_delivery import EMAIL_SEND_FAILED_FLAG
+
+    async def boom(**_kw):
+        raise RuntimeError("Invalid `to` field")
+
+    monkeypatch.setattr(sched.email_service, "send_email", boom)
+    row = _app()
+    session = _AppSession(row)
+
+    result = await sched._dispatch(
+        session, application_id=1, mode="reject", applicant_email="a@b.cc",
+        subject="s", html="<p>h</p>",
+    )
+
+    assert result["email_sent"] is False                        # hợp đồng cũ giữ nguyên
+    assert EMAIL_SEND_FAILED_FLAG in row.uncertainty_flags      # cờ HIỆN CHO HR
+    assert row.status == "REJECTED"                             # KHÔNG đổi trạng thái (việc của caller)
+    assert "email_failed" in _audit_actions(session)            # audit cũ vẫn ghi
+
+
+async def test_send_failure_flag_is_idempotent(monkeypatch) -> None:
+    """Hai lượt gửi hỏng liên tiếp KHÔNG được nhân đôi cờ trong danh sách."""
+    from app.agents.nodes import scheduler as sched
+    from app.services.email_delivery import EMAIL_SEND_FAILED_FLAG
+
+    async def boom(**_kw):
+        raise RuntimeError("hỏng")
+
+    monkeypatch.setattr(sched.email_service, "send_email", boom)
+    row = _app()
+    for _ in range(2):
+        await sched._dispatch(
+            _AppSession(row), application_id=1, mode="reject",
+            applicant_email="a@b.cc", subject="s", html="<p>h</p>",
+        )
+    assert row.uncertainty_flags.count(EMAIL_SEND_FAILED_FLAG) == 1
+
+
+async def test_send_failure_flagging_never_raises(monkeypatch) -> None:
+    """Việc gắn cờ KHÔNG được biến một lỗi email thành lỗi 500 — `_dispatch` vẫn trả về bình thường."""
+    from app.agents.nodes import scheduler as sched
+
+    class _Broken(FakeSession):
+        async def get(self, _model, _pk):  # noqa: ANN001
+            raise RuntimeError("DB sập")
+
+    async def boom(**_kw):
+        raise RuntimeError("Resend hỏng")
+
+    monkeypatch.setattr(sched.email_service, "send_email", boom)
+    result = await sched._dispatch(
+        _Broken(), application_id=1, mode="reject", applicant_email="a@b.cc",
+        subject="s", html="<p>h</p>",
+    )
+    assert result["email_sent"] is False
+
+
+async def test_successful_send_does_not_flag(monkeypatch) -> None:
+    """Gửi THÀNH CÔNG tuyệt đối không được gắn cờ — cờ giả còn tệ hơn không có cờ."""
+    from app.agents.nodes import scheduler as sched
+    from app.services.email_delivery import EMAIL_SEND_FAILED_FLAG
+
+    async def ok(**_kw):
+        return "resend-id-1"
+
+    monkeypatch.setattr(sched.email_service, "send_email", ok)
+    row = _app()
+    result = await sched._dispatch(
+        _AppSession(row), application_id=1, mode="reject", applicant_email="a@b.cc",
+        subject="s", html="<p>h</p>",
+    )
+    assert result["email_sent"] is True
+    assert EMAIL_SEND_FAILED_FLAG not in row.uncertainty_flags
