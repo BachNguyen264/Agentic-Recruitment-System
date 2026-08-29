@@ -33,6 +33,24 @@ export const API_BASE =
 // (Vercel+Render) hoạt động nhờ CORS allow_credentials + cookie SameSite=None (cấu hình qua ENV).
 const CREDENTIALS: RequestCredentials = "include";
 
+// Base URL cho ĐƯỜNG NỘP CV CÔNG KHAI — cố ý ĐI THẲNG tới backend, KHÔNG qua rewrite của Vercel.
+//
+// Vì sao phải khác: rate-limit của backend khoá quota theo IP client, đọc từ header
+// `CF-Connecting-IP` mà Cloudflare đặt. Nhưng khi trình duyệt gọi Vercel rồi Vercel proxy sang
+// Render, kẻ CHẠM Cloudflare là VERCEL — nên `CF-Connecting-IP` = IP egress của Vercel, và Vercel
+// xoay IP liên tục ⇒ gần như mỗi request một xô mới. Đo thật (docs/load-and-scale.md §5): gọi
+// thẳng Render bị 429 từ lượt 21; qua Vercel 52 lượt KHÔNG lượt nào bị chặn. Nghĩa là hạn mức trên
+// đường nộp CV — đường DUY NHẤT người lạ kích hoạt được hai lượt LLM tốn tiền — chưa từng ràng buộc
+// ai. Gọi thẳng thì trình duyệt là bên chạm Cloudflare, `CF-Connecting-IP` thành IP thật của khách.
+//
+// CHỈ dùng cho `getOpenJobs` / `getPublicJob` / `submitApplication`: cả ba là GET hoặc POST
+// `multipart/form-data` — đều nằm trong danh sách CORS-safelisted nên KHÔNG sinh preflight, và
+// origin Vercel đã có trong `CORS_ORIGINS`. Screening/booking gửi JSON (CÓ preflight) và login cần
+// cookie first-party ⇒ giữ nguyên qua proxy, không đụng.
+//
+// Chưa đặt env → bằng API_BASE = hành vi cũ y nguyên (mặc định an toàn, không vỡ dev).
+export const PUBLIC_API_BASE = process.env.NEXT_PUBLIC_PUBLIC_API_BASE ?? API_BASE;
+
 // 401 giữa phiên (hết hạn/đăng xuất nơi khác) trên các call DỮ LIỆU HR → về /login. CHỈ ở browser;
 // tránh vòng lặp khi đã ở /login. Các call auth (login/getMe/logout) KHÔNG dùng đường này (tự xử lý).
 function redirectToLogin(): void {
@@ -236,8 +254,16 @@ export async function downloadCv(id: number): Promise<void> {
 }
 
 // ── Công khai (ứng viên guest — slice 07) ──
-export const getOpenJobs = () => getJson<PublicJob[]>("/api/public/jobs");
-export const getPublicJob = (id: number) => getJson<PublicJob>(`/api/public/jobs/${id}`);
+// Ba hàm dưới đây đi qua PUBLIC_API_BASE (thẳng tới backend) để rate-limit đếm ĐÚNG IP ứng viên —
+// xem chú thích ở chỗ khai báo PUBLIC_API_BASE.
+async function getPublicJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${PUBLIC_API_BASE}${path}`, { credentials: CREDENTIALS });
+  if (!res.ok) throw new Error(`HTTP ${res.status} khi GET ${path}`);
+  return (await res.json()) as T;
+}
+
+export const getOpenJobs = () => getPublicJson<PublicJob[]>("/api/public/jobs");
+export const getPublicJob = (id: number) => getPublicJson<PublicJob>(`/api/public/jobs/${id}`);
 
 // Nộp CV công khai (multipart: job_id + email + file). Lỗi validate server → ném message rõ.
 export async function submitApplication(
@@ -250,7 +276,7 @@ export async function submitApplication(
   form.append("applicant_email", email);
   form.append("file", file);
   // Public (guest) — không cần cookie; credentials include vô hại + nhất quán.
-  const res = await fetch(`${API_BASE}/api/public/applications`, {
+  const res = await fetch(`${PUBLIC_API_BASE}/api/public/applications`, {
     method: "POST",
     body: form,
     credentials: CREDENTIALS,
