@@ -7,8 +7,19 @@ Nộp CV = upload file (PDF/DOCX) + email + job_id → lưu file local, tạo Ap
 from __future__ import annotations
 
 from pathlib import PurePosixPath
+from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,9 +94,40 @@ async def create_application(
     return ApplicationRead.model_validate(app_row)
 
 
-@router.get("", response_model=list[ApplicationRead])
-async def list_applications(session: DBSession) -> list[ApplicationRead]:
-    rows = await application_service.list_applications(session)
+@router.get(
+    "",
+    response_model=list[ApplicationRead],
+    # Danh sách KHÔNG chở `parsed_data` + `score_breakdown` (~80% bytes mỗi dòng đã chấm điểm, đo
+    # thật trên prod: 2.984 B/dòng). `packages/shared-types` VỐN ĐÃ khai `ApplicationListItem` không
+    # có hai trường này — đây là sửa API cho khớp hợp đồng frontend vốn đã tuyên bố, không phải cắt
+    # tính năng. Ai cần chúng thì gọi `GET /applications/{id}` (đúng chỗ của trường nặng).
+    #
+    # ⚠ BẮT BUỘC dạng `{"__all__": {...}}`. Viết set PHẲNG `{"parsed_data", ...}` trên một
+    # `response_model=list[...]` là NO-OP IM LẶNG: Pydantic v2 hiểu set phẳng trên sequence là CHỈ SỐ
+    # phần tử và bỏ qua key chuỗi — endpoint vẫn trả đủ trường mà không có lỗi nào.
+    response_model_exclude={"__all__": {"parsed_data", "score_breakdown"}},
+)
+async def list_applications(
+    session: DBSession,
+    # Tên tham số là `statuses` nhưng query string là `?status=` (alias): đặt tên biến `status` ở đây
+    # sẽ CHE module `fastapi.status` vốn đang được dùng trong chính file này.
+    statuses: Annotated[
+        list[str] | None,
+        Query(alias="status", description="Lọc theo trạng thái (lặp lại để chọn nhiều)"),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[ApplicationRead]:
+    """Một TRANG hồ sơ (mới nhất trước). Tổng số lấy từ `GET /applications/pipeline` `counts`.
+
+    `le=200` KHÔNG phải trang trí: router HR không nằm trong bất kỳ xô rate-limit nào
+    (`core/hardening.py` chỉ bọc login / ghi công khai / health sâu), nên `?limit=100000` sẽ tuần tự
+    hoá cả bảng trong một request. Mặc định giữ 100 vì `scripts/loadtest_apply.py` ghim
+    `WINDOW_LIMIT = 100` để đối soát — đổi mặc định là làm script báo sai mà không kêu.
+    """
+    rows = await application_service.list_applications(
+        session, statuses=statuses, limit=limit, offset=offset
+    )
     # MỘT truy vấn cho cả trang (không phải mỗi dòng một truy vấn): hồ sơ nào đã chạm cảnh hết
     # khung giờ thì dashboard phải nói đúng là LỊCH đang chặn, không phải ứng viên chậm (SCH-3).
     no_slots = await booking_service.no_slot_application_ids(session)

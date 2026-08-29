@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,9 +34,32 @@ async def get_application(session: AsyncSession, application_id: int) -> Applica
     return await session.get(Application, application_id)
 
 
-async def list_applications(session: AsyncSession, *, limit: int = 100) -> list[Application]:
+async def list_applications(
+    session: AsyncSession,
+    *,
+    statuses: Sequence[str] | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[Application]:
+    """Một TRANG hồ sơ, mới nhất trước. Lọc trạng thái ở SERVER (không phải sau khi đã cắt trang).
+
+    ⚠ `order_by` PHẢI có `id.desc()` làm khoá phụ. `created_at` KHÔNG unique (đo trên prod: 40 hồ sơ
+    trong cùng một phút, nhiều hồ sơ trùng mili-giây) và cũng KHÔNG có index — `OFFSET` trên một khoá
+    không unique thì thứ tự giữa các hàng bằng nhau do Postgres tuỳ ý chọn, nên trang 2 có thể LẶP
+    một hàng của trang 1 và NUỐT một hàng khác. Đó là lỗi im lặng: HR không thấy gì bất thường, chỉ
+    là một ứng viên không bao giờ xuất hiện.
+
+    Lọc ở đây thay vì để client lọc trên trang đã cắt: trước LOAD-1, `/review` tải "100 hồ sơ mới
+    nhất" rồi mới `filter(status === PENDING_REVIEW)` — trên prod 206 hồ sơ, cửa sổ đó rơi trọn vào
+    mẻ probe nên hàng đợi hiện 100 ca rác và giấu 86 ca đã chấm điểm sạch.
+    """
+    stmt = select(Application)
+    if statuses:
+        stmt = stmt.where(Application.status.in_(statuses))
     result = await session.execute(
-        select(Application).order_by(Application.created_at.desc()).limit(limit)
+        stmt.order_by(Application.created_at.desc(), Application.id.desc())
+        .limit(limit)
+        .offset(offset)
     )
     return list(result.scalars().all())
 
