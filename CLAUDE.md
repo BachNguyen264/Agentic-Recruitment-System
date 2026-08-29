@@ -211,9 +211,27 @@ prod với LLM THẬT. **≤80 CV cùng lúc: xử lý trọn vẹn, 0 mất.** 
 Nút thắt KHÔNG phải thread pool như đọc-code đoán, mà là **khoá `asyncio.Lock` duy nhất của
 `AsyncPostgresSaver`** (nâng pool 5→25 chỉ giảm lỗi 13%) ⇒ vá bằng `MAX_CONCURRENT_PIPELINES=15`
 + `OPENAI_TIMEOUT_SECONDS=120` (**đi CẶP**), bỏ `refresh()` thừa ở đường nhận (+test hồi quy 2 chiều),
-executor riêng cho storage, và làm ấm R2/DB lúc khởi động. Còn nợ: cảnh báo `no_slots_at` giả, TOCTOU
-sinh khung giờ, **rate limit công khai KHÔNG chạm được người dùng thật** (Vercel xoay IP egress —
-lỗ hổng chi phí LLM), `list_applications(limit=100)` làm HR **mất ứng viên sau hồ sơ thứ 100**.
+executor riêng cho storage, và làm ấm R2/DB lúc khởi động. ⚠ **Đính chính: "200/200 chấm điểm sạch" là
+số của bản chạy LOCAL với LLM giả lập** — trên prod chỉ có 86 CV thật đi qua pipeline (và cả 86 đều
+chấm sạch). Còn nợ sau AUDIT-1: cảnh báo `no_slots_at` giả (xem dưới), TOCTOU sinh khung giờ.
+
+**AUDIT-1 (audit prod sau LOAD-1) XONG — 32 phát hiện qua phản biện đối kháng, 8 commit.** Gốc rễ là
+**`list_applications(limit=100)`**: `GET /api/applications` cắt cứng 100 dòng, không offset/lọc/total,
+mà `/applications` + `/review` + badge sidebar ĐỀU ăn từ đó ⇒ ba màn nói ba con số khác nhau và
+**86 hồ sơ đã chấm điểm sạch trở nên không thể chạm tới bằng bất kỳ nút nào**. Đã vá: phân trang +
+`?status=` lọc ở SERVER (+ khoá phụ `id DESC` chống lặp/nuốt dòng khi `created_at` trùng, + trần
+`limit le=200` vì router HR không có rate-limit nào đỡ); danh sách BỎ `parsed_data`+`score_breakdown`
+(~80% bytes/dòng — `shared-types` vốn đã khai `ApplicationListItem` không có chúng); `/review` hỏi
+`?status=PENDING_REVIEW&limit=20` thay vì tải 100 rồi lọc client (**100 request × ~9 SQL → 20**), có
+`staleTime`/nhánh lỗi/xác nhận-sau-quyết-định đọc từ `data.status`; badge đọc `/pipeline` (205 B,
+15s) thay vì poll 81.5 KB mỗi 5s trên MỌI trang HR. Kèm: **trần 60k ký tự khi trích CV** (một PDF
+0.918 MB hợp lệ trích ra 12.46 TRIỆU ký tự ⇒ ~$0.36/request + OOM 512 MB, qua endpoint CÔNG KHAI) →
+cờ `cv_truncated` mà **ranker phải CHỞ QUA** (nó thay mới trọn `uncertainty_flags`); **nộp CV gọi
+THẲNG Render** (`NEXT_PUBLIC_PUBLIC_API_BASE`) để rate-limit đếm đúng IP ứng viên — qua rewrite
+Vercel thì `CF-Connecting-IP` = IP egress của Vercel, xoay liên tục ⇒ 52 lượt 0 bị chặn; timeout cho
+`rubric_suggester` (client OpenAI DUY NHẤT còn thiếu) + nhả connection trước lượt LLM + bcrypt sang
+`run_in_threadpool`. **`BOOKING_MAX_PER_DAY=6` là CONFIG CHẾT** — lưới giờ làm chỉ sinh 5 mốc/ngày.
+Prod đã dọn sạch 206 hồ sơ test (+21.068 dòng checkpoint + 206 file R2 + JD `[LOADTEST]`).
 
 `ENABLE_LLM=true` enables real parser+ranker; `false` keeps stubs (for `test_graph`).
 

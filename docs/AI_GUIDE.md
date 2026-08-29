@@ -522,3 +522,30 @@
   phục vụ… KHÔNG gì cả, trong khi client nói chuyện với server CŨ. Đã mất một lượt đo vì tưởng mock hỏng.
   Trước mỗi lượt đo: `Get-NetTCPConnection -LocalPort <p> -State Listen` rồi `Stop-Process -Force` **lặp
   cho tới khi cổng thật sự trống**. (Cùng họ với gotcha uvicorn-fork đã ghi.)
+- **`response_model_exclude` dạng set PHẲNG trên `response_model=list[Model]` là NO-OP IM LẶNG (AUDIT-1).**
+  Muốn bỏ trường khỏi MỘT DANH SÁCH thì phải viết `{"__all__": {"parsed_data", "score_breakdown"}}`.
+  Viết `{"parsed_data", "score_breakdown"}` (set phẳng) thì Pydantic v2 hiểu đó là **chỉ số phần tử** của
+  sequence, bỏ qua key chuỗi, và endpoint trả **đủ mọi trường** — không exception, không cảnh báo, không
+  log. Một bản vá "giảm 80% payload" có thể qua review, lên prod và không giảm một byte nào. Cách duy nhất
+  bắt được là **assert trường VẮNG MẶT trong JSON** (`tests/test_applications_pagination.py`).
+- **`LocalStorage.delete` không bao giờ raise ⇒ mọi báo cáo "đã xoá N file" đều có thể là nói dối (AUDIT-1).**
+  Nó là `unlink(missing_ok=True)`. Nên chạy `scripts/reset_demo_data.py` với `STORAGE_BACKEND=local`
+  (mặc định trong `.env` dev) trong khi file CV thật nằm trên **R2** sẽ in đủ `+206/206 file CV` mà chưa
+  chạm một byte nào trên bucket — báo cáo thành công hoàn hảo cho việc chưa hề xảy ra. Vì thế script nay
+  in **header môi trường** (backend + đích + host DB) trước cả dry-run: ĐỌC nó trước khi gõ `--commit`.
+  Suy rộng: `delete` idempotent theo hợp đồng trên CẢ HAI backend, nên "+N/N" chỉ có nghĩa "N lượt gọi
+  không lỗi", KHÔNG chứng minh N file từng tồn tại. Muốn biết kho sạch chưa thì **liệt kê prefix trên
+  bucket** (đã làm sau lần dọn prod 29/08/2026 — còn đúng 9 object mồ côi CŨ, không thuộc lần dọn này).
+- **Cờ của parser bị ranker NUỐT nếu không chở tay (AUDIT-1).** `ranker_node` **thay mới trọn**
+  `uncertainty_flags` ở MỌI nhánh return (`_stub`, `rank_cv`, cả nhánh `parse_failed` cũng phải tự dựng
+  lại cờ). Nên bất kỳ cờ nào parser đặt mà muốn sống tới `policy.should_review` đều phải được **chở qua
+  ranker tường minh** (`carried`) — nếu không nó biến mất im lặng và hồ sơ đi thẳng vào gate auto với
+  confidence cao. Đây chính là lý do `parse_failed` phải có một nhánh `if` RIÊNG trong `ranker_node`;
+  `cv_truncated` (trần ký tự CV) đi theo đúng khuôn đó và có test khoá bất biến.
+- **Rate limit sau proxy Vercel KHÔNG ràng buộc ai (AUDIT-1).** Quota khoá theo `CF-Connecting-IP` do
+  Cloudflare đặt = IP của bên **chạm Cloudflare**. Khi `next.config` rewrite `/api/*` sang Render thì bên
+  đó là **Vercel**, mà Vercel xoay IP egress liên tục ⇒ gần như mỗi request một xô mới. Đo: thẳng vào
+  Render 429 từ lượt 21; qua Vercel **52 lượt, 0 bị chặn**. Đường nộp CV vì thế đi THẲNG backend qua
+  `NEXT_PUBLIC_PUBLIC_API_BASE`. Chỉ áp được cho GET + POST `multipart/form-data` (CORS-safelisted ⇒
+  KHÔNG preflight); screening/booking gửi JSON nên **có** preflight, login cần cookie first-party — hai
+  nhóm đó phải giữ qua proxy. Thêm endpoint công khai mới ⇒ hỏi ngay "quota này đếm IP của ai?".

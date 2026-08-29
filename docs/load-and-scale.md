@@ -378,12 +378,20 @@ trước khi đo (xem `docs/AI_GUIDE.md`).
 
 - [ ] **Chốt nốt ~6–10s còn lại của cụm-đầu-tiên** (§5b) — chưa xác định được nguyên nhân.
 - [ ] Vá **cảnh báo `no_slots_at` giả** (§3.3a) và **TOCTOU sinh khung giờ** (§3.3b).
-- [ ] Vá **rate limit không chạm được người dùng thật** (§5) — lỗ hổng chi phí LLM, **ưu tiên cao**.
-- [ ] Vá **`list_applications(limit=100)`**: hàng đợi review chỉ thấy 100 hồ sơ **mới nhất**, ca chờ
-      duyệt thứ 101 trở đi **biến mất khỏi HR vĩnh viễn** (thấy trực tiếp ở run N=200: *"ngoài cửa sổ 100"*).
+- [x] ~~Vá **rate limit không chạm được người dùng thật** (§5)~~ — XONG (AUDIT-1): đường nộp CV gọi
+      THẲNG Render qua `NEXT_PUBLIC_PUBLIC_API_BASE`, kèm trần 60k ký tự khi trích CV (chặn chi phí
+      MỖI request, bổ sung cho việc chặn SỐ request). **Cần đặt biến env đó trên Vercel mới có tác dụng.**
+- [x] ~~Vá **`list_applications(limit=100)`**~~ — XONG (AUDIT-1): phân trang + `?status=` lọc ở server
+      (khoá phụ `id DESC`, trần `limit le=200`), `/review` hỏi đúng `PENDING_REVIEW&limit=20`, badge đọc
+      `/pipeline`. Triệu chứng thật quan sát được trên prod: 206 hồ sơ ⇒ cửa sổ 100 dòng rơi TRỌN vào mẻ
+      probe, **86 hồ sơ đã chấm điểm sạch không thể chạm tới bằng bất kỳ nút/bộ lọc nào**.
 - [ ] Tách `try` cho ba lưới của vòng quét + thêm `LIMIT` (§7).
 - [ ] `executor` gauge trả `null` trên prod vì `uvloop` — cân nhắc `set_default_executor` để đo được.
-- [ ] Dọn dữ liệu test trên prod + **lưu trữ JD 8 `[LOADTEST]`**; đổi mật khẩu `admin@ars.prod`.
+- [x] ~~Dọn dữ liệu test trên prod + **lưu trữ JD 8 `[LOADTEST]`**~~ — XONG 29/08/2026: xoá 206
+      application + 1.116 audit_log + **21.068 dòng checkpoint** + 206 file CV trên R2 + chính JD 8
+      (kèm vector Qdrant). Snapshot `pre-purge-2026-08-29` giữ đường lùi. Verify bằng SQL + liệt kê
+      prefix `cv/` trên bucket, KHÔNG tin dòng "+206/206" của script (xem gotcha `LocalStorage.delete`).
+- [ ] **Đổi mật khẩu `admin@ars.prod`** (đã lộ trong chat) — việc THỦ CÔNG còn lại, chưa làm.
 
 ---
 

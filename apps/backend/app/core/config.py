@@ -161,10 +161,21 @@ class Settings(BaseSettings):
     booking_buffer_minutes: int = 15
     # KHÔNG mời giờ sớm hơn ngần này kể từ lúc ứng viên bấm link (ứng viên cần thời gian thu xếp).
     booking_lead_time_hours: float = 24
-    # SỨC CHỨA (chỉnh ở SCH-3 sau khi đo). Ba số này quyết định "bao nhiêu ứng viên xem link cùng lúc
-    # thì lịch cạn": mỗi lượt xem giữ `slots_offered` khung trong `hold_minutes`, tổng kho là
-    # max_per_day × số ngày làm trong window. 4×14 ngày (~36 khung) chỉ đủ ~7 người xem đồng thời —
-    # đo ở SCH-2. 6×21 ngày ≈ 90 khung ⇒ ~18 người, và hold 5 phút trả khung về kho nhanh gấp đôi.
+    # SỨC CHỨA. Mỗi lượt xem link giữ `slots_offered` khung trong `hold_minutes`, nên trần "bao nhiêu
+    # ứng viên xem cùng lúc" = tổng kho ÷ slots_offered.
+    #
+    # ⚠ ĐÍNH CHÍNH (LOAD-1, đo thật): tổng kho KHÔNG phải `max_per_day × số ngày làm`. Số khung mỗi
+    # ngày do LƯỚI GIỜ LÀM VIỆC sinh ra, và `max_per_day` chỉ là trần ÁP LÊN lưới đó. Với cấu hình
+    # hiện tại (08:00–17:30, duration 60, buffer 15 ⇒ bước 75 phút, nghỉ trưa 12:00–13:30) lưới chỉ
+    # ra **5 mốc/ngày**: 08:00 · 09:15 · 10:30 · 14:15 · 15:30 (11:45 và 13:00 đè nghỉ trưa nên bị
+    # bỏ; 16:45 vượt giờ tan làm). ⇒ 5 × 15 ngày làm trong 21 ngày lịch = **75 khung ⇒ ~15 người xem
+    # đồng thời** (đo được: người thứ 19 nhận danh sách rỗng). Con số cũ "≈90 khung ⇒ ~18 người" là
+    # SUY TỪ CÔNG THỨC 6×15 và SAI.
+    #
+    # ⇒ `booking_max_per_day = 6` hiện là **CONFIG CHẾT**: lưới không bao giờ sinh tới 6 nên nâng nó
+    # KHÔNG thêm được một khung nào. Muốn tăng sức chứa thật thì chỉnh bốn knob CÓ tác dụng:
+    # `booking_work_end` (kéo dài ngày), `booking_buffer_minutes` / `booking_duration_minutes` (giảm
+    # bước lưới), `booking_window_days` (thêm ngày). Giữ lại 6 làm trần an toàn phòng khi lưới dày lên.
     booking_max_per_day: int = 6
     booking_window_days: int = 21
     booking_slots_offered: int = 5

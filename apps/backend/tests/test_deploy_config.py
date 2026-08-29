@@ -242,6 +242,9 @@ def test_env_example_only_lists_real_settings_fields() -> None:
         "upstash_redis_rest_token",
         # Biến của FRONTEND (đặt ở Vercel, không phải backend Settings).
         "next_public_api_base",
+        # AUDIT-1: base riêng cho đường nộp CV — gọi THẲNG Render để rate-limit đếm đúng IP ứng viên
+        # (qua rewrite Vercel thì CF-Connecting-IP là IP egress của Vercel, xoay liên tục).
+        "next_public_public_api_base",
     }
     unknown = keys - set(Settings.model_fields) - exempt
     assert not unknown, f".env.example có key KHÔNG tồn tại trong Settings: {sorted(unknown)}"
