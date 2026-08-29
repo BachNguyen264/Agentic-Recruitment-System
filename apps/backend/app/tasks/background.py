@@ -9,6 +9,8 @@ hiện chạy thẳng một mạch (chưa suspend).
 
 from __future__ import annotations
 
+import asyncio
+
 from app.agents.nodes import scheduler
 from app.agents.runner import resume_with_trace, run_with_trace
 from app.core.config import settings
@@ -28,6 +30,73 @@ from app.services.email_delivery import (
 )
 
 logger = get_logger("app.tasks.background")
+
+# ── ĐỒNG HỒ ĐO PIPELINE (chỉ chẩn đoán — `GET /api/health/metrics` ĐỌC, không ai khác GHI) ─────────
+# VÌ SAO cần: `process_application` chạy trong BackgroundTasks nên KHÔNG có gì ở ngoài nhìn thấy nó.
+# Load test chỉ đo được "201 trả về nhanh cỡ nào" (tầng NHẬN) chứ mù hoàn toàn về tầng XỬ LÝ — muốn
+# biết bao nhiêu pipeline đang bay CÙNG LÚC thì trước đây phải suy từ trạng thái trong DB, tức là
+# thêm truy vấn vào đúng cái pool đang muốn đo. Bốn số nguyên trong RAM thì không đụng gì cả.
+#
+# VÌ SAO KHÔNG khoá: cả bốn biến CHỈ bị đổi trong `process_application`, một coroutine chạy trên
+# event loop chính; `+= 1` là thao tác đồng bộ, KHÔNG có `await` xen giữa đọc và ghi ⇒ không có điểm
+# nhường lượt nào để hai coroutine giẫm lên nhau. Thêm `Lock` ở đây chỉ tạo ảo giác an toàn.
+#
+# BẤT BIẾN: `_STARTED == _FINISHED + _IN_FLIGHT` (đúng ở MỌI thời điểm — `finally` chạy cả khi
+# coroutine bị cancel). `_FAILED` là TẬP CON của `_FINISHED`, không phải nhánh song song: một pipeline
+# hỏng vẫn là một pipeline đã kết thúc. Load test dựa vào bất biến này để phát hiện rò rỉ.
+_PIPELINES_IN_FLIGHT = 0
+_PIPELINES_STARTED = 0
+_PIPELINES_FINISHED = 0
+_PIPELINES_FAILED = 0
+
+
+# ── TRẦN SỐ PIPELINE CHẠY ĐỒNG THỜI (hardening tải, đợt 2) ────────────────────────────────────────
+# VÌ SAO có: đo thật 200 CV nộp cùng lúc → 200 pipeline cùng đua vào checkpointer LangGraph, mà
+# `AsyncPostgresSaver` chỉ có MỘT `asyncio.Lock` cho cả tiến trình (aio.py:46, giữ ở cả ba nhánh
+# `_cursor()`), lại lấy connection TRƯỚC rồi mới xếp hàng vào khoá. Kết quả: 93/200 hồ sơ vỡ
+# `PoolTimeout sau 30s` → PENDING_REVIEW[error]. Nâng pool checkpointer 5→25 chỉ kéo 107→93 ⇒ nút
+# thắt KHÔNG phải kích thước pool mà là cái khoá. Việc phải làm là chặn ở ĐẦU VÀO: cùng một lượng
+# việc, nhưng vào từng đợt có trật tự thay vì tất cả cùng lúc rồi hỏng hàng loạt.
+#
+# VÌ SAO Semaphore chứ không phải hàng đợi/worker: CLAUDE.md cấm worker queue polling Redis, và
+# BackgroundTasks đã là "hàng đợi" sẵn có — chỉ thiếu cái van. Coroutine đang chờ van KHÔNG giữ
+# connection, KHÔNG giữ luồng, chỉ tốn vài KB RAM; nó ngủ cho tới lượt.
+#
+# BẮT BUỘC đi kèm `openai_timeout_seconds`: một lượt gọi LLM treo vô hạn sẽ giữ một suất VĨNH VIỄN
+# và biến van thành nút cổ chai chết. Không có timeout thì ĐỪNG bật van này.
+_PIPELINE_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+def _pipeline_semaphore() -> asyncio.Semaphore | None:
+    """Van giới hạn pipeline đồng thời — `None` nghĩa là TẮT trần (`max_concurrent_pipelines <= 0`).
+
+    Tạo LƯỜI (lần gọi đầu) chứ không phải lúc import: `asyncio.Semaphore()` ở Python 3.10+ không gắn
+    event loop lúc dựng, nhưng tạo lười vẫn an toàn hơn cho test (đổi settings rồi gọi lại vẫn đúng
+    trong cùng một tiến trình chưa từng dùng van).
+    """
+    global _PIPELINE_SEMAPHORE
+    limit = settings.max_concurrent_pipelines
+    if limit <= 0:
+        return None
+    if _PIPELINE_SEMAPHORE is None:
+        _PIPELINE_SEMAPHORE = asyncio.Semaphore(limit)
+    return _PIPELINE_SEMAPHORE
+
+
+def pipeline_gauges() -> dict[str, int | None]:
+    """Ảnh chụp bộ đếm pipeline cho endpoint chẩn đoán. Thuần RAM — KHÔNG chạm DB, KHÔNG raise."""
+    limit = settings.max_concurrent_pipelines
+    return {
+        "in_flight": _PIPELINES_IN_FLIGHT,
+        # SUY RA chứ không đếm riêng: một coroutine bị cancel LÚC ĐANG CHỜ van sẽ không chạy `finally`
+        # của thân hàm, nên bộ đếm "queued" riêng sẽ rò. Hiệu số thì luôn tự khớp lại.
+        "queued": _PIPELINES_STARTED - _PIPELINES_FINISHED - _PIPELINES_IN_FLIGHT,
+        "limit": limit if limit > 0 else None,
+        "started_total": _PIPELINES_STARTED,
+        "finished_total": _PIPELINES_FINISHED,
+        "failed_total": _PIPELINES_FAILED,
+    }
+
 
 async def _escalate_technical_error(application_id: int, reason: str) -> None:
     """Đưa hồ sơ về PENDING_REVIEW[error] (PRD §13) bằng session MỚI. KHÔNG BAO GIỜ raise.
@@ -137,7 +206,19 @@ async def process_application(application_id: int, *, force_review: bool = False
     NGOÀI try nên pool cạn ngay tại đó ném thẳng ra ngoài BackgroundTasks: Starlette KHÔNG bắt,
     response 201 thì đã trả cho ứng viên, hồ sơ nằm mãi ở SUBMITTED với audit_log TRỐNG — mất im lặng.
     """
+    global _PIPELINES_IN_FLIGHT, _PIPELINES_STARTED, _PIPELINES_FINISHED, _PIPELINES_FAILED
+
     logger.info("BG: bắt đầu xử lý application_id=%s", application_id)
+    # Đếm NGOÀI `try` nhưng NGAY TRƯỚC nó: `+= 1` trên int không thể ném, nên không có kẽ hở nào cho
+    # một pipeline "đã bắt đầu" mà không bao giờ được trừ. Đặt trong `try` thì đọc dễ nhầm là có thể
+    # nhảy vào `finally` khi CHƯA cộng.
+    _PIPELINES_STARTED += 1
+    # VAN: chờ tới lượt TRƯỚC khi chạm bất cứ tài nguyên nào (chưa mở session, chưa mượn luồng).
+    # Chờ ở đây là chờ RẺ; chờ ở trong là chờ trong lúc đang giữ connection/luồng của người khác.
+    slot = _pipeline_semaphore()
+    if slot is not None:
+        await slot.acquire()
+    _PIPELINES_IN_FLIGHT += 1
     try:
         # ── 1) ĐỌC: lấy MỌI thứ pipeline cần rồi TRẢ connection ngay. Chụp ra biến cục bộ thay vì
         #    giữ ORM object qua ranh giới session (idiom sẵn có của file: "dữ liệu tách khỏi session").
@@ -382,10 +463,24 @@ async def process_application(application_id: int, *, force_review: bool = False
                         application_id,
                     )
     except Exception:  # noqa: BLE001 — lỗi kỹ thuật -> PENDING_REVIEW[error] (PRD §13)
+        # Cộng TRƯỚC phần cứu hộ: `_escalate_technical_error` cam kết KHÔNG BAO GIỜ raise, nhưng bộ
+        # đếm không được phụ thuộc vào lời hứa của hàm khác để đếm đúng.
+        _PIPELINES_FAILED += 1
         logger.exception("BG: lỗi xử lý application_id=%s", application_id)
         await _escalate_technical_error(
             application_id, "Lỗi kỹ thuật khi xử lý pipeline (error)."
         )
+    finally:
+        # `finally` mới thêm — nó KHÔNG đổi luồng điều khiển nào: chỉ hai phép cộng/trừ int, không
+        # `return`/`raise`/`await`, nên không thể nuốt exception hay chặn `except` ở trên. Chạy cả khi
+        # coroutine bị CANCEL (tắt server giữa chừng), nhờ vậy `in_flight` không kẹt ở số dương giả.
+        _PIPELINES_IN_FLIGHT -= 1
+        _PIPELINES_FINISHED += 1
+        # Nhả van CUỐI CÙNG: người kế tiếp chỉ được vào khi hồ sơ này đã buông hết tài nguyên.
+        # Nằm trong `finally` nên nhả cả khi pipeline ném lẫn khi coroutine bị cancel lúc tắt server —
+        # rò một suất là hàng đợi ngắn dần vĩnh viễn cho tới lần restart.
+        if slot is not None:
+            slot.release()
 
 
 async def resume_screener(
