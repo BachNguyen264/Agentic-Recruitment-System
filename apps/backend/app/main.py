@@ -6,6 +6,7 @@ Nguồn chân lý nghiệp vụ: PRD.md.
 
 from __future__ import annotations
 
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
@@ -16,7 +17,6 @@ from app.api.deps import require_hr
 from app.api.routes import agents, applications, auth, health, jobs, public, webhooks
 from app.core.config import settings
 from app.core.database import engine
-from app.services.storage._executor import shutdown_storage_executor
 from app.core.hardening import (
     BodySizeLimitMiddleware,
     OriginCheckMiddleware,
@@ -26,8 +26,30 @@ from app.core.logging import get_logger, setup_logging
 from app.core.qdrant_client import qdrant_client
 from app.core.redis_client import redis_client
 from app.services import screening_scheduler
+from app.services.storage._executor import shutdown_storage_executor
 
 logger = get_logger("app.main")
+
+
+def _warm_llm_imports() -> None:
+    """Nhập sẵn `langchain_openai` để lượt nhập LẠNH không rơi vào ứng viên đầu tiên.
+
+    KHÔNG BAO GIỜ raise: đây thuần là tối ưu khởi động. Nhập hỏng (thiếu gói, lỗi mạng lúc build) thì
+    hành vi quay về đúng như CŨ — nhập lười ở lần dùng đầu — chứ tuyệt đối không được chặn server
+    khởi động, vì như thế là biến một tối ưu thành sự cố deploy.
+
+    Bỏ qua khi `ENABLE_LLM=false`: khi đó parser/ranker chạy nhánh stub và KHÔNG hề chạm langchain,
+    nên nạp trước chỉ tổ kéo dài thời gian khởi động mà không đổi được gì.
+    """
+    if not settings.enable_llm:
+        return
+    started = time.perf_counter()
+    try:
+        import langchain_openai  # noqa: F401 — nạp để làm ấm module cache, không dùng trực tiếp
+    except Exception:  # noqa: BLE001 — tối ưu khởi động KHÔNG được phép giết server
+        logger.warning("Không nạp trước được langchain_openai — sẽ nhập lười như cũ", exc_info=True)
+        return
+    logger.info("Đã nạp trước ngăn xếp LLM trong %.2fs", time.perf_counter() - started)
 
 
 @asynccontextmanager
@@ -39,6 +61,16 @@ async def lifespan(app: FastAPI):
         settings.enable_llm,
         settings.confidence_threshold,
     )
+    # Nạp TRƯỚC ngăn xếp LLM (đo tải): `parser._build_parser_llm` và `embedding_service._embeddings`
+    # cố ý `import langchain_openai` LƯỜI (chỉ nhập khi thật sự cần). Cái giá là lượt nhập ĐẦU TIÊN
+    # rơi vào ứng viên đầu tiên sau mỗi lần deploy — và lượt nhập đó GIỮ GIL, nên nó không làm chậm
+    # một request mà đóng băng CẢ TIẾN TRÌNH.
+    # SỐ ĐO: `import langchain_openai` mất **1,5s** trên máy dev 16 CPU; Render gói free chỉ ~0,1 CPU
+    # ⇒ ước 15–22s. Khớp với hiện tượng quan sát được trên prod: ba lần đo NGAY SAU DEPLOY đều cho độ
+    # trễ nhận 13–18s với các lượt DỒN CỤC quanh cùng một mốc (dấu hiệu "cùng chờ một sự kiện rồi
+    # được nhả ra cùng lúc"), trong khi lúc đã ấm là 0,22s — kể cả khi 15 pipeline đang chạy.
+    # Trả cái giá đó Ở ĐÂY, lúc khởi động, khi CHƯA có ứng viên nào chờ.
+    _warm_llm_imports()
     # Checkpointer Postgres (PRD §10): pool + bảng checkpoint Neon, compile graph — MỘT LẦN ở đây.
     await checkpointer.setup_checkpointer()
     # Sweep timeout Screener (08c, PRD §10 FR-SCR-3/4): SAU checkpointer (sweep resume graph cần
