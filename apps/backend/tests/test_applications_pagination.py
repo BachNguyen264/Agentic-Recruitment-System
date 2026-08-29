@@ -256,6 +256,10 @@ async def test_order_by_has_id_tiebreaker() -> None:
     assert "order by" in sql
     assert "created_at desc" in sql
     assert "application.id desc" in sql, "thiếu khoá phụ id → phân trang có thể lặp/nuốt dòng"
+    # Xoá `.offset(offset)` khỏi service mà KHÔNG có hai dòng này thì toàn bộ suite vẫn xanh —
+    # tức bản vá phân trang không được test nào quan sát.
+    assert "limit" in sql, "LIMIT không tới SQL"
+    assert "offset" in sql, "OFFSET không tới SQL"
 
 
 async def test_status_filter_reaches_sql() -> None:
@@ -263,7 +267,10 @@ async def test_status_filter_reaches_sql() -> None:
     cap = _CapturingExec()
     await application_service.list_applications(cap, statuses=["PENDING_REVIEW"])
     sql = str(cap.stmt).lower()
-    assert "where" in sql and "status" in sql
+    # `"status" in sql` là VÔ NGHĨA: `application.status` có mặt trong SELECT của mọi câu. Phải kiểm
+    # đúng mệnh đề IN của WHERE thì mới chứng minh được lọc chạy ở SERVER.
+    assert "where" in sql
+    assert "application.status in" in sql, "lọc trạng thái không nằm trong WHERE"
 
 
 async def test_no_status_filter_means_no_where() -> None:

@@ -872,16 +872,48 @@ async def main() -> None:
     p.add_argument("--metrics-interval", type=float, default=0.25,
                    help="Nhịp poll đồng hồ bão hoà (giây)")
     p.add_argument("--allow-remote", action="store_true", help="Cho phép bắn vào host không phải localhost")
+    p.add_argument("--allow-email", action="store_true",
+                   help="Cho phép chạy khi RESEND_API_KEY có giá trị (sẽ gửi email THẬT)")
     p.add_argument("--confirm", action="store_true", help="BẮT BUỘC — xác nhận đã hiểu chi phí/email thật")
     args = p.parse_args()
 
     host = urlsplit(args.api).hostname or ""
-    if host not in ("127.0.0.1", "localhost", "::1") and not args.allow_remote:
+    is_local = host in ("127.0.0.1", "localhost", "::1")
+    if not is_local and not args.allow_remote:
         sys.exit(f"Từ chối bắn tải vào {host!r} — thêm --allow-remote nếu CHỦ ĐÍCH muốn vậy.")
+
+    # Chốt host CHỈ nói về nơi nhận HTTP, KHÔNG nói gì về DB/Resend mà BACKEND đang cắm vào —
+    # `--api 127.0.0.1` vẫn ghi thẳng vào Neon prod nếu `.env` trỏ vào đó. Đây là cùng lý do
+    # `reset_demo_data` phải in header môi trường. In ra để người chạy ĐỌC rồi mới gõ --confirm.
+    try:
+        from app.core.config import settings as _s
+
+        _tail = (_s.database_url or "").rsplit("@", 1)[-1]
+        db_target = _tail.split("?", 1)[0] or "(không rõ)"
+        has_email = bool((_s.resend_api_key or "").strip())
+    except Exception:  # noqa: BLE001 — chạy ngoài venv backend thì vẫn phải bắn được
+        db_target, has_email = "(không đọc được .env)", False
+
+    print("== Đích của lần đo này — ĐỌC TRƯỚC KHI GÕ --confirm ==")
+    print(f"  HTTP  : {args.api}")
+    if is_local:
+        print(f"  DB    : {db_target}   (SUY ĐOÁN từ .env của CHÍNH script — không phải của backend)")
+    else:
+        # In host local lúc đang bắn vào Render là trấn an GIẢ, tệ hơn không in gì.
+        print("  DB    : đích ở XA — .env của script KHÔNG nói gì về DB mà backend đó đang dùng")
+    print(f"  Email : RESEND_API_KEY {'CÓ giá trị → sẽ gửi THẬT' if has_email else 'trống'}")
+    print()
+
     if not args.confirm:
         sys.exit(
             "Cần --confirm. Script này tạo hồ sơ THẬT, tốn tiền OpenAI THẬT và có thể GỬI EMAIL THẬT\n"
             "(gate auto-từ-chối/auto-mời, email screener). Đọc docstring đầu file trước khi chạy."
+        )
+    if has_email and not args.allow_email:
+        sys.exit(
+            "Từ chối: RESEND_API_KEY có giá trị nên gate auto sẽ GỬI EMAIL THẬT. Địa chỉ sinh ra là\n"
+            "`loadtest+NNN@example.com` (RFC 2606 — hard bounce CHẮC CHẮN), và bounce hàng loạt làm\n"
+            "hỏng danh tiếng gửi của domain. Bỏ RESEND_API_KEY khỏi .env, hoặc thêm --allow-email."
         )
     if args.total < 1:
         sys.exit("--total phải ≥ 1.")

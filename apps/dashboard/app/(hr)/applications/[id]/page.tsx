@@ -62,6 +62,9 @@ export default function ApplicationDetailPage() {
     setConfirmingCancel(false);
     queryClient.setQueryData(["application", id], updated);
     void queryClient.invalidateQueries({ queryKey: ["applications"] });
+    // Badge sidebar + chip rổ nay đọc `["pipeline"]` (GROUP BY toàn bảng). Thiếu dòng này thì Huỷ
+    // lịch / Gửi lại link để chúng SAI tới 15 giây — trước khi badge đổi nguồn, chúng cập nhật ngay.
+    void queryClient.invalidateQueries({ queryKey: ["pipeline"] });
   };
   const cancelSchedule = useMutation({
     mutationFn: () => cancelInterview(id),

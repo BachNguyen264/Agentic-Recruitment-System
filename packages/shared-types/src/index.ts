@@ -39,7 +39,7 @@ export type ApplicationStatus =
 // Đây là đường bảng điều hành hỏi lại DỒN NHẤT (2s khi có tác tử chạy), nên payload cố ý có KÍCH
 // THƯỚC CỐ ĐỊNH: 11 con số + tối đa 6 dòng. (Trước đây bảng điều hành poll `GET /api/applications`
 // mỗi 5 giây — trả TOÀN BỘ hồ sơ kèm parsed_data, phình theo số ứng viên, và đếm sai vì backend cắt
-// ở 100 bản ghi mới nhất. Badge sidebar ở `(hr)/layout` thì VẪN đi đường cũ đó — chưa chuyển.)
+// ở 100 bản ghi mới nhất. Badge sidebar nay cũng đọc endpoint này.)
 export interface PipelineItem {
   id: number;
   applicant_email: string;

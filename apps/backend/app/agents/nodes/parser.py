@@ -18,7 +18,7 @@ from app.core.logging import get_logger
 from app.models.application import ApplicationStatus
 from app.schemas.parsed_cv import ParsedCV
 from app.services.storage import StorageError, get_storage
-from app.tools.cv_reader import CVReadError, extract_text
+from app.tools.cv_reader import CVReadError, extract_text_bounded
 
 logger = get_logger("app.agents.parser")
 
@@ -93,7 +93,10 @@ def parse_cv(data: bytes, name: str, *, llm: Any | None = None) -> dict:
     """
     budget = settings.parser_max_cv_chars
     try:
-        text = extract_text(data, name, max_chars=budget)
+        # `extract_text_bounded`, KHÔNG `extract_text`: bytes ở đây đến từ file người lạ nộp qua
+        # endpoint công khai, và một PDF một-trang dựng khéo tiêu hàng phút CPU trong khi PyMuPDF
+        # giữ GIL — đủ để event loop đứng và Render giết cả service. Xem docstring của hàm đó.
+        text = extract_text_bounded(data, name, max_chars=budget)
     except CVReadError as exc:
         logger.info("parser: parse_failed khi đọc %s — %s", name, exc)
         return _failed(str(exc))

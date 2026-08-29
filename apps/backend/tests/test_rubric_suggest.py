@@ -291,7 +291,13 @@ async def test_endpoint_cap_blocks_429_without_calling_llm(monkeypatch) -> None:
 async def test_endpoint_llm_error_502_no_count_bump(monkeypatch) -> None:
     monkeypatch.setattr(settings, "rubric_suggest_max_retries", 3)
 
+    seen: dict[str, int] = {}
+
     async def boom_suggest(**_kwargs):
+        # Chụp số lần commit TẠI THỜI ĐIỂM gọi LLM: handler phải nhả connection TRƯỚC đó
+        # (ĐỌC → CHẠY → GHI). Không có dòng này thì xoá `await session.commit()` khỏi
+        # `routes/jobs.py` vẫn xanh — bản vá Load-boundary không được ai quan sát.
+        seen["commits_at_llm"] = session.commits
         raise rubric_suggester.RubricSuggestError("OpenAI down")
 
     monkeypatch.setattr(rubric_suggester, "suggest_rubric", boom_suggest)
@@ -305,6 +311,7 @@ async def test_endpoint_llm_error_502_no_count_bump(monkeypatch) -> None:
     # ĐỌC → CHẠY → GHI, nó commit MỘT LẦN trước lượt gọi LLM chỉ để NHẢ connection khỏi pool. Đếm
     # commit là đo cơ chế chứ không đo nghiệp vụ — proxy đó sai ngay khi cơ chế đổi, đúng như ở đây.
     assert job.rubric_suggestion_count == 0  # KHÔNG tiêu lượt khi LLM lỗi
+    assert seen.get("commits_at_llm", 0) >= 1, "session CHƯA được nhả trước lượt gọi LLM"
 
 
 async def test_endpoint_404_missing_job(monkeypatch) -> None:

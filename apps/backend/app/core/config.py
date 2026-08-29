@@ -9,6 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # apps/backend/app/core/config.py -> parents[4] = gốc repo
@@ -51,15 +52,40 @@ class Settings(BaseSettings):
     # lượt chấm VẪN ĐANG CHẠY TỐT — biến một bản vá thành một nguồn lỗi mới.
     openai_timeout_seconds: float = 120.0
 
-    # Trần KÝ TỰ cho văn bản trích từ MỘT CV, áp BÊN TRONG bộ đọc (cv_reader) chứ không phải sau khi
-    # đã trích xong. Lý do là một số đo, không phải phòng xa: một PDF 0.918 MB HỢP LỆ (qua sạch
-    # `validate_cv`, dưới `MAX_BYTES` 10MB) trích ra 12.46 TRIỆU ký tự ~ 3.1M token — đủ để (a) một
-    # request tốn ~$0.36 tiền OpenAI, (b) giữ ~260 MB RAM cho riêng chuỗi text + bản sao do
-    # `_PROMPT.format`, tức OOM-kill một instance Render 512 MB. Endpoint nộp CV là CÔNG KHAI
-    # (`/api/public/applications`, không đăng nhập) nên đây là bề mặt người ngoài chạm được.
-    # Cắt SAU khi `extract_text` trả về là vô nghĩa: lúc đó cả 130 MB đã nằm trong RAM rồi.
+    # Trần KÝ TỰ cho văn bản trích từ MỘT CV, áp BÊN TRONG bộ đọc (cv_reader).
+    #
+    # ⚠ PHẠM VI (đo lại sau review — bản ghi cũ ở đây NÓI QUÁ): trần này đóng được **chi phí token
+    # LLM** (một PDF 0.918 MB hợp lệ trích ra 12.46 TRIỆU ký tự ~ 3.1M token ~ $0.36/request) và ca
+    # PDF NHIỀU TRANG trung thực. Nó KHÔNG đóng được lỗ RAM/CPU: bộ đọc phải chạy xong `get_text()`
+    # của CẢ MỘT TRANG trước khi trần được hỏi tới, nên file 1 trang làm trần vô hiệu. Hai lỗ đó do
+    # `parser_extract_timeout_seconds` + `parser_max_cv_uncompressed_bytes` bên dưới lo.
+    #
     # 60k ký tự ~ 20-30 trang A4 dày chữ — rộng hơn mọi CV thật, chật hơn mọi file tấn công.
-    parser_max_cv_chars: int = 60_000
+    # `<= 0` KHÔNG phải "tắt trần" ở đây (khác quy ước của `max_concurrent_pipelines`): trần nhỏ hơn
+    # `cv_reader.MIN_TEXT_CHARS` sẽ khiến MỌI CV rơi vào `EmptyCVTextError` rồi bị báo sai là "ảnh
+    # scan". Sàn literal 200 chứ không `ge=MIN_TEXT_CHARS`: `cv_reader` import `settings`, tham chiếu
+    # ngược sẽ thành vòng import.
+    parser_max_cv_chars: int = Field(default=60_000, ge=200)
+
+    # Hạn giờ CỨNG cho MỘT lượt trích văn bản, thực thi bằng tiến trình con giết được (`cv_reader.
+    # extract_text_bounded`). Đây là thứ DUY NHẤT chặn được ca dưới đây, vì không phép kiểm kích
+    # thước nào bắt được nó — chi phí là BẬC HAI theo số glyph chứ không theo số byte:
+    #   PDF 1 trang  2.1 KB → 4.95 s     ·  6.6 KB → 90.3 s  ·  37 KB → >600 s (phải kill)
+    # PyMuPDF (SWIG) KHÔNG nhả GIL ⇒ `asyncio.to_thread` KHÔNG cô lập được: event loop đứng theo, kể
+    # cả `/api/health/live` (đường Render kiểm sống, cố ý đứng ngoài rate-limit) ⇒ Render coi service
+    # chết → SIGKILL → lifespan không chạy → mọi BackgroundTask đang bay bốc hơi.
+    # 20 s là RẤT rộng: ca hợp lệ nặng nhất (PDF 0.918 MB nhiều trang) chỉ tốn dưới 1 s sau khi có
+    # `break`. Cùng tinh thần `openai_timeout_seconds`: chặn TREO, không áp SLA.
+    parser_extract_timeout_seconds: float = 20.0
+
+    # Trần BYTE sau giải nén cho gói DOCX, kiểm TRƯỚC khi `python-docx` đụng vào file.
+    # `Document()` dựng lxml cho toàn bộ `word/document.xml` TRƯỚC khi trần ký tự được hỏi tới, và
+    # đo được ~5.2 MB RSS cho mỗi MB XML: .docx 442 KB chứa XML 116.5 MB (257:1) làm RSS tăng
+    # +639 MB ⇒ OOM một instance Render 512 MB chỉ với một lượt upload ~350-450 KB, qua endpoint
+    # CÔNG KHAI. ZIP khai sẵn kích thước sau giải nén trong central directory nên phép kiểm này gần
+    # như miễn phí. (Khai gian nhỏ hơn thật KHÔNG lách được: `ZipExtFile` cắt output theo kích thước
+    # đã khai ⇒ XML cụt ⇒ parse lỗi ⇒ `parse_failed`, vẫn về tay người.)
+    parser_max_cv_uncompressed_bytes: int = 32 * 1024 * 1024
 
     # ── Embedding (slice-02a JD → Qdrant — PRD §7.2, §16) ─────────────
     # EMBEDDING_DIM phải khớp model (text-embedding-3-small = 1536); đổi model thì đổi cả dim

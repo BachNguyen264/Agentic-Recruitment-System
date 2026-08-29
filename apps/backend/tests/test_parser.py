@@ -7,6 +7,7 @@ Ref: plan slice-01 §3.7, PRD §7.1.
 
 from __future__ import annotations
 
+import io
 import os
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from app.schemas.parsed_cv import (
     OtherItem,
     ParsedCV,
 )
-from app.tools.cv_reader import EmptyCVTextError, extract_text
+from app.tools.cv_reader import MIN_TEXT_CHARS, CVReadError, EmptyCVTextError, extract_text
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -388,3 +389,150 @@ async def test_ranker_carries_cv_truncated_flag(monkeypatch: pytest.MonkeyPatch)
     from app.agents.policy import should_review
 
     assert should_review({**state, **out}) is True  # cờ thắng gate (PRD §9)
+
+
+# ── Chốt trên: file dựng để PHÁ (review sau AUDIT-1 — cả hai lỗ đều ĐO ĐƯỢC, không phải suy đoán) ──
+
+
+def _zip_bomb_docx(xml_mb: int = 60) -> bytes:
+    """.docx hợp lệ mà `word/document.xml` phình ra `xml_mb` MB sau giải nén (tỉ lệ ~700:1)."""
+    import zipfile as _z
+
+    body = "<w:p><w:r><w:t>" + "A" * 4000 + "</w:t></w:r></w:p>"
+    n = (xml_mb * 1024 * 1024) // len(body) + 1
+    xml = (
+        '<?xml version="1.0"?><w:document '
+        'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'
+        + body * n
+        + "</w:body></w:document>"
+    )
+    buf = io.BytesIO()
+    with _z.ZipFile(buf, "w", _z.ZIP_DEFLATED, compresslevel=9) as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+        z.writestr("word/document.xml", xml)
+    return buf.getvalue()
+
+
+def test_docx_zip_bomb_rejected_before_parsing() -> None:
+    """.docx nén cao bị chặn ở TIỀN KIỂM, trước khi python-docx dựng lxml.
+
+    Đo được trên bản chưa vá: .docx 442 KB chứa XML 116.5 MB làm RSS tăng **+639 MB** — đủ OOM một
+    instance Render 512 MB bằng MỘT lượt upload qua endpoint CÔNG KHAI. Trần ký tự KHÔNG cản được vì
+    `Document()` giải nén toàn bộ TRƯỚC khi vòng `break` chạy.
+    """
+    bomb = _zip_bomb_docx(xml_mb=60)
+    assert len(bomb) < 1_000_000, "file mồi phải nhỏ — đó là toàn bộ vấn đề"
+    with pytest.raises(CVReadError) as exc:
+        extract_text(bomb, "bomb.docx")
+    assert "giải nén quá lớn" in str(exc.value)
+
+
+def test_docx_under_uncompressed_cap_still_parses() -> None:
+    """Trần giải nén KHÔNG được chặn nhầm .docx thật."""
+    text = extract_text(_fixture("good_cv.docx"), "good_cv.docx")
+    assert len(text) > MIN_TEXT_CHARS
+
+
+def test_corrupt_zip_becomes_cv_read_error() -> None:
+    """ZIP hỏng → CVReadError (đi chung đường parse_failed), KHÔNG phải traceback lạ."""
+    with pytest.raises(CVReadError):
+        extract_text(b"PK\x03\x04" + b"rac" * 50, "hong.docx")
+
+
+def test_extract_text_bounded_kills_runaway_extraction() -> None:
+    """Hạn giờ CỨNG: chi phí bố cục PyMuPDF là BẬC HAI theo glyph (đo: PDF 1 trang 6.6 KB → 90s),
+    và PyMuPDF không nhả GIL nên `asyncio.to_thread` KHÔNG cô lập được — event loop đứng theo, kể cả
+    `/api/health/live`, và Render giết cả service. Chỉ tiến trình GIẾT ĐƯỢC mới chặn nổi.
+
+    Dùng hạn giờ cực nhỏ trên CV THẬT để phép kiểm XÁC ĐỊNH (không phụ thuộc tốc độ máy chạy CI).
+    """
+    import time as _t
+
+    from app.tools.cv_reader import extract_text_bounded
+
+    original = settings.parser_extract_timeout_seconds
+    settings.parser_extract_timeout_seconds = 0.01
+    try:
+        started = _t.perf_counter()
+        with pytest.raises(CVReadError) as exc:
+            extract_text_bounded(_fixture("good_cv.pdf"), "good_cv.pdf")
+        assert "quá hạn" in str(exc.value)
+        assert _t.perf_counter() - started < 30, "hạn giờ không cắt được — đã treo"
+    finally:
+        settings.parser_extract_timeout_seconds = original
+
+
+def test_extract_text_bounded_returns_normally_for_real_cv() -> None:
+    """Đường bình thường phải y hệt `extract_text` — bọc tiến trình không được đổi kết quả."""
+    from app.tools.cv_reader import extract_text_bounded
+
+    assert extract_text_bounded(_fixture("good_cv.docx"), "good_cv.docx") == extract_text(
+        _fixture("good_cv.docx"), "good_cv.docx"
+    )
+
+
+# ── Chốt việc DỪNG SỚM + biên chính xác (bắt lỗi off-by-one) ────────────────────────────────────
+
+
+def test_reader_stops_early_instead_of_reading_everything(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BẤT BIẾN: bộ đọc phải DỪNG khi đủ trần, không đọc hết rồi mới cắt.
+
+    Không có test này thì viết lại thành `"\n".join(mọi trang)[:budget]` vẫn XANH toàn bộ suite —
+    và bản "gọn hơn" đó tốn 421s + 382 MB trên PDF 2.000 trang mà trả về chuỗi GIỐNG HỆT từng byte.
+    Test khẳng định CÔNG VIỆC ĐÃ TRÁNH, không phải kết quả.
+    """
+    import docx as _docx
+
+    import app.tools.cv_reader as mod
+
+    read = {"n": 0}
+
+    class _Para:
+        text = "x" * 500
+
+    class _Doc:
+        @property
+        def paragraphs(self):  # noqa: ANN202
+            def gen():
+                for _ in range(10_000):
+                    read["n"] += 1  # đếm khi CONSUMER thật sự kéo đoạn tiếp theo
+                    yield _Para()
+
+            return gen()
+
+    monkeypatch.setattr(_docx, "Document", lambda _f: _Doc())
+    # Trần 1.000 ⇒ 2 đoạn × 500 ký tự là đủ. Kéo tới đoạn thứ 4 nghĩa là `break` không chạy.
+    mod._extract_docx(_minimal_docx_zip(), 1_000)
+    assert read["n"] <= 3, f"đọc {read['n']}/10.000 đoạn cho trần 1.000 — KHÔNG dừng sớm"
+
+
+def _minimal_docx_zip() -> bytes:
+    """.docx tối thiểu qua được tiền kiểm ZIP (nội dung không quan trọng — `Document` đã bị thay)."""
+    import zipfile as _z
+
+    buf = io.BytesIO()
+    with _z.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml", "<w:document/>")
+    return buf.getvalue()
+
+
+def test_truncation_flag_fires_exactly_at_budget_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BIÊN: cộng `+1` cho MỌI phần làm `taken` lệch 1 ⇒ trả về `budget-1` ký tự ⇒
+    `len(text) >= budget` là False ⇒ CV BỊ CẮT mà KHÔNG có cờ `cv_truncated`, tức vô hiệu hoá đúng
+    cái chốt "CV mất phần cuối không được lọt gate auto". Test này ĐỎ trên bản chưa sửa."""
+    doc = Document()
+    for _ in range(50):
+        doc.add_paragraph("y" * 999)  # 999 + 1 dấu xuống dòng = bội số tròn của 1.000
+    buf = io.BytesIO()
+    doc.save(buf)
+    data = buf.getvalue()
+
+    text = extract_text(data, "bien.docx", max_chars=5_000)
+    assert len(text) == 5_000, f"trả về {len(text)} ký tự thay vì đúng 5.000"
+
+    # `parse_cv` đọc trần từ settings — phải hạ trần thì mới chạm được đúng cái biên đang kiểm.
+    monkeypatch.setattr(settings, "parser_max_cv_chars", 5_000)
+    result = parse_cv(data, "bien.docx", llm=_FakeLLM(_full_parsed()))
+    assert result["uncertainty_flags"] == ["cv_truncated"], (
+        "CV bị cắt ở đúng biên mà KHÔNG có cờ — gate auto sẽ xử lý một hồ sơ thiếu phần cuối"
+    )

@@ -95,6 +95,18 @@ function ReviewQueue() {
       retry: 1, // mặc định 3 → một đợt lỗi tự nhân bốn lần tải
     })),
   });
+  // Hàng đợi được lọc SERVER theo PENDING_REVIEW, nên MỖI lần duyệt/từ chối rút một dòng khỏi đúng
+  // tập đang phân trang. Dọn sạch trang cuối để lại `offset` trỏ ra ngoài tập ⇒ empty state bị chặn
+  // bởi `offset === 0`, dòng "Đang hiện" bị chặn bởi `cases.length > 0`, và khối phân trang in
+  // "21–20 / 20". Lùi một trang thay vì để màn hình trắng. (Giữ nguyên cổng `offset === 0` ở empty
+  // state: bỏ nó sẽ in "Hàng đợi trống" ở trang 2 trong khi trang 1 còn 20 ca — đúng "0 GIẢ" mà
+  // `/applications` cùng đợt này đang chống.)
+  useEffect(() => {
+    if (listQuery.data && pendingIds.length === 0 && offset > 0) {
+      setOffset((o) => Math.max(0, o - PAGE_SIZE));
+    }
+  }, [listQuery.data, pendingIds.length, offset]);
+
   const cases = detailQueries.map((q) => q.data).filter((d): d is ApplicationDetail => Boolean(d));
   // Query hỏng bị `filter(Boolean)` NUỐT IM LẶNG: thẻ đơn giản không hiện, không báo gì.
   const failedCount = detailQueries.filter((q) => q.isError).length;
@@ -267,8 +279,10 @@ function ReviewQueue() {
             ← Trang trước
           </button>
           <span className="text-[13px] text-ink/65">
-            {offset + 1}–{offset + pendingIds.length}
-            {totalPending != null && ` / ${totalPending}`}
+            {/* Chỉ in phạm vi khi trang THẬT SỰ có dòng — nếu không sẽ ra "21–20 / 20". */}
+            {pendingIds.length > 0
+              ? `${offset + 1}–${offset + pendingIds.length}${totalPending != null ? ` / ${totalPending}` : ""}`
+              : "Trang này đã trống"}
           </span>
           <button
             type="button"
