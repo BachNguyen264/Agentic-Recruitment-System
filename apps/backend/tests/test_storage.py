@@ -401,3 +401,36 @@ async def test_intake_releases_connection_before_storage_upload(monkeypatch) -> 
         "Đường nhận CV đang GIỮ connection suốt lượt upload storage — "
         "gần như chắc chắn có `refresh()` đã bị thêm lại sau `commit()`."
     )
+
+
+async def test_local_delete_removes_empty_parent_dir(tmp_path) -> None:
+    """`cv/{app_id}/` rỗng phải biến mất theo file — nếu không, mỗi hồ sơ đã xoá để lại một thư mục
+    rỗng. Dọn 756 hồ sơ dev bỏ lại đúng 736 thư mục như vậy, không ai thấy cho tới khi đi đếm."""
+    storage = LocalStorage(str(tmp_path))
+    key = build_cv_key(42, "cv.pdf")
+    await storage.save(key, _PDF, "application/pdf")
+    parent = (tmp_path / key).parent
+    assert parent.is_dir()
+
+    await storage.delete(key)
+    assert not parent.exists(), "thư mục cv/42/ rỗng vẫn còn sau khi xoá file"
+
+
+async def test_local_delete_keeps_parent_dir_when_other_files_remain(tmp_path) -> None:
+    """`rmdir` chỉ xoá thư mục RỖNG — file khác trong cùng thư mục không được đụng tới."""
+    storage = LocalStorage(str(tmp_path))
+    await storage.save("cv/7/a.pdf", _PDF, "application/pdf")
+    await storage.save("cv/7/b.pdf", _PDF, "application/pdf")
+
+    await storage.delete("cv/7/a.pdf")
+    assert (tmp_path / "cv" / "7").is_dir()
+    assert (tmp_path / "cv" / "7" / "b.pdf").exists()
+
+
+async def test_local_delete_idempotent_after_parent_dir_gone(tmp_path) -> None:
+    """Xoá lại key đã xoá KHÔNG được ném (hợp đồng chung với R2), kể cả khi thư mục cha đã biến mất."""
+    storage = LocalStorage(str(tmp_path))
+    key = build_cv_key(9, "cv.pdf")
+    await storage.save(key, _PDF, "application/pdf")
+    await storage.delete(key)
+    await storage.delete(key)  # không ném

@@ -240,11 +240,7 @@ def test_env_example_only_lists_real_settings_fields() -> None:
         # Thông tin tài khoản Upstash (chưa dùng trong code) — giữ lại để tiện tra cứu.
         "upstash_redis_rest_url",
         "upstash_redis_rest_token",
-        # Biến của FRONTEND (đặt ở Vercel, không phải backend Settings).
-        "next_public_api_base",
-        # AUDIT-1: base riêng cho đường nộp CV — gọi THẲNG Render để rate-limit đếm đúng IP ứng viên
-        # (qua rewrite Vercel thì CF-Connecting-IP là IP egress của Vercel, xoay liên tục).
-        "next_public_public_api_base",
+        # (Biến FRONTEND KHÔNG còn ở file này — xem test_frontend_env_lives_in_its_own_example.)
     }
     unknown = keys - set(Settings.model_fields) - exempt
     assert not unknown, f".env.example có key KHÔNG tồn tại trong Settings: {sorted(unknown)}"
@@ -258,3 +254,38 @@ def test_uvicorn_options_production_binds_all_interfaces_no_reload() -> None:
     assert opts["host"] == "0.0.0.0"
     assert opts["port"] == 10000
     assert opts["reload"] is False  # reload = watcher + child process → KHÔNG bao giờ ở prod
+
+
+def test_frontend_env_lives_in_its_own_example() -> None:
+    """Biến của Vercel (frontend) và của Render (backend) ở HAI file example RIÊNG.
+
+    Vì sao đây là một test chứ không phải một quy ước: hai nhóm biến này dán vào hai dashboard khác
+    nhau, và gộp chung thì lúc deploy không ai phân biệt được biến nào của bên nào — đúng loại nhầm
+    lẫn dẫn tới "đặt NEXT_PUBLIC_* lên Render" (vô hại nhưng vô dụng) hoặc tệ hơn là ĐỔI TÊN
+    `BACKEND_ORIGIN` thành một biến `NEXT_PUBLIC_*` rồi mất luôn rewrite ⇒ HR đăng nhập trên điện
+    thoại bị đá ra (cookie bên-thứ-ba bị Safari/iOS chặn).
+
+    `BACKEND_ORIGIN` CỐ Ý không có tiền tố `NEXT_PUBLIC_`: nó chỉ được đọc ở phía server trong
+    `next.config.mjs`. Đừng "sửa cho nhất quán".
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    backend_example = (root / ".env.example").read_text(encoding="utf-8")
+    frontend_example = root / "apps" / "dashboard" / ".env.example"
+
+    assert frontend_example.is_file(), "thiếu apps/dashboard/.env.example (biến của Vercel)"
+    frontend_text = frontend_example.read_text(encoding="utf-8")
+
+    # 1) File backend KHÔNG được khai biến frontend (nhắc tới trong văn xuôi thì được, miễn không
+    #    phải dạng `KEY=` — vì đó mới là thứ người ta copy đi dán).
+    leaked = re.findall(r"^\s*#?\s*(NEXT_PUBLIC_[A-Z0-9_]*|BACKEND_ORIGIN)=", backend_example, re.M)
+    assert not leaked, f".env.example (backend) đang khai biến FRONTEND: {sorted(set(leaked))}"
+
+    # 2) File frontend phải khai ĐỦ ba biến — thiếu cái nào cũng là một lỗi deploy im lặng.
+    for key in ("BACKEND_ORIGIN", "NEXT_PUBLIC_API_BASE", "NEXT_PUBLIC_PUBLIC_API_BASE"):
+        assert re.search(rf"^{key}=", frontend_text, re.M), f"apps/dashboard/.env.example thiếu {key}"
+
+    # 3) Biến server-side không được vô tình mọc tiền tố NEXT_PUBLIC_ (sẽ lộ ra bundle + mất rewrite).
+    assert not re.search(r"^NEXT_PUBLIC_BACKEND_ORIGIN=", frontend_text, re.M)

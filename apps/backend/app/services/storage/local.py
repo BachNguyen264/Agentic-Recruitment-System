@@ -46,8 +46,20 @@ class LocalStorage:
 
     async def delete(self, key: str) -> None:
         path = self._path(key)
-        # missing_ok=True → idempotent (xóa lại không lỗi), khớp hành vi delete_object của S3/R2.
-        await run_in_storage_thread(lambda: path.unlink(missing_ok=True))
+
+        def _remove() -> None:
+            # missing_ok=True → idempotent (xóa lại không lỗi), khớp hành vi delete_object của S3/R2.
+            path.unlink(missing_ok=True)
+            # Dọn luôn thư mục `cv/{app_id}/` nếu đã rỗng. R2 không có thư mục thật nên chỉ backend
+            # local mới để lại rác này — dọn 756 hồ sơ dev bỏ lại đúng 736 thư mục rỗng, thứ không
+            # ai nhìn thấy cho tới khi đi đếm. `rmdir` chỉ xoá thư mục RỖNG và ném OSError nếu còn
+            # file, nên nó tự an toàn trước lượt lưu đang chạy song song.
+            try:
+                path.parent.rmdir()
+            except OSError:
+                pass
+
+        await run_in_storage_thread(_remove)
 
     async def url(self, key: str) -> str:
         """Path nội bộ — KHÔNG phát cho người dùng (xem ghi chú `FileStorage.url`)."""

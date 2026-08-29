@@ -72,15 +72,35 @@ async def _existing_checkpoint_tables(session) -> list[str]:
     return [t for t in _CHECKPOINT_TABLES if t in rows]
 
 
-async def _count_thread_rows(session, tables: list[str], thread_id: str) -> int:
-    total = 0
+async def _count_thread_rows(session, tables: list[str], thread_ids: list[str]) -> dict[str, int]:
+    """{thread_id: tổng dòng} — MỘT câu `GROUP BY` mỗi bảng, KHÔNG phải một câu mỗi thread.
+
+    Bản trước hỏi từng thread một. Với 756 hồ sơ × 3 bảng = 2.268 lượt khứ hồi tới Neon, đủ để một
+    lần DRY-RUN (thao tác được cho là an toàn và nhanh) chạy quá 2 phút rồi bị giết giữa chừng —
+    đúng thứ khiến người ta bỏ qua dry-run và gõ thẳng `--commit`.
+    """
+    totals: dict[str, int] = dict.fromkeys(thread_ids, 0)
+    if not thread_ids:
+        return totals
     for t in tables:  # t từ hằng _CHECKPOINT_TABLES (KHÔNG phải input người dùng) — an toàn nội suy.
-        total += (
-            await session.execute(
-                text(f"select count(*) from {t} where thread_id = :tid"), {"tid": thread_id}
-            )
-        ).scalar_one()
-    return total
+        stmt = text(
+            f"select thread_id, count(*) from {t} where thread_id in :tids group by thread_id"
+        ).bindparams(bindparam("tids", expanding=True))
+        for tid, n in await session.execute(stmt, {"tids": thread_ids}):
+            totals[tid] = totals.get(tid, 0) + int(n)
+    return totals
+
+
+async def _count_children(session, model, app_ids: list[int]) -> dict[int, int]:
+    """{application_id: số bản ghi con} — MỘT câu `GROUP BY` cho CẢ danh sách (xem lý do ở trên)."""
+    if not app_ids:
+        return {}
+    rows = await session.execute(
+        select(model.application_id, func.count())
+        .where(model.application_id.in_(app_ids))
+        .group_by(model.application_id)
+    )
+    return {app_id: int(n) for app_id, n in rows}
 
 
 def _db_host() -> str:
@@ -138,18 +158,17 @@ async def reset(
         # ĐỦ 5 bảng con cascade từ `application` (ondelete=CASCADE). Bản trước chỉ đếm 2 —
         # interview_booking / booking_session / email_delivery được thêm SAU khi script này ra đời,
         # nên bản kiểm kê trước khi xoá vẫn im lặng về chúng: người đọc dry-run tưởng không có gì.
-        totals = {name: 0 for name in _CASCADE_CHILDREN}
+        found_ids = [a.id for a in apps]
+        per_table = {
+            name: await _count_children(session, model, found_ids)
+            for name, model in _CASCADE_CHILDREN.items()
+        }
+        totals = {name: sum(d.values()) for name, d in per_table.items()}
         print(f"== Application sẽ xóa ({len(apps)}) — {len(_CASCADE_CHILDREN)} bảng con cascade theo ==")
         for a in apps:
-            counts: dict[str, int] = {}
-            for name, model in _CASCADE_CHILDREN.items():
-                counts[name] = (
-                    await session.execute(
-                        select(func.count()).select_from(model).where(model.application_id == a.id)
-                    )
-                ).scalar_one()
-                totals[name] += counts[name]
-            children = " ".join(f"{n}={c}" for n, c in counts.items() if c)
+            children = " ".join(
+                f"{name}={per_table[name][a.id]}" for name in _CASCADE_CHILDREN if per_table[name].get(a.id)
+            )
             print(
                 f"  id={a.id} job_id={a.job_id} status={a.status} email={a.applicant_email} "
                 f"{children or '(không có bản ghi con)'} cv={a.cv_file_ref or '—'}"
@@ -168,8 +187,10 @@ async def reset(
         if not cp_tables:
             print("  (chưa có bảng checkpoint — bỏ qua)")
         else:
+            thread_rows = await _count_thread_rows(session, cp_tables, target_threads)
             for tid in target_threads:
-                print(f"  thread={tid}: {await _count_thread_rows(session, cp_tables, tid)} dòng")
+                print(f"  thread={tid}: {thread_rows.get(tid, 0)} dòng")
+            print(f"  ── tổng dòng checkpoint: {sum(thread_rows.values())}")
 
         missing_apps = sorted(set(app_ids) - {a.id for a in apps})
         missing_jobs = sorted(set(job_ids) - {j.id for j in jobs})
