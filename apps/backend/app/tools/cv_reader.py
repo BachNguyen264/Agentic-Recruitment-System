@@ -11,6 +11,8 @@ from __future__ import annotations
 import io
 from pathlib import PurePosixPath
 
+from app.core.config import settings
+
 # Dưới ngưỡng này coi như không trích được văn bản (CV ảnh scan / file rỗng).
 MIN_TEXT_CHARS = 50
 
@@ -23,29 +25,49 @@ class EmptyCVTextError(CVReadError):
     """Trích được quá ít text — CV có thể là ảnh scan (OCR ngoài phạm vi slice này)."""
 
 
-def _extract_pdf(data: bytes) -> str:
+def _extract_pdf(data: bytes, budget: int) -> str:
     import fitz  # PyMuPDF
 
     parts: list[str] = []
+    taken = 0
     # stream= đọc thẳng từ bytes (không cần file tạm) — bắt buộc khi CV nằm trên object storage.
     with fitz.open(stream=data, filetype="pdf") as doc:
         for page in doc:
             parts.append(page.get_text())
-    return "\n".join(parts)
+            taken += len(parts[-1]) + 1  # +1 cho "\n" sẽ nối vào
+            if taken >= budget:
+                # DỪNG ĐỌC hẳn, không chỉ cắt kết quả cuối: mỗi `get_text()` tiếp theo vừa tốn CPU
+                # vừa cấp phát thêm RAM cho phần chắc chắn bị vứt. Đây là TOÀN BỘ lý do trần nằm
+                # TRONG bộ đọc chứ không phải ở `extract_text` — cắt sau khi trích xong thì 130 MB
+                # đã nằm trong RAM và 18s CPU đã tiêu (xem `settings.parser_max_cv_chars`).
+                break
+    return "\n".join(parts)[:budget]
 
 
-def _extract_docx(data: bytes) -> str:
+def _extract_docx(data: bytes, budget: int) -> str:
     from docx import Document
 
     doc = Document(io.BytesIO(data))
-    return "\n".join(p.text for p in doc.paragraphs)
+    parts: list[str] = []
+    taken = 0
+    for para in doc.paragraphs:
+        parts.append(para.text)
+        taken += len(parts[-1]) + 1
+        if taken >= budget:
+            break
+    return "\n".join(parts)[:budget]
 
 
-def extract_text(data: bytes, name: str) -> str:
+def extract_text(data: bytes, name: str, *, max_chars: int | None = None) -> str:
     """Trích text thô từ BYTES CV; `name` (tên file/key) chỉ dùng để chọn bộ đọc theo đuôi.
 
     Raise ``CVReadError``/``EmptyCVTextError`` cho ca không đọc được. KHÔNG bắt lỗi tại đây —
     node parser quyết định set `parse_failed`.
+
+    `max_chars` = TRẦN ký tự, áp BÊN TRONG bộ đọc (mặc định `settings.parser_max_cv_chars`). Chạm
+    trần thì chuỗi trả về dài ĐÚNG BẰNG trần; người gọi nhận ra bằng `len(text) >= max_chars` rồi tự
+    quyết gắn cờ (xem `parser.parse_cv` → `cv_truncated`). Ở đây KHÔNG raise: CV dài bất thường vẫn
+    là hồ sơ ĐỌC ĐƯỢC — nó phải vào human_review, không phải bị vứt như file hỏng.
     """
     suffix = PurePosixPath(name or "").suffix.lower()
 
@@ -59,8 +81,9 @@ def extract_text(data: bytes, name: str) -> str:
     if not data:
         raise EmptyCVTextError("File CV rỗng — không trích được văn bản.")
 
+    budget = settings.parser_max_cv_chars if max_chars is None else max_chars
     try:
-        text = reader(data)
+        text = reader(data, budget)
     except CVReadError:
         raise
     except Exception as exc:  # noqa: BLE001 — gói lỗi đọc file thành tín hiệu parse_failed

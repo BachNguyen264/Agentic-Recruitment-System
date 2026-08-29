@@ -91,11 +91,20 @@ def parse_cv(data: bytes, name: str, *, llm: Any | None = None) -> dict:
     /agents/parse-cv. `llm` cho phép inject mock trong test. Trả dict:
     `{parsed_data, confidence, uncertainty_flags, escalation_reason}`.
     """
+    budget = settings.parser_max_cv_chars
     try:
-        text = extract_text(data, name)
+        text = extract_text(data, name, max_chars=budget)
     except CVReadError as exc:
         logger.info("parser: parse_failed khi đọc %s — %s", name, exc)
         return _failed(str(exc))
+
+    # Chạm trần = CV dài bất thường (đã đo: một PDF 0.918 MB hợp lệ trích ra 12.46 TRIỆU ký tự). Hồ
+    # sơ VẪN được chấm — chỉ là chấm trên phần đầu — nhưng phải mang cờ để `policy.should_review`
+    # kéo nó về human_review: một CV bị cắt mất phần cuối KHÔNG được phép lọt gate auto-mời/auto-từ-
+    # chối. `ranker_node` có trách nhiệm CHỞ cờ này qua (nó thay mới toàn bộ `uncertainty_flags`).
+    truncated = len(text) >= budget
+    if truncated:
+        logger.warning("parser: CV %s dài quá trần %d ký tự — đã cắt, gắn cờ cv_truncated", name, budget)
 
     try:
         client = llm or _build_parser_llm()
@@ -107,8 +116,12 @@ def parse_cv(data: bytes, name: str, *, llm: Any | None = None) -> dict:
     return {
         "parsed_data": parsed.model_dump(),
         "confidence": _confidence(parsed),
-        "uncertainty_flags": [],
-        "escalation_reason": None,
+        "uncertainty_flags": ["cv_truncated"] if truncated else [],
+        "escalation_reason": (
+            f"CV dài bất thường — chỉ đọc {budget:,} ký tự đầu để chấm điểm. Cần HR đọc bản gốc."
+            if truncated
+            else None
+        ),
     }
 
 

@@ -301,6 +301,12 @@ async def ranker_node(state: RecruitmentState) -> dict:
     parsed_data = state.get("parsed_data")
     jd = (state.get("input") or {}).get("jd")
 
+    # `cv_truncated` (parser) phải SỐNG SÓT qua ranker. MỌI nhánh return bên dưới đều THAY MỚI trọn
+    # `uncertainty_flags` bằng kết quả của riêng ranker, nên không chở tay thì cờ biến mất im lặng và
+    # hồ sơ CV-bị-cắt đi thẳng vào gate auto-mời với confidence cao — đúng lớp lỗi mà nhánh
+    # `parse_failed` ngay dưới đã phải dựng rào riêng để chặn.
+    carried = [f for f in (state.get("uncertainty_flags") or []) if f == "cv_truncated"]
+
     # AN TOÀN (adversarial JD-2b): parser THẬT SỰ thất bại (đặt cờ `parse_failed`, parsed_data=None) →
     # KHÔNG được rơi vào `_stub`. `_stub` XÓA cờ + đặt confidence=1.0 → CV-không-đọc-được trông "sạch" →
     # lọt nhánh ĐẠT → screener/gate mời → AUTO-MỜI HỒ SƠ HỎNG (vi phạm §9 "cờ thắng gate"). GIỮ cờ +
@@ -318,7 +324,9 @@ async def ranker_node(state: RecruitmentState) -> dict:
         }
 
     if not settings.enable_llm or not parsed_data or not jd:
-        return _stub(state)
+        stub = _stub(state)
+        stub["uncertainty_flags"] = [*carried, *stub["uncertainty_flags"]]
+        return stub
 
     result = await rank_cv(parsed_data, jd)
     if "rank_failed" in result["uncertainty_flags"]:
@@ -335,8 +343,12 @@ async def ranker_node(state: RecruitmentState) -> dict:
         "score_breakdown": result["score_breakdown"],
         "semantic_similarity": result["semantic_similarity"],
         "confidence": result["confidence"],
-        "uncertainty_flags": result["uncertainty_flags"],
-        "escalation_reason": result["escalation_reason"],
+        "uncertainty_flags": [*carried, *result["uncertainty_flags"]],
+        # Ca điểm cao + CV bị cắt: ranker không có lý do gì để escalate (điểm đẹp), nhưng cờ sẽ kéo
+        # hồ sơ về human_review — mà ReviewCard đọc `escalation_reason` để nói HR biết VÌ SAO. Bỏ
+        # trống là đẩy cho HR một thẻ không lời giải thích.
+        "escalation_reason": result["escalation_reason"]
+        or (state.get("escalation_reason") if carried else None),
         "require_human_review": result["require_human_review"],
         "scratchpad": {
             **state.get("scratchpad", {}),

@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     # lượt chấm VẪN ĐANG CHẠY TỐT — biến một bản vá thành một nguồn lỗi mới.
     openai_timeout_seconds: float = 120.0
 
+    # Trần KÝ TỰ cho văn bản trích từ MỘT CV, áp BÊN TRONG bộ đọc (cv_reader) chứ không phải sau khi
+    # đã trích xong. Lý do là một số đo, không phải phòng xa: một PDF 0.918 MB HỢP LỆ (qua sạch
+    # `validate_cv`, dưới `MAX_BYTES` 10MB) trích ra 12.46 TRIỆU ký tự ~ 3.1M token — đủ để (a) một
+    # request tốn ~$0.36 tiền OpenAI, (b) giữ ~260 MB RAM cho riêng chuỗi text + bản sao do
+    # `_PROMPT.format`, tức OOM-kill một instance Render 512 MB. Endpoint nộp CV là CÔNG KHAI
+    # (`/api/public/applications`, không đăng nhập) nên đây là bề mặt người ngoài chạm được.
+    # Cắt SAU khi `extract_text` trả về là vô nghĩa: lúc đó cả 130 MB đã nằm trong RAM rồi.
+    # 60k ký tự ~ 20-30 trang A4 dày chữ — rộng hơn mọi CV thật, chật hơn mọi file tấn công.
+    parser_max_cv_chars: int = 60_000
+
     # ── Embedding (slice-02a JD → Qdrant — PRD §7.2, §16) ─────────────
     # EMBEDDING_DIM phải khớp model (text-embedding-3-small = 1536); đổi model thì đổi cả dim
     # và tạo collection mới (kích thước vector là bất biến của collection).

@@ -302,3 +302,89 @@ def test_certificates_extracted_real() -> None:
     assert "toeic" in " ".join(c["name"] for c in pd["certificates"]).lower()
     other_blob = " ".join(f"{o['label']} {o['content']}" for o in pd["other"]).lower()
     assert "toeic" not in other_blob
+
+
+# ── A1: trần ký tự khi trích (settings.parser_max_cv_chars) ─────────────────────
+# Vì sao có nhóm test này: một PDF 0.918 MB HỢP LỆ trích ra 12.46 TRIỆU ký tự (~3.1M token, ~260 MB
+# RAM) qua endpoint nộp CV CÔNG KHAI. Trần phải áp BÊN TRONG bộ đọc, và cờ `cv_truncated` phải SỐNG
+# SÓT qua ranker — nếu không, hồ sơ CV-bị-cắt lọt gate auto-mời với điểm cao.
+
+
+def _fat_docx(paragraphs: int, chars_each: int) -> bytes:
+    import io as _io
+
+    doc = Document()
+    for _ in range(paragraphs):
+        doc.add_paragraph("x" * chars_each)
+    buf = _io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def test_extract_text_caps_at_budget() -> None:
+    """Trần áp trong bộ đọc: 200 đoạn × 1000 ký tự = ~200k, xin 5k thì nhận đúng 5k."""
+    data = _fat_docx(paragraphs=200, chars_each=1000)
+    text = extract_text(data, "fat.docx", max_chars=5_000)
+    assert len(text) == 5_000
+
+
+def test_extract_text_below_budget_untouched() -> None:
+    """CV bình thường KHÔNG bị đụng tới — trần chỉ được cắt file bất thường."""
+    full = extract_text(_fixture("good_cv.docx"), "good_cv.docx", max_chars=1_000_000)
+    assert len(full) < 1_000_000
+    assert full == extract_text(_fixture("good_cv.docx"), "good_cv.docx")
+
+
+def test_parse_cv_flags_truncated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Chạm trần → cờ cv_truncated + escalation_reason, nhưng VẪN parse (không phải parse_failed)."""
+    monkeypatch.setattr(settings, "parser_max_cv_chars", 3_000)
+    data = _fat_docx(paragraphs=100, chars_each=1000)
+    result = parse_cv(data, "fat.docx", llm=_FakeLLM(_full_parsed()))
+    assert result["uncertainty_flags"] == ["cv_truncated"]
+    assert "parse_failed" not in result["uncertainty_flags"]
+    assert result["parsed_data"] is not None  # vẫn chấm được, chỉ là trên phần đầu
+    assert result["escalation_reason"]
+
+
+def test_parse_cv_normal_has_no_truncated_flag() -> None:
+    result = parse_cv(_fixture("good_cv.docx"), "good_cv.docx", llm=_FakeLLM(_full_parsed()))
+    assert "cv_truncated" not in result["uncertainty_flags"]
+
+
+@pytest.mark.asyncio
+async def test_ranker_carries_cv_truncated_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BẤT BIẾN: ranker thay mới toàn bộ uncertainty_flags — cờ cv_truncated phải được CHỞ QUA.
+
+    Không có test này thì cờ biến mất im lặng và `policy.should_review` không còn kéo hồ sơ về
+    human_review ⇒ CV bị cắt mất phần cuối lọt thẳng gate auto-mời với điểm cao.
+    """
+    from app.agents.nodes import ranker as ranker_mod
+
+    async def _fake_rank(parsed_data, jd):  # noqa: ANN001, ARG001
+        return {
+            "score": 92.0,
+            "score_breakdown": [],
+            "summary": "ok",
+            "semantic_similarity": 0.9,
+            "confidence": 1.0,
+            "uncertainty_flags": [],          # ranker tự thấy SẠCH
+            "escalation_reason": None,
+            "require_human_review": False,    # điểm cao → sẽ đi gate nếu không có cờ
+            "model_used": "test",
+        }
+
+    monkeypatch.setattr(settings, "enable_llm", True)
+    monkeypatch.setattr(ranker_mod, "rank_cv", _fake_rank)
+    state = {
+        "parsed_data": {"full_name": "A"},
+        "input": {"jd": {"title": "BE"}},
+        "uncertainty_flags": ["cv_truncated"],
+        "escalation_reason": "CV dài bất thường — chỉ đọc phần đầu.",
+    }
+    out = await ranker_mod.ranker_node(state)
+    assert "cv_truncated" in out["uncertainty_flags"], "ranker đã NUỐT cờ của parser"
+    assert out["escalation_reason"], "human_review sẽ nhận thẻ không có lý do"
+
+    from app.agents.policy import should_review
+
+    assert should_review({**state, **out}) is True  # cờ thắng gate (PRD §9)
