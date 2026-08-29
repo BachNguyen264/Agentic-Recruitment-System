@@ -3,19 +3,20 @@
 **Bucket PRIVATE** (NFR-4 — CV là dữ liệu cá nhân): không public-read; HR tải qua endpoint STREAM
 có `require_hr`. Credentials CHỈ từ env (`R2_*`).
 
-boto3 là ĐỒNG BỘ → mọi lời gọi bọc `asyncio.to_thread` (nhất quán với `email_service`) để không
+boto3 là ĐỒNG BỘ → mọi lời gọi chạy trên thread pool RIÊNG của storage (`_executor.py`) để không
 chặn event loop. Client tạo LƯỜI (một lần) — client boto3 an toàn dùng lại cho nhiều lời gọi.
 """
 
 from __future__ import annotations
 
-import asyncio
 from threading import Lock
 from typing import Any
 
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.storage import StorageError, StorageNotFound, validate_key
+
+from app.services.storage._executor import run_in_storage_thread
 
 logger = get_logger("app.storage.r2")
 
@@ -108,7 +109,7 @@ class R2Storage:
     async def save(self, key: str, data: bytes, content_type: str) -> str:
         validate_key(key)
         try:
-            return await asyncio.to_thread(self._save_sync, key, data, content_type)
+            return await run_in_storage_thread(self._save_sync, key, data, content_type)
         except StorageError:
             raise
         except Exception as exc:  # noqa: BLE001 — gói lỗi mạng/SDK thành lỗi storage rõ ràng
@@ -117,7 +118,7 @@ class R2Storage:
     async def get(self, key: str) -> bytes:
         validate_key(key)
         try:
-            return await asyncio.to_thread(self._get_sync, key)
+            return await run_in_storage_thread(self._get_sync, key)
         except StorageError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -126,7 +127,7 @@ class R2Storage:
     async def delete(self, key: str) -> None:
         validate_key(key)
         try:
-            await asyncio.to_thread(self._delete_sync, key)
+            await run_in_storage_thread(self._delete_sync, key)
         except StorageError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -136,6 +137,6 @@ class R2Storage:
         """Presigned hạn NGẮN. ⚠️ KHÔNG dùng phát CV — xem ghi chú `FileStorage.url` (NFR-4)."""
         validate_key(key)
         try:
-            return await asyncio.to_thread(self._url_sync, key)
+            return await run_in_storage_thread(self._url_sync, key)
         except Exception as exc:  # noqa: BLE001
             raise StorageError(f"Lỗi tạo presigned URL ({key}): {exc}") from exc

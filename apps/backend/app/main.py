@@ -16,6 +16,7 @@ from app.api.deps import require_hr
 from app.api.routes import agents, applications, auth, health, jobs, public, webhooks
 from app.core.config import settings
 from app.core.database import engine
+from app.services.storage._executor import shutdown_storage_executor
 from app.core.hardening import (
     BodySizeLimitMiddleware,
     OriginCheckMiddleware,
@@ -52,6 +53,7 @@ async def lifespan(app: FastAPI):
     await redis_client.aclose()
     await qdrant_client.close()
     await engine.dispose()
+    shutdown_storage_executor()
     logger.info("Backend tắt — đã đóng sweep + Redis/Qdrant/DB.")
 
 

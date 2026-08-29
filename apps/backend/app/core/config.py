@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     rubric_suggest_max_retries: int = 3
 
     # ── Lưu file CV (slice 06 — PRD §16 cv_file_ref, NFR-4) ──────────
+    # Thread pool RIÊNG cho storage (đĩa/boto3). ĐO ĐƯỢC vì sao cần: `asyncio.to_thread` dùng
+    # executor MẶC ĐỊNH — cùng hàng đợi với parser gọi LLM ĐỒNG BỘ (~10s/lượt). Trên prod, 20 CV
+    # nộp cùng lúc làm độ trễ nhận nhảy 0,48s (N=1) → 13,4s (N=20) chỉ vì upload xếp hàng sau LLM.
+    # 8 luồng là dư cho I/O mạng ngắn; nâng nếu dùng CV rất lớn. Xem services/storage/_executor.py.
+    storage_executor_workers: int = 8
     # Nghiệp vụ KHÔNG đọc/ghi path trực tiếp — đi qua seam `services/storage` (FileStorage).
     #   local = đĩa dev (thư mục cv_upload_dir) · r2 = Cloudflare R2 (S3 API, bucket PRIVATE).
     storage_backend: str = "local"

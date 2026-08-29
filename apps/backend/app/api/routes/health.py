@@ -22,6 +22,7 @@ from app.core.database import engine
 from app.core.qdrant_client import qdrant_client
 from app.core.redis_client import redis_client
 from app.core.security import decode_token
+from app.services.storage._executor import storage_executor_gauges
 from app.tasks.background import pipeline_gauges
 
 router = APIRouter(tags=["health"])
@@ -340,6 +341,7 @@ async def metrics() -> dict:
             "db_pool": _db_pool_gauges(),
             "checkpointer_pool": _checkpointer_pool_gauges(),
             "executor": _executor_gauges(),
+            "storage_executor": storage_executor_gauges(),
             "anyio_threads": _anyio_thread_gauges(),
             "pipelines": pipeline_gauges(),
             "cpu_count": cpu_count,
@@ -357,6 +359,7 @@ async def metrics() -> dict:
             "db_pool": dict.fromkeys(("size", "checked_out", "overflow", "checked_in", "max")),
             "checkpointer_pool": dict.fromkeys(("size", "available", "checked_out", "max", "waiting")),
             "executor": dict.fromkeys(("max_workers", "threads_alive", "queue_depth")),
+            "storage_executor": dict.fromkeys(("max_workers", "threads_alive", "queue_depth")),
             "anyio_threads": dict.fromkeys(("total_tokens", "borrowed", "waiting")),
             "pipelines": dict.fromkeys(("in_flight", "started_total", "finished_total", "failed_total")),
             "cpu_count": None,
