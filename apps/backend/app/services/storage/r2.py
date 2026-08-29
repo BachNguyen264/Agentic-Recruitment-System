@@ -67,6 +67,25 @@ class R2Storage:
                     )
         return self._client
 
+    def warmup(self) -> None:
+        """Dựng sẵn client boto3 lúc KHỞI ĐỘNG, đừng để ứng viên đầu tiên trả giá. KHÔNG raise.
+
+        VÌ SAO (đo trên prod): container vừa deploy xong, 20 CV nộp cùng lúc → độ trễ nhận **18,7s**
+        với mọi lượt DỒN CỤC quanh cùng một mốc (min 16,9 · p50 18,7 · max 19,2); hệ đã ấm thì cùng
+        phép đo chỉ **0,22s**. Nguyên nhân: `_get_client()` tạo lười **dưới một `Lock`**, mà bên trong
+        là `import boto3` (0,44s trên máy dev 16 CPU) + `boto3.client()` nạp JSON service model của
+        botocore + bắt tay TLS đầu tiên tới R2 — tất cả trên Render gói free ~0,1 CPU. Vì có khoá,
+        **cả 20 lượt xếp hàng sau lượt đầu rồi được nhả ra cùng lúc** — đúng dấu hiệu quan sát được.
+
+        Đã loại trừ bằng thực nghiệm trước khi tới đây: giữ connection DB (bỏ `refresh()` — số không
+        đổi), tranh chấp thread pool (executor riêng — số không đổi), Neon autosuspend (nghỉ 6 phút —
+        vẫn 0,24s), nhập lười `langchain_openai` (đã nạp trước — vẫn 18,7s).
+        """
+        try:
+            self._get_client()
+        except Exception:  # noqa: BLE001 — làm ấm là TỐI ƯU, hỏng thì quay về hành vi lười như cũ
+            logger.warning("Không làm ấm được client R2 — sẽ tạo lười ở lần dùng đầu", exc_info=True)
+
     @staticmethod
     def _error_code(exc: Exception) -> str:
         return str(getattr(exc, "response", {}).get("Error", {}).get("Code", ""))

@@ -26,6 +26,7 @@ from app.core.logging import get_logger, setup_logging
 from app.core.qdrant_client import qdrant_client
 from app.core.redis_client import redis_client
 from app.services import screening_scheduler
+from app.services.storage import get_storage
 from app.services.storage._executor import shutdown_storage_executor
 
 logger = get_logger("app.main")
@@ -52,6 +53,24 @@ def _warm_llm_imports() -> None:
     logger.info("Đã nạp trước ngăn xếp LLM trong %.2fs", time.perf_counter() - started)
 
 
+def _warm_storage_client() -> None:
+    """Dựng sẵn client storage (boto3/R2) — thủ phạm CHÍNH của cú chậm-lần-đầu. KHÔNG BAO GIỜ raise.
+
+    Xem `R2Storage.warmup` để biết số đo và danh sách giả thuyết đã bị bác. Tóm tắt: client tạo lười
+    DƯỚI MỘT KHOÁ, nên trên container vừa deploy, 20 lượt nộp đồng thời cùng xếp hàng sau lượt đầu
+    (import boto3 + nạp service model + TLS) rồi được nhả ra cùng lúc — 18,7s thay vì 0,22s.
+    """
+    started = time.perf_counter()
+    try:
+        storage = get_storage()
+        warm = getattr(storage, "warmup", None)
+        if callable(warm):
+            warm()
+            logger.info("Đã làm ấm client storage trong %.2fs", time.perf_counter() - started)
+    except Exception:  # noqa: BLE001 — tối ưu khởi động KHÔNG được phép giết server
+        logger.warning("Không làm ấm được storage — sẽ tạo lười ở lần dùng đầu", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
@@ -71,6 +90,7 @@ async def lifespan(app: FastAPI):
     # được nhả ra cùng lúc"), trong khi lúc đã ấm là 0,22s — kể cả khi 15 pipeline đang chạy.
     # Trả cái giá đó Ở ĐÂY, lúc khởi động, khi CHƯA có ứng viên nào chờ.
     _warm_llm_imports()
+    _warm_storage_client()
     # Checkpointer Postgres (PRD §10): pool + bảng checkpoint Neon, compile graph — MỘT LẦN ở đây.
     await checkpointer.setup_checkpointer()
     # Sweep timeout Screener (08c, PRD §10 FR-SCR-3/4): SAU checkpointer (sweep resume graph cần
