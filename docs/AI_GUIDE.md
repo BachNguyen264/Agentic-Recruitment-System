@@ -549,3 +549,30 @@
   `NEXT_PUBLIC_PUBLIC_API_BASE`. Chỉ áp được cho GET + POST `multipart/form-data` (CORS-safelisted ⇒
   KHÔNG preflight); screening/booking gửi JSON nên **có** preflight, login cần cookie first-party — hai
   nhóm đó phải giữ qua proxy. Thêm endpoint công khai mới ⇒ hỏi ngay "quota này đếm IP của ai?".
+- **Trần KÍCH THƯỚC không bao giờ chặn được file dựng-để-phá; chỉ HẠN GIỜ mới chặn (AUDIT-2).**
+  Chi phí bố cục của PyMuPDF là **bậc hai theo số glyph**, không theo byte: PDF **một trang** 2.1 KB
+  → 4.95s · 6.6 KB → **90s** · 37 KB → **>600s**. Mọi phép kiểm "file nhỏ nên chắc rẻ" đều sai ở đây.
+  Và vì PyMuPDF là SWIG **không nhả GIL**, `asyncio.to_thread` KHÔNG cô lập được: event loop đứng
+  theo, kể cả `/api/health/live` (đường Render kiểm sống) ⇒ Render tưởng service chết → SIGKILL →
+  lifespan không chạy → mọi BackgroundTask đang bay bốc hơi. Thứ duy nhất chặn được là một tiến
+  trình **GIẾT ĐƯỢC** (`cv_reader.extract_text_bounded`). Suy rộng: bất kỳ thư viện C nào xử lý file
+  người lạ nộp — hỏi ngay "nếu nó chạy 10 phút thì ai giết nó?", đừng hỏi "file to bao nhiêu".
+- **`Document()`/parser XML giải nén TOÀN BỘ trước khi vòng lặp của bạn chạy (AUDIT-2).** Đặt `break`
+  trong vòng `for para in doc.paragraphs` KHÔNG tiết kiệm được gì: `Document(io.BytesIO(data))` đã
+  dựng xong lxml cho cả `word/document.xml` trước đó. Đo: .docx **442 KB** chứa XML **116.5 MB**
+  (257:1) làm RSS **+639 MB** ⇒ OOM một instance 512 MB bằng MỘT lượt upload. Chặn ở **ĐẦU VÀO**:
+  ZIP khai sẵn kích thước sau giải nén trong central directory (`ZipInfo.file_size`), đọc gần như
+  miễn phí. Khai gian nhỏ hơn thật không lách được — `ZipExtFile` cắt output theo cỡ đã khai nên XML
+  cụt → parse lỗi → `parse_failed` (vẫn về tay người, PRD §13 giữ nguyên).
+- **`multiprocessing` + module không có `if __name__ == "__main__"` = fork bomb (AUDIT-2).** `spawn`
+  RE-IMPORT module chính ở tiến trình con; module nào gọi `extract_text_bounded` ở **cấp module** sẽ
+  đẻ con vô hạn. `app/__main__.py` có guard nên app an toàn, nhưng **script kiểm thử thì rất dễ
+  quên** — đã vấp thật, phải kill tay. Trên Unix dùng `forkserver` (không re-import `__main__`, lại
+  nhanh hơn); `spawn` chỉ dành cho Windows dev.
+- **Test khẳng định KẾT QUẢ không chốt được code có giá trị nằm ở CÔNG VIỆC ĐÃ TRÁNH (AUDIT-2).**
+  Thay hai bộ đọc CV bằng bản ngây thơ `"\n".join(mọi trang)[:budget]` → **toàn bộ suite vẫn xanh**,
+  dù bản ngây thơ tốn 421s + 382 MB trên PDF 2.000 trang và trả về chuỗi **giống hệt từng byte**.
+  Khi bản vá là "dừng sớm / bớt truy vấn / nhả connection sớm", test PHẢI đếm **số lần gọi**, chứ
+  không so kết quả. Cùng lớp lỗi: `.offset(offset)` xoá đi mà 499 test vẫn xanh; `await
+  session.commit()` trước lượt LLM xoá đi mà 13 test vẫn xanh. Cách kiểm rẻ nhất: **đột biến** bản
+  vá rồi chạy lại — xanh nghĩa là test chưa chốt gì.
