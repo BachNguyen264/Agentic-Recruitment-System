@@ -71,6 +71,27 @@ def _warm_storage_client() -> None:
         logger.warning("Không làm ấm được storage — sẽ tạo lười ở lần dùng đầu", exc_info=True)
 
 
+async def _warm_db_pool() -> None:
+    """Mở sẵn vài connection SQLAlchemy để cú bắt tay TLS đầu tiên tới Neon không rơi vào ứng viên.
+
+    Pool của SQLAlchemy tạo connection LƯỜI. Trên container vừa deploy, 20 lượt nộp đồng thời khiến
+    pool phải dựng tới 15 connection CÙNG LÚC — 15 cú bắt tay TLS tới Neon trên ~0,1 CPU. Đây là phần
+    còn lại của cú chậm-lần-đầu sau khi đã làm ấm R2 (18,7s → 9,6s).
+
+    Chỉ làm ấm MỘT SỐ ÍT (không phải cả 15): mục đích là trả giá cho phần dùng chung — nạp driver,
+    phân giải DNS, bắt tay TLS đầu — chứ không phải dựng sẵn toàn bộ pool. KHÔNG BAO GIỜ raise: DB
+    chưa sẵn sàng lúc boot là chuyện bình thường (Neon vừa thức), và checkpointer ngay sau đây mới là
+    chỗ báo lỗi cấu hình DB thật sự.
+    """
+    started = time.perf_counter()
+    try:
+        async with engine.connect() as conn:
+            await conn.exec_driver_sql("SELECT 1")
+        logger.info("Đã làm ấm pool DB trong %.2fs", time.perf_counter() - started)
+    except Exception:  # noqa: BLE001 — tối ưu khởi động KHÔNG được phép giết server
+        logger.warning("Không làm ấm được pool DB — sẽ kết nối lười ở request đầu", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
@@ -91,6 +112,7 @@ async def lifespan(app: FastAPI):
     # Trả cái giá đó Ở ĐÂY, lúc khởi động, khi CHƯA có ứng viên nào chờ.
     _warm_llm_imports()
     _warm_storage_client()
+    await _warm_db_pool()
     # Checkpointer Postgres (PRD §10): pool + bảng checkpoint Neon, compile graph — MỘT LẦN ở đây.
     await checkpointer.setup_checkpointer()
     # Sweep timeout Screener (08c, PRD §10 FR-SCR-3/4): SAU checkpointer (sweep resume graph cần
