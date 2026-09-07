@@ -80,7 +80,7 @@ qua interface: `cv_reader.extract_text(data, name)` làm việc trên BYTES, `pa
 `GET /api/applications/{id}/cv` STREAM qua `storage.get()` trong router HR (`require_hr` → chưa login 401);
 bucket R2 **PRIVATE**, KHÔNG public URL (NFR-4). `reset_demo_data` xóa file qua storage (sau commit DB).
 
-**Deploy (13) — ✅ ĐÃ LIVE** (Render Docker sau Cloudflare + Vercel + Neon/Upstash/Qdrant/R2; cross-domain
+**Deploy (13) — ✅ ĐÃ LIVE** (Render Docker sau Cloudflare + Vercel + Neon/Qdrant/R2; cross-domain
 cookie `SameSite=None; Secure` + CORS allowlist chạy thật). **4 sự cố prod đã vá** — chi tiết +
 cách verify ở `docs/deploy-live-issues.md` (ĐỌC TRƯỚC khi đụng checkpointer / rate-limit / config deploy).
 Code-prep đã có: **CORS từ env**
@@ -240,11 +240,11 @@ Prod đã dọn sạch 206 hồ sơ test (+21.068 dòng checkpoint + 206 file R2
 ## Stack
 
 - **Backend:** Python 3.12 · FastAPI · LangGraph · SQLAlchemy 2 (async) · Alembic · Pydantic v2. Package mgr: `uv`.
-- **Infra (managed-first):** Neon (Postgres) · Upstash Redis · Qdrant Cloud. Local fallback: `docker-compose.local.yml`.
+- **Infra (managed-first):** Neon (Postgres) · Qdrant Cloud · Cloudflare R2. Local fallback: `docker-compose.local.yml`.
 - **LLM (OpenAI):** parser `gpt-4.1-mini`; ranker `gpt-5-mini` (reasoning_effort=low); embeddings
   `text-embedding-3-small` (1536-dim). **Email: Resend.**
-- **Async:** FastAPI BackgroundTasks (NO worker polling — kills Upstash free tier). Screener uses suspend/resume
-  (LangGraph interrupt + Postgres checkpointer — later phase).
+- **Async:** FastAPI BackgroundTasks (NO worker polling — no extra queue infra to feed). Screener uses
+  suspend/resume (LangGraph interrupt + Postgres checkpointer) — REAL, see 08a-08d above.
 - **Frontend:** Next.js 14 · **plain Tailwind (slate palette)** · TanStack Query. shadcn/ui NOT installed —
   use utility classes + hand-written components; DO NOT add a UI library. API base from env `NEXT_PUBLIC_API_BASE`.
 - **PWA:** installable HR dashboard (no separate mobile codebase).

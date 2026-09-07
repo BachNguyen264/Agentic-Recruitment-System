@@ -27,8 +27,8 @@ parser → ranker → [gate rank] → screener (suspend/resume) → [gate mời]
 | Backend    | Python 3.12 · FastAPI · LangGraph · SQLAlchemy 2 (async) · Alembic · Pydantic v2 · `uv` |
 | Frontend   | Next.js 14 · plain Tailwind (slate) · TanStack Query (shadcn/ui chưa cài) |
 | PWA        | web dashboard cài được trên điện thoại (Add to Home Screen) — không codebase mobile riêng |
-| Hạ tầng    | Neon (Postgres) · Upstash Redis · Qdrant Cloud · (Langfuse — phase sau)  |
-| Async      | FastAPI BackgroundTasks (KHÔNG worker polling — giữ free-tier Upstash)   |
+| Hạ tầng    | Neon (Postgres) · Qdrant Cloud · Cloudflare R2 (file CV)                 |
+| Async      | FastAPI BackgroundTasks (KHÔNG worker polling — không dựng hàng đợi ngoài) |
 | Monorepo   | pnpm workspaces (`apps/dashboard`, `packages/*`)                         |
 
 ---
@@ -65,7 +65,7 @@ autonomous-recruitment-system/
 ## Bắt đầu nhanh (Quickstart)
 
 ```bash
-# 1. Cấu hình bí mật: copy ví dụ rồi điền connection string (Neon/Upstash/Qdrant)
+# 1. Cấu hình bí mật: copy ví dụ rồi điền connection string (Neon/Qdrant)
 cp .env.example .env                 # rồi điền giá trị thật
 
 # 2. Cài phụ thuộc
@@ -93,7 +93,7 @@ make dev-dashboard                   # Next.js  → http://localhost:3000
 ### Chưa có tài khoản managed? Chạy local
 
 ```bash
-make local-infra-up                  # Postgres + Redis + Qdrant qua docker compose
+make local-infra-up                  # Postgres + Qdrant qua docker compose
 # rồi trỏ .env sang các URL local (xem .env.example, mục "LOCAL FALLBACK")
 make local-infra-down
 ```

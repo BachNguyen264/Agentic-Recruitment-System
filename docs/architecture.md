@@ -43,13 +43,14 @@ Bất biến FR-GATE-2: ca bất định LUÔN vào `human_review`, bất kể g
 | Dashboard  | Next.js 14 + TanStack Query     | [`apps/dashboard`](../apps/dashboard)   |
 | PWA (điện thoại) | web dashboard cài được — không codebase riêng | [`apps/dashboard`](../apps/dashboard) |
 | Types      | TS dùng chung                   | [`packages/shared-types`](../packages/shared-types) |
-| Hạ tầng    | Neon · Upstash · Qdrant         | managed (xem `.env.example`)            |
+| Hạ tầng    | Neon · Qdrant · Cloudflare R2   | managed (xem `.env.example`)            |
 
 ## Bền vững & async (PRD §10, NFR-1/2)
 
 - Mỗi CV = một pipeline độc lập, chạy song song; CV chờ Screener KHÔNG nghẽn CV khác.
-- Screener **suspend/resume**: LangGraph `interrupt` + **Postgres checkpointer** (lát sau; hiện dùng
-  `MemorySaver`). KHÔNG worker polling Redis (giữ free-tier Upstash).
+- Screener **suspend/resume**: LangGraph `interrupt` + **Postgres checkpointer** (`AsyncPostgresSaver`
+  trên Neon — CHẠY THẬT; `MemorySaver` chỉ là fallback khi checkpointer chưa setup). KHÔNG worker
+  polling: không dựng thêm hàng đợi ngoài phải nuôi.
 
 ## Chừa chỗ kiến trúc (đã có)
 
