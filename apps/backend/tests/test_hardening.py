@@ -229,11 +229,11 @@ async def test_liveness_never_rate_limited() -> None:
 
 
 async def test_deep_health_is_rate_limited_but_does_not_starve_applicants() -> None:
-    """`/api/health` kiểm SÂU (ping Postgres+Redis+Qdrant) mở công khai → phải có hạn mức.
+    """`/api/health` kiểm SÂU (ping Postgres+Qdrant) mở công khai → phải có hạn mức.
 
-    Không chặn thì `while true; do curl .../api/health; done` đốt sạch 10k lệnh/ngày của Upstash
-    free — hạ tầng mà chính hệ thống đang sống nhờ. Nhưng nó phải dùng XÔ RIÊNG: người đi soi
-    health KHÔNG được làm ứng viên hết lượt nộp CV.
+    Không chặn thì `while true; do curl .../api/health; done` giữ Neon không bao giờ tự ngủ và đốt
+    sạch compute-hours của gói free — hạ tầng mà chính hệ thống đang sống nhờ. Nhưng nó phải dùng
+    XÔ RIÊNG: người đi soi health KHÔNG được làm ứng viên hết lượt nộp CV.
     """
     app = _app(rate_limited=True, login_max=5, login_window_seconds=900,
                public_max=2, public_window_seconds=3600, trust_proxy=False)

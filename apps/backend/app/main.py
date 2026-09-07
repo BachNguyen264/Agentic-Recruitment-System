@@ -24,7 +24,6 @@ from app.core.hardening import (
 )
 from app.core.logging import get_logger, setup_logging
 from app.core.qdrant_client import qdrant_client
-from app.core.redis_client import redis_client
 from app.services import screening_scheduler
 from app.services.storage import get_storage
 from app.services.storage._executor import shutdown_storage_executor
@@ -124,11 +123,10 @@ async def lifespan(app: FastAPI):
     # Đóng kết nối sạch — dừng sweep TRƯỚC khi đóng checkpointer (sweep dùng graph/pool).
     await scheduler.stop()
     await checkpointer.teardown_checkpointer()
-    await redis_client.aclose()
     await qdrant_client.close()
     await engine.dispose()
     shutdown_storage_executor()
-    logger.info("Backend tắt — đã đóng sweep + Redis/Qdrant/DB.")
+    logger.info("Backend tắt — đã đóng sweep + Qdrant/DB.")
 
 
 app = FastAPI(

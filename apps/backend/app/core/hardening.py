@@ -172,8 +172,9 @@ class RateLimitMiddleware:
 
     - `/api/auth/login` → chống brute-force mật khẩu HR.
     - GHI công khai (`POST /api/public/applications`, `POST /api/public/screening/*`) → chống spam.
-    - `/api/health` (kiểm SÂU) → nó ping Postgres+Redis+Qdrant mỗi lượt và mở cho cả thế giới; không
-      chặn thì một vòng lặp curl đốt sạch hạn mức Upstash free (10k lệnh/ngày) mà hệ thống đang sống nhờ.
+    - `/api/health` (kiểm SÂU) → nó ping Postgres+Qdrant mỗi lượt và mở cho cả thế giới; không chặn
+      thì một vòng lặp curl giữ Neon không bao giờ tự ngủ và đốt sạch compute-hours của gói free —
+      hạ tầng mà chính hệ thống đang sống nhờ.
 
     KHÔNG đụng: `/api/health/live` (Render ping liên tục để giữ service sống — chặn nó là tự cắt
     health check), các route HR khác (đã có `require_hr`), và ĐỌC công khai (`GET` JD / form

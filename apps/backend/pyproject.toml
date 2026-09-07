@@ -15,7 +15,6 @@ dependencies = [
     "pydantic-settings>=2.5,<3",
     "email-validator>=2,<3",
     "python-dotenv>=1.0,<2",
-    "redis>=5.0,<6",
     "qdrant-client>=1.10,<2",
     "langchain-openai>=0.3.35",
     "pymupdf>=1.27.2.3",

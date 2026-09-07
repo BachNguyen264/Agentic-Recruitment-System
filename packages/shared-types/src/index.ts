@@ -8,7 +8,6 @@ export interface HealthStatus {
   api: "ok";
   services: {
     postgres: ServiceState;
-    redis: ServiceState;
     qdrant: ServiceState;
   };
 }

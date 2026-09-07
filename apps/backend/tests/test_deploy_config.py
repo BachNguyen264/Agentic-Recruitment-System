@@ -172,12 +172,12 @@ def test_cors_middleware_is_outermost() -> None:
 
 # ── 3) Liveness cho health check của nền tảng ────────────────────────
 async def test_liveness_does_no_io_even_when_all_services_are_down(monkeypatch) -> None:
-    """`/api/health/live` phải trả 200 NGAY CẢ KHI Postgres/Redis/Qdrant hỏng — vì nó không gọi gì.
+    """`/api/health/live` phải trả 200 NGAY CẢ KHI Postgres/Qdrant hỏng — vì nó không gọi gì.
 
     VÌ SAO cần endpoint riêng: Render gửi health check "vài giây một lần, LIÊN TỤC". `/api/health`
-    (kiểm sâu) ping cả 3 dịch vụ ⇒ ~17k lượt/ngày: một mình nó vượt hạn mức Upstash free
-    (10k lệnh/ngày) và giữ Neon không bao giờ tự ngủ (đốt compute-hours). Health check của nền tảng
-    hỏi "tiến trình còn sống không", KHÔNG phải "cả hệ thống có khỏe không".
+    (kiểm sâu) ping cả 2 dịch vụ ⇒ ~17k lượt/ngày: một mình nó giữ Neon không bao giờ tự ngủ và đốt
+    sạch compute-hours của gói free. Health check của nền tảng hỏi "tiến trình còn sống không",
+    KHÔNG phải "cả hệ thống có khỏe không".
     """
     import httpx
 
@@ -188,7 +188,6 @@ async def test_liveness_does_no_io_even_when_all_services_are_down(monkeypatch) 
         raise AssertionError("liveness KHÔNG được chạm dịch vụ ngoài")
 
     monkeypatch.setattr(health_module, "_check_postgres", _boom)
-    monkeypatch.setattr(health_module, "_check_redis", _boom)
     monkeypatch.setattr(health_module, "_check_qdrant", _boom)
 
     transport = httpx.ASGITransport(app=app)
@@ -236,12 +235,8 @@ def test_env_example_only_lists_real_settings_fields() -> None:
 
     env_example = Path(__file__).resolve().parents[3] / ".env.example"
     keys = {m.lower() for m in re.findall(r"\b([A-Z][A-Z0-9_]{2,})=", env_example.read_text(encoding="utf-8"))}
-    exempt = {
-        # Thông tin tài khoản Upstash (chưa dùng trong code) — giữ lại để tiện tra cứu.
-        "upstash_redis_rest_url",
-        "upstash_redis_rest_token",
-        # (Biến FRONTEND KHÔNG còn ở file này — xem test_frontend_env_lives_in_its_own_example.)
-    }
+    # (Biến FRONTEND KHÔNG còn ở file này — xem test_frontend_env_lives_in_its_own_example.)
+    exempt: set[str] = set()
     unknown = keys - set(Settings.model_fields) - exempt
     assert not unknown, f".env.example có key KHÔNG tồn tại trong Settings: {sorted(unknown)}"
 

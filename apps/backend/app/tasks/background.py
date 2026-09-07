@@ -1,10 +1,11 @@
 """Xử lý bất đồng bộ bằng FastAPI BackgroundTasks (PRD §8.3, NFR-1).
 
-CLAUDE.md: KHÔNG worker polling Redis (phá free-tier Upstash) — dùng BackgroundTasks.
-Scaffold: chạy pipeline stub, ghi audit_log từng node + quyết định cuối, cập nhật Application.
+CLAUDE.md: KHÔNG worker polling — dùng BackgroundTasks. Thêm một hàng đợi ngoài nghĩa là thêm một
+hạ tầng phải nuôi + một vòng polling chạy liên tục kể cả lúc không có việc, đổi lại không giải quyết
+thêm được gì ở quy mô này.
 
-TODO (PRD §10): Screener suspend/resume cần Upstash QStash (public URL) + Postgres checkpointer;
-hiện chạy thẳng một mạch (chưa suspend).
+Ghi audit_log từng node + quyết định cuối, cập nhật Application. Screener suspend/resume chạy THẬT
+qua `interrupt()` + AsyncPostgresSaver (08a-08d).
 """
 
 from __future__ import annotations
@@ -58,7 +59,7 @@ _PIPELINES_FAILED = 0
 # thắt KHÔNG phải kích thước pool mà là cái khoá. Việc phải làm là chặn ở ĐẦU VÀO: cùng một lượng
 # việc, nhưng vào từng đợt có trật tự thay vì tất cả cùng lúc rồi hỏng hàng loạt.
 #
-# VÌ SAO Semaphore chứ không phải hàng đợi/worker: CLAUDE.md cấm worker queue polling Redis, và
+# VÌ SAO Semaphore chứ không phải hàng đợi/worker: CLAUDE.md cấm dựng worker queue polling, và
 # BackgroundTasks đã là "hàng đợi" sẵn có — chỉ thiếu cái van. Coroutine đang chờ van KHÔNG giữ
 # connection, KHÔNG giữ luồng, chỉ tốn vài KB RAM; nó ngủ cho tới lượt.
 #
