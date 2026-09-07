@@ -424,7 +424,7 @@ SUBMITTED
 SCREENING
   → AWAITING_SCREENER  (suspend)
         trả lời    → (resume) → GATE MỜI
-        +24h       → REMINDED → (vẫn AWAITING)
+        +24h       → gửi thư nhắc (ghi mốc reminded_at) → (vẫn AWAITING_SCREENER)
         timeout    → PENDING_REVIEW[no_response]
   GATE MỜI:
         ổn + auto-invite ON → SCHEDULING

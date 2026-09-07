@@ -26,7 +26,8 @@ export type ApplicationStatus =
   | "RANKING"
   | "SCREENING"
   | "AWAITING_SCREENER"
-  | "REMINDED"
+  // KHÔNG có "REMINDED": nhắc là một SỰ KIỆN (mốc `screening_session.reminded_at`), không phải
+  // trạng thái — hồ sơ vẫn đứng ở AWAITING_SCREENER. Xem models/application.py.
   | "SCHEDULING"
   // SCH-2: thư mời + link đặt lịch đã gửi, chờ ứng viên tự chọn giờ (PRD §10b).
   | "AWAITING_BOOKING"
@@ -381,4 +382,133 @@ export interface BookingCancelResult {
   // Hai câu dẫn tới hai hành vi hoàn toàn khác nhau nên UI không được đoán bừa.
   can_rebook: boolean;
   email_sent: boolean;
+}
+
+// ── Cấu hình hệ thống (khu quản trị HR — PRD §NFR-8) ──────────────────────────
+// Khớp `ConfigFieldOut`/`ConfigGroupOut`/`ConfigUpdateResult` ở app/schemas/admin.py.
+//
+// `value`/`default` để `string | number | null` chứ không `unknown`: registry backend chỉ khai bốn
+// kiểu (int | float | str | enum) nên đó là TẬP ĐỦ. Dùng `unknown` sẽ bắt mọi nơi đọc phải ép kiểu
+// lại, còn `any` thì CLAUDE.md cấm.
+
+export type ConfigFieldKind = "int" | "float" | "str" | "enum";
+
+export type ConfigValue = string | number | null;
+
+export interface ConfigField {
+  key: string;
+  label: string;
+  tooltip: string;
+  kind: ConfigFieldKind;
+  value: ConfigValue;
+  default: ConfigValue;
+  minimum: number | null;
+  maximum: number | null;
+  choices: string[] | null;
+  unit: string | null;
+  nullable: boolean;
+  // Cảnh báo hiện NGAY dưới ô nhập — dành cho cấu hình mà giá trị HỢP LỆ vẫn có thể vô nghĩa
+  // (vd trần buổi/ngày lớn hơn số mốc giờ mà lưới sinh ra nổi). KHÔNG phải lỗi.
+  warning: string | null;
+  // Đang KHÁC mặc định (có hàng trong `app_config`) → hiện dấu "đã chỉnh" + nút khôi phục.
+  is_overridden: boolean;
+}
+
+export interface ConfigGroup {
+  group: string;
+  fields: ConfigField[];
+}
+
+export interface ConfigUpdateResult {
+  // `saved` = những khoá backend đã ghi; `changed` = tập con thực sự đổi giá trị. Gửi lại đúng giá
+  // trị đang chạy là hợp lệ và cho `changed: []` — đó là TRẠNG THÁI, không phải lỗi.
+  saved: string[];
+  changed: string[];
+}
+
+// ── Nhật ký kiểm toán (PRD §16 / NFR-3) ───────────────────────────────────────
+// Khớp `AuditLogItem`/`AuditLogPage`. `application_id = null` = hành động cấp hệ thống (vd HR đổi
+// cấu hình), không thuộc hồ sơ nào.
+export interface AuditLogItem {
+  id: number;
+  application_id: number | null;
+  applicant_email: string | null;
+  node: string;
+  action: string;
+  confidence: number | null;
+  uncertainty_flags: string[];
+  escalation_reason: string | null;
+  detail: Record<string, unknown>;
+  // `DateTime(timezone=True)` phía backend ⇒ ISO CÓ offset ⇒ `formatVnDateTime` đọc đúng.
+  created_at: string;
+}
+
+export interface AuditLogPage {
+  total: number;
+  limit: number;
+  offset: number;
+  items: AuditLogItem[];
+}
+
+// ── Đồng hồ đo bão hoà (GET /api/health/metrics — HR-only, KHÔNG I/O) ─────────
+// Mọi ô là `number | null`: endpoint cố ý trả `null` cho ô đọc hỏng thay vì 500 (nó được thiết kế
+// để bị poll suốt một lượt load test). Hình dạng LỒNG NHAU giữ nguyên kể cả ở nhánh lỗi, nên đọc
+// `m.db_pool.checked_out` luôn an toàn.
+
+export interface DbPoolGauge {
+  size: number | null;
+  checked_out: number | null;
+  // ÂM là BÌNH THƯỜNG: SQLAlchemy khởi tạo `_overflow = -pool_size`.
+  overflow: number | null;
+  checked_in: number | null;
+  max: number | null;
+}
+
+export interface CheckpointerPoolGauge {
+  size: number | null;
+  available: number | null;
+  checked_out: number | null;
+  max: number | null;
+  waiting: number | null;
+}
+
+export interface ThreadPoolGauge {
+  max_workers: number | null;
+  // ĐỈNH LỊCH SỬ, không phải "đang bận": ThreadPoolExecutor không bao giờ bỏ luồng khỏi `_threads`.
+  // Bằng chứng bão hoà là `queue_depth > 0`.
+  threads_alive: number | null;
+  queue_depth: number | null;
+}
+
+export interface AnyioThreadGauge {
+  total_tokens: number | null;
+  borrowed: number | null;
+  waiting: number | null;
+}
+
+export interface PipelineGauge {
+  in_flight: number | null;
+  started_total: number | null;
+  finished_total: number | null;
+  failed_total: number | null;
+  // OPTIONAL có chủ ý: đường chạy bình thường (`pipeline_gauges`) TRẢ hai ô này, nhưng nhánh
+  // `except` của `/health/metrics` dựng lại dict chỉ 4 khoá nên chúng VẮNG khi endpoint tự cứu.
+  queued?: number | null;
+  limit?: number | null;
+}
+
+export interface HealthMetrics {
+  db_pool: DbPoolGauge;
+  checkpointer_pool: CheckpointerPoolGauge;
+  executor: ThreadPoolGauge;
+  storage_executor: ThreadPoolGauge;
+  anyio_threads: AnyioThreadGauge;
+  pipelines: PipelineGauge;
+  cpu_count: number | null;
+  thread_default_width: number | null;
+  // `null` ngoài Linux (máy dev Windows) — backend cố ý không đoán bừa.
+  rss_bytes: number | null;
+  uptime_seconds: number | null;
+  // CHỈ có ở nhánh lỗi: tên exception mà endpoint đã nuốt để không 500.
+  error?: string;
 }

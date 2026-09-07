@@ -419,7 +419,7 @@
 
 - **"Chưa kết thúc" ≠ "đang chạy" — animation và nhịp hỏi phải bám cái thứ HAI (DASH-1, bắt trên
   prod).** `IN_FLIGHT` ở dashboard nghĩa là *chưa tới điểm kết thúc*, nên nó CHỨA `AWAITING_SCREENER`,
-  `REMINDED`, `AWAITING_BOOKING` — những trạng thái ĐANG CHỜ CON NGƯỜI và kéo dài hàng NGÀY. Lấy tập
+  `AWAITING_BOOKING` — những trạng thái ĐANG CHỜ CON NGƯỜI và kéo dài hàng NGÀY. Lấy tập
   đó để bật animation + nhịp nhanh thì sai hai đường cùng lúc: (a) ô node hiện "ĐANG CHẠY" kèm thanh
   chạy trong khi KHÔNG có tác tử nào chạy — đúng loại "trạng thái nói dối"; (b) một ứng viên chưa bấm
   link đặt lịch là ghim MỌI tab dashboard ở nhịp 2 giây vô thời hạn, tức tái tạo lại chính sự lãng phí

@@ -35,7 +35,7 @@ export function toBreakdown(app: ApplicationDetail): ScoreBreakdownData {
 export type StatusBucket = "processing" | "review" | "passed" | "rejected";
 
 // Mọi trạng thái không phải PENDING_REVIEW / INTERVIEW_SCHEDULED / REJECTED đều là "đang xử lý"
-// (gồm cả REMINDED — sub-state của AWAITING_SCREENER).
+// (gồm cả giai đoạn đã gửi nhắc — vẫn là AWAITING_SCREENER).
 export function statusBucket(status: ApplicationStatus): StatusBucket {
   if (status === "PENDING_REVIEW") return "review";
   if (status === "INTERVIEW_SCHEDULED") return "passed";
@@ -49,7 +49,6 @@ const STATUS_LABEL: Record<ApplicationStatus, string> = {
   RANKING: "Đang chấm điểm",
   SCREENING: "Sàng lọc",
   AWAITING_SCREENER: "Chờ trả lời sàng lọc",
-  REMINDED: "Đã nhắc",
   SCHEDULING: "Đang đặt lịch",
   // SCH-2: thư mời + link ĐÃ gửi — quả bóng đang ở sân ứng viên, HR không phải làm gì.
   AWAITING_BOOKING: "Chờ ứng viên chọn lịch",
@@ -115,7 +114,6 @@ export const ALL_STATUSES: readonly ApplicationStatus[] = [
   "RANKING",
   "SCREENING",
   "AWAITING_SCREENER",
-  "REMINDED",
   "SCHEDULING",
   "AWAITING_BOOKING",
   "PENDING_REVIEW",

@@ -100,12 +100,11 @@ function deriveNodes(app: ApplicationDetail) {
   } else if (flags.includes("no_response")) {
     screener = "failed";
     screenerNote = "Hết hạn không phản hồi — chuyển HR xem xét (KHÔNG tự từ chối).";
-  } else if (s === "AWAITING_SCREENER" || s === "REMINDED") {
+  } else if (s === "AWAITING_SCREENER") {
+    // Không tách nhánh "đã nhắc": nhắc là SỰ KIỆN chứ không phải trạng thái, hồ sơ vẫn đứng nguyên ở
+    // AWAITING_SCREENER (mốc nằm ở `screening_session.reminded_at`). Nhánh cũ không bao giờ chạy.
     screener = "waiting";
-    screenerNote =
-      s === "REMINDED"
-        ? "Đã gửi nhắc — đang chờ ứng viên trả lời trước hạn."
-        : "Đã gửi câu hỏi qua email — đang chờ ứng viên trả lời.";
+    screenerNote = "Đã gửi câu hỏi qua email — đang chờ ứng viên trả lời.";
   } else if (pastRanker && (decided || invited || s === "PENDING_REVIEW")) {
     screener = "skipped";
     // KHÔNG khẳng định mù "JD không có câu hỏi": hồ sơ DƯỚI NGƯỠNG bị route_after_ranker đưa thẳng
