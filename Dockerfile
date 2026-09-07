@@ -6,8 +6,8 @@
 # Build context = GỐC REPO (cần cả apps/backend lẫn scripts/). Trên Render:
 #   Dockerfile Path = ./Dockerfile · Docker Build Context Directory = .  (mặc định)
 #   Health Check Path = /api/health/live   ← liveness THUẦN, KHÔNG phải /api/health (kiểm sâu):
-#     Render ping vài giây một lần, liên tục → trỏ vào /api/health sẽ đốt hạn mức Upstash free
-#     (10k lệnh/ngày) và giữ Neon luôn thức. Xem api/routes/health.py.
+#     Render ping vài giây một lần, liên tục → trỏ vào /api/health sẽ giữ Neon luôn thức và đốt
+#     sạch compute-hours của gói free. Xem api/routes/health.py.
 # Secrets KHÔNG nằm trong image — Render truyền qua env vars (xem .env.example mục PROD).
 
 FROM python:3.12-slim-bookworm
@@ -51,6 +51,6 @@ RUN uv sync --frozen --no-dev
 # con số cố định ở đây chỉ tạo mâu thuẫn với cổng thực sự được bind.
 
 # Migration TRƯỚC rồi mới lên server (khớp plan §3.2). `exec` để uvicorn thành PID 1 và NHẬN SIGTERM
-# của Render → lifespan teardown chạy: dừng sweep, đóng checkpointer/Redis/Qdrant/DB sạch sẽ.
+# của Render → lifespan teardown chạy: dừng sweep, đóng checkpointer/Qdrant/DB sạch sẽ.
 # Migration hỏng → container thoát, deploy FAIL rõ ràng, KHÔNG chạy app trên schema sai.
 CMD ["sh", "-c", "alembic upgrade head && exec python -m app"]

@@ -12,8 +12,8 @@ help: ## Liệt kê các target
 	@echo "  makemigration    - alembic revision --autogenerate"
 	@echo "  health           - curl /api/health"
 	@echo "  test             - pytest (backend)"
-	@echo "  check-env        - kiểm tra kết nối Neon/Upstash/Qdrant"
-	@echo "  local-infra-up   - docker compose (Postgres/Redis/Qdrant) — dự phòng"
+	@echo "  check-env        - kiểm tra kết nối Neon/Qdrant"
+	@echo "  local-infra-up   - docker compose (Postgres/Qdrant) — dự phòng"
 	@echo "  local-infra-down - tắt docker compose dự phòng"
 
 install: ## Cài đặt phụ thuộc
@@ -38,8 +38,8 @@ health: ## Gọi health endpoint
 test: ## Chạy test backend
 	cd apps/backend && uv run pytest -q
 
-check-env: ## Kiểm tra kết nối 3 dịch vụ managed (script độc lập, không cần backend)
-	uv run --no-project --with asyncpg --with "redis>=5" --with qdrant-client --with python-dotenv scripts/check_connections.py
+check-env: ## Kiểm tra kết nối 2 dịch vụ managed (script độc lập, không cần backend)
+	uv run --no-project --with asyncpg --with qdrant-client --with python-dotenv scripts/check_connections.py
 
 local-infra-up: ## Dựng hạ tầng local (dự phòng khi chưa có managed)
 	docker compose -f docker-compose.local.yml up -d
