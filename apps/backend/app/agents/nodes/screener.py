@@ -43,7 +43,6 @@ def screener_node(state: RecruitmentState) -> dict:
     if not jd or ("screener_questions" in jd and not jd["screener_questions"]):
         return {
             "status": ApplicationStatus.SCREENING.value,
-            "awaiting_screener": False,
             "screener_answers": None,
             "confidence": 1.0,
             "uncertainty_flags": [],
@@ -64,7 +63,6 @@ def screener_node(state: RecruitmentState) -> dict:
     if isinstance(payload, dict) and payload.get("no_response"):
         return {
             "status": ApplicationStatus.SCREENING.value,
-            "awaiting_screener": False,
             "screener_answers": None,
             "confidence": 1.0,
             "uncertainty_flags": ["no_response"],
@@ -75,7 +73,6 @@ def screener_node(state: RecruitmentState) -> dict:
     # 08b — câu trả lời THẬT: lưu thô (KHÔNG LLM chuẩn hóa), đi tiếp human_review (HR xem câu trả lời).
     return {
         "status": ApplicationStatus.SCREENING.value,
-        "awaiting_screener": False,
         "screener_answers": payload,
         "confidence": 1.0,
         "uncertainty_flags": [],

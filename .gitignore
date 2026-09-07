@@ -47,6 +47,13 @@ Thumbs.db
 
 # Claude Code local tooling (skills, local settings) — keep out of VCS
 .claude/
+.agents/
+# Khoá phiên bản của mấy skill vẽ sơ đồ tải về máy — cùng loại rác công cụ với .claude/
+skills-lock.json
+# Chỉ mục GitNexus (~138 MB, sinh lại bằng `node .gitnexus/run.cjs analyze`). Trước đây chỉ được
+# chặn ở `.git/info/exclude` — file KHÔNG nằm trong VCS, nên máy vừa clone về chạy analyze là thấy
+# cả trăm MB hiện ra untracked, rất dễ bị `git add -A` nuốt.
+.gitnexus/
 
 # ───────────────────────── Uploads (CV file local — dev) ───
 # TODO (production): object storage thay cho local. KHÔNG commit CV (dữ liệu cá nhân, NFR-4).

@@ -11,13 +11,28 @@ import hashlib
 import hmac
 import json
 
-from app.core.webhook_signature import sign_svix_payload, verify_svix_signature
+from app.core.webhook_signature import _digest, _key, verify_svix_signature
 
 _SECRET = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"  # khoá mẫu của Svix docs — KHÔNG phải secret thật
 _ID = "msg_2b3c"
 _TS = "1786000000"
 _NOW = 1786000000.0
 _BODY = b'{"type":"email.bounced","data":{"email_id":"e_1"}}'
+
+
+def sign_svix_payload(*, secret: str, msg_id: str, timestamp: str, body: bytes) -> str:
+    """Dựng header `svix-signature` hợp lệ — chỉ để tạo DỮ LIỆU VÀO cho test.
+
+    VÌ SAO nằm ở đây chứ không ở `app/core/webhook_signature.py`: đường chạy thật
+    (`routes/webhooks.py`) chỉ gọi `verify_svix_signature` — không nơi nào trong `app/` ký cả. Để
+    hàm ký trong module production (lại còn export qua `__all__`) là quảng cáo một API công khai mà
+    chỉ test dùng. Chuỗi phiên bản "v1" viết cứng ở đây có chủ đích: test không nên mượn hằng số của
+    chính module nó đang kiểm.
+    """
+    key = _key(secret)
+    if key is None:
+        raise ValueError("Secret webhook không hợp lệ (phải là whsec_<base64>).")
+    return f"v1,{_digest(key, msg_id, timestamp, body)}"
 
 
 def _sig() -> str:

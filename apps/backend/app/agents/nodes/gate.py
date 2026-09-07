@@ -24,7 +24,6 @@ def gate_auto_reject_node(state: RecruitmentState) -> dict:
             f"Tự động từ chối: điểm {score}/100 dưới ngưỡng đạt và gate auto-từ-chối của JD đang BẬT "
             "(PRD §9). Không cần HR xử lý."
         ),
-        "result": {"action": "auto_reject", "score": score},
         "messages": [
             f"[gate] auto-từ-chối: điểm {score} dưới ngưỡng đạt, gate JD BẬT (PRD §9). "
             "Thư từ chối gửi qua scheduler."

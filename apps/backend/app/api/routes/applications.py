@@ -1,7 +1,11 @@
-"""Routes Application — POST (nộp CV, multipart) / GET (đọc). PRD §8.2–§8.3.
+"""Routes Application (HR, sau `require_hr`) — đọc danh sách/chi tiết, tải CV gốc, review, đặt lịch.
 
-Nộp CV = upload file (PDF/DOCX) + email + job_id → lưu file local, tạo Application SUBMITTED,
-đẩy vào pipeline bất đồng bộ (parser THẬT; ranker/screener/scheduler vẫn stub).
+ĐƯỜNG NHẬN CV **KHÔNG** nằm ở đây: ứng viên là guest (PRD §4, FR-AP-2) nên chỉ có MỘT cửa nhận là
+`POST /api/public/applications` (`routes/public.py`). Trước đây file này có thêm một bản POST cho HR
+sao chép gần nguyên vẹn cửa công khai, không client nào gọi — và bản sao ấy đã LỆCH: nó vẫn giữ
+`session.refresh()` mà bản công khai đã bỏ vì đó là nguyên nhân gốc của nút thắt pool trên prod
+(xem gotcha "refresh() thừa" trong `docs/AI_GUIDE.md`). Cần đường nộp cho HR thì DÙNG LẠI thân hàm
+`public.submit_application`, đừng chép nó lần nữa.
 """
 
 from __future__ import annotations
@@ -9,18 +13,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Annotated
 
-from fastapi import (
-    APIRouter,
-    BackgroundTasks,
-    File,
-    Form,
-    HTTPException,
-    Query,
-    Response,
-    UploadFile,
-    status,
-)
-from pydantic import ValidationError
+from fastapi import APIRouter, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +21,6 @@ from app.api.deps import DBSession
 from app.core.logging import get_logger
 from app.models.email_delivery import DeliveryStatus, EmailDelivery
 from app.schemas.application import (
-    ApplicationCreate,
     ApplicationRead,
     BookedInterview,
     PipelineItem,
@@ -40,58 +32,13 @@ from app.services import review as review_service
 from app.services.storage import (
     StorageError,
     StorageNotFound,
-    build_cv_key,
     content_type_for,
     get_storage,
 )
-from app.tasks.background import process_application
-from app.tools import cv_storage
 
 logger = get_logger("app.api.applications")
 
 router = APIRouter(prefix="/applications", tags=["applications"])
-
-
-@router.post("", response_model=ApplicationRead, status_code=status.HTTP_201_CREATED)
-async def create_application(
-    session: DBSession,
-    background_tasks: BackgroundTasks,
-    applicant_email: str = Form(...),
-    job_id: int | None = Form(None),
-    file: UploadFile = File(...),
-) -> ApplicationRead:
-    try:
-        data = ApplicationCreate(job_id=job_id, applicant_email=applicant_email)
-    except ValidationError:
-        raise HTTPException(status_code=422, detail="Email không hợp lệ") from None
-
-    # Slice 06: dùng CHUNG validate_cv với đường nộp công khai (trước đây chỉ kiểm đuôi → bytes
-    # không giới hạn/không đúng loại vẫn ghi được; nay đẩy lên object storage nên phải chặn ở đây).
-    content = await file.read()
-    try:
-        cv_storage.validate_cv(file.filename or "", content)
-    except cv_storage.InvalidCV as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from None
-
-    app_row = await application_service.create_application(session, data)
-    # cv_file_ref cần application_id -> lưu file SAU khi có id, rồi cập nhật. Lưu QUA SEAM storage.
-    key = build_cv_key(app_row.id, file.filename or "")
-    try:
-        await get_storage().save(key, content, content_type_for(file.filename or ""))
-    except StorageError as exc:
-        # Xem public.py: hồ sơ có cv_file_ref rỗng sẽ khiến parser chạy nhánh STUB → "parse thành
-        # công" giả. Thà xóa hồ sơ + báo lỗi còn hơn để dữ liệu nói dối.
-        logger.error("Upload CV (HR): lưu storage thất bại (app=%s, key=%s): %s", app_row.id, key, exc)
-        await session.delete(app_row)
-        await session.commit()
-        raise HTTPException(status_code=503, detail="Lỗi lưu trữ file CV. Vui lòng thử lại.") from None
-    app_row.cv_file_ref = key
-    await session.commit()
-    await session.refresh(app_row)
-
-    # PRD §8.3: đẩy vào xử lý bất đồng bộ (chạy SAU response). Mỗi CV một pipeline độc lập.
-    background_tasks.add_task(process_application, app_row.id)
-    return ApplicationRead.model_validate(app_row)
 
 
 @router.get(

@@ -48,7 +48,6 @@ async def _await_value(value: Any) -> Any:
 
 def test_screener_node_no_questions_passthrough() -> None:
     out = screener_node({"input": {"jd": _JD_NOQ_OFF}, "application_id": 5})
-    assert out["awaiting_screener"] is False
     assert out["screener_answers"] is None
     assert out["uncertainty_flags"] == []            # KHÔNG cờ
     assert "no_response" not in out["uncertainty_flags"]  # KHÔNG ghosting (khác timeout)
@@ -60,7 +59,6 @@ def test_screener_node_no_jd_skips_no_empty_form() -> None:
     # App KHÔNG có JD (jd rỗng) → không gì để sàng lọc → BỎ QUA (KHÔNG suspend-form-rỗng). Pass-through
     # sạch; route sau đó về human_review (auto_invite OFF vì không gate_config). Chốt contract null-JD.
     out = screener_node({"input": {}})
-    assert out["awaiting_screener"] is False
     assert out["uncertainty_flags"] == []
     assert out["screener_answers"] is None
 

@@ -66,6 +66,8 @@ _PIPELINES_FAILED = 0
 # BẮT BUỘC đi kèm `openai_timeout_seconds`: một lượt gọi LLM treo vô hạn sẽ giữ một suất VĨNH VIỄN
 # và biến van thành nút cổ chai chết. Không có timeout thì ĐỪNG bật van này.
 _PIPELINE_SEMAPHORE: asyncio.Semaphore | None = None
+# Trần ĐANG THỰC SỰ có hiệu lực. `None` = chưa chốt (van chưa dùng lần nào); `<= 0` = van TẮT hẳn.
+_PIPELINE_LIMIT: int | None = None
 
 
 def _pipeline_semaphore() -> asyncio.Semaphore | None:
@@ -74,19 +76,35 @@ def _pipeline_semaphore() -> asyncio.Semaphore | None:
     Tạo LƯỜI (lần gọi đầu) chứ không phải lúc import: `asyncio.Semaphore()` ở Python 3.10+ không gắn
     event loop lúc dựng, nhưng tạo lười vẫn an toàn hơn cho test (đổi settings rồi gọi lại vẫn đúng
     trong cùng một tiến trình chưa từng dùng van).
+
+    CHỐT MỘT LẦN, cả GIÁ TRỊ lẫn nhánh BẬT/TẮT. Bản trước đọc lại `settings` MỖI lượt gọi nhưng chỉ
+    dùng cho nhánh `limit <= 0`, còn `asyncio.Semaphore(limit)` thì chỉ dựng khi biến toàn cục còn
+    `None` ⇒ đổi 15→30 lúc chạy KHÔNG có tác dụng nào (vẫn 15), mà đổi 15→0 lại TẮT van NGAY. Đọc
+    code thấy "đọc lại mỗi lần gọi" nên rất dễ tin là đổi được — đúng loại bất đối xứng chỉ lộ ra khi
+    có sự cố tải và người trực chỉnh số mà không hiểu vì sao chẳng khác gì.
+
+    VÌ SAO chốt chứ không dựng lại van theo trần mới: các coroutine đang cầm suất nhả vào van CŨ, nên
+    thay van giữa chừng cho phép đồng thời vọt lên `trần_cũ + trần_mới` — tệ hơn hẳn cái nó định
+    sửa. `max_concurrent_pipelines` cũng KHÔNG nằm trong `config_registry` (không chỉnh được lúc
+    chạy từ giao diện HR), nên "chốt lúc dùng lần đầu" đúng với cách biến này thực sự được dùng:
+    đọc từ env một lần cho cả vòng đời tiến trình. Muốn đổi thật thì đổi env rồi khởi động lại.
     """
-    global _PIPELINE_SEMAPHORE
-    limit = settings.max_concurrent_pipelines
-    if limit <= 0:
-        return None
-    if _PIPELINE_SEMAPHORE is None:
-        _PIPELINE_SEMAPHORE = asyncio.Semaphore(limit)
+    global _PIPELINE_SEMAPHORE, _PIPELINE_LIMIT
+    if _PIPELINE_LIMIT is None:
+        _PIPELINE_LIMIT = settings.max_concurrent_pipelines
+        if _PIPELINE_LIMIT > 0:
+            _PIPELINE_SEMAPHORE = asyncio.Semaphore(_PIPELINE_LIMIT)
     return _PIPELINE_SEMAPHORE
 
 
 def pipeline_gauges() -> dict[str, int | None]:
     """Ảnh chụp bộ đếm pipeline cho endpoint chẩn đoán. Thuần RAM — KHÔNG chạm DB, KHÔNG raise."""
-    limit = settings.max_concurrent_pipelines
+    # Hỏi VAN, không đọc lại `settings`: sau khi van đã chốt, `settings` có đổi cũng không đổi được
+    # trần thật, nên báo số của `settings` là để endpoint chẩn đoán nói dối đúng lúc người ta cần nó
+    # nói thật nhất. Gọi `_pipeline_semaphore()` để chốt luôn nếu van chưa từng dùng (dựng một
+    # `Semaphore` là thao tác thuần RAM, không chạm loop).
+    _pipeline_semaphore()
+    limit = _PIPELINE_LIMIT or 0
     return {
         "in_flight": _PIPELINES_IN_FLIGHT,
         # SUY RA chứ không đếm riêng: một coroutine bị cancel LÚC ĐANG CHỜ van sẽ không chạy `finally`

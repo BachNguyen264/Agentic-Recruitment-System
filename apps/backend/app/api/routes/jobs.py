@@ -1,4 +1,4 @@
-"""Routes JobPosting (JD) — tạo (kèm embed→Qdrant), đọc, và search-test verify (slice 02a)."""
+"""Routes JobPosting (JD) — tạo (kèm embed→Qdrant), đọc, sửa, đóng/mở, gate, gợi ý rubric."""
 
 from __future__ import annotations
 
@@ -12,13 +12,9 @@ from app.schemas.job_posting import (
     JobPostingCreateResult,
     JobPostingRead,
     JobStatusUpdate,
-    SearchTestHit,
-    SearchTestRequest,
-    SearchTestResponse,
 )
 from app.schemas.rubric_suggest import RubricSuggestResponse, SuggestedCriterion
-from app.services import job_service, qdrant_service, rubric_suggester
-from app.services.embedding_service import EmbeddingError, embed_text
+from app.services import job_service, rubric_suggester
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -173,26 +169,3 @@ async def suggest_rubric(job_id: int, session: DBSession) -> RubricSuggestRespon
         remaining=max(0, max_retries - used),
         model_used=rubric_suggester.model_label(),
     )
-
-
-@router.post("/search-test", response_model=SearchTestResponse, summary="Verify tra cứu tương đồng")
-async def search_test(payload: SearchTestRequest) -> SearchTestResponse:
-    """Embed query → search Qdrant (type='jd') → JD khớp + score. Công cụ verify slice 02a."""
-    try:
-        vector = await embed_text(payload.query)
-    except EmbeddingError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    try:
-        points = await qdrant_service.search(vector, top_k=payload.top_k)
-    except Exception as exc:  # noqa: BLE001 — Qdrant down/timeout → 502 message rõ (không 500 chung)
-        raise HTTPException(status_code=502, detail=f"Lỗi truy vấn Qdrant: {exc}") from exc
-    hits = [
-        SearchTestHit(
-            job_id=int(p.payload["job_id"]),
-            title=str(p.payload.get("title", "")),
-            score=float(p.score),
-        )
-        for p in points
-        if p.payload and "job_id" in p.payload
-    ]
-    return SearchTestResponse(query=payload.query, hits=hits)
