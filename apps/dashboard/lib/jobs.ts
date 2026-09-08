@@ -1,7 +1,17 @@
-import type { JobPosting, JobPostingInput, RubricCriterion, SalaryInfo } from "@ars/shared-types";
+import type {
+  EmploymentType,
+  JobLevel,
+  JobPosting,
+  JobPostingInput,
+  RubricCriterion,
+  SalaryInfo,
+} from "@ars/shared-types";
 
 // ── JD-1: nhãn cho dropdown + hiển thị (level / loại việc / lương) ──
-export const LEVEL_OPTIONS: { value: string; label: string }[] = [
+// `value` gắn kiểu `JobLevel`/`EmploymentType` của shared-types thay vì `string`: trước đây hai
+// union kia chỉ nằm trong COMMENT nên danh sách chạy thật ở đây có thể trôi khỏi hợp đồng backend
+// mà không ai biết. Nay thêm/đổi một giá trị ở một bên là bên kia báo lỗi biên dịch.
+export const LEVEL_OPTIONS: { value: JobLevel; label: string }[] = [
   { value: "intern", label: "Thực tập sinh" },
   { value: "fresher", label: "Fresher" },
   { value: "junior", label: "Junior" },
@@ -11,7 +21,7 @@ export const LEVEL_OPTIONS: { value: string; label: string }[] = [
   { value: "manager", label: "Manager" },
 ];
 
-export const EMPLOYMENT_TYPE_OPTIONS: { value: string; label: string }[] = [
+export const EMPLOYMENT_TYPE_OPTIONS: { value: EmploymentType; label: string }[] = [
   { value: "full_time", label: "Toàn thời gian" },
   { value: "part_time", label: "Bán thời gian" },
   { value: "contract", label: "Hợp đồng" },
@@ -40,7 +50,8 @@ export function formatSalary(s: SalaryInfo | null | undefined): string | null {
   return null;
 }
 
-export function emptySalary(): SalaryInfo {
+// Nội bộ file: chỉ `emptyJobInput`/`toJobInput` bên dưới dùng.
+function emptySalary(): SalaryInfo {
   return { min: null, max: null, currency: "VND", negotiable: false };
 }
 
@@ -62,7 +73,7 @@ export function htmlToPlainText(html: string): string {
 // Tổng trọng số rubric (validate MỀM: nên ≈ 1.0). Ranker vốn chuẩn hóa lại theo trọng số,
 // nên lệch 1.0 KHÔNG chặn cứng — chỉ cảnh báo hướng dẫn HR (plan §3.5).
 export const WEIGHT_TARGET = 1.0;
-export const WEIGHT_TOLERANCE = 0.01; // sai số float khi cộng dồn
+const WEIGHT_TOLERANCE = 0.01; // sai số float khi cộng dồn (nội bộ — chỉ `isWeightBalanced` dùng)
 
 export function weightSum(rubric: RubricCriterion[]): number {
   return rubric.reduce((acc, c) => acc + (Number.isFinite(c.weight) ? c.weight : 0), 0);
@@ -84,6 +95,18 @@ export function jobStatusLabel(status: string): string {
   if (status === "DRAFT") return "Nháp";
   if (status === "ARCHIVED") return "Đã lưu trữ";
   return status;
+}
+
+// Tông thẻ trạng thái JD — mở (xanh) · nháp (hổ phách, còn việc phải làm) · đóng/lưu-trữ (trung tính).
+//
+// Tên có tiền tố `job` và nằm CẠNH `jobStatusLabel` là có chủ ý: bản cũ là một hàm cục bộ trong
+// `app/(hr)/jobs/page.tsx` tên đúng bằng `statusTone` của `lib/applications.ts` — hai hàm cùng tên,
+// hai miền khác nhau (trạng thái JD vs trạng thái HỒ SƠ), trả về hai tập tone khác nhau. Ai đọc
+// lướt rất dễ tưởng là một.
+export function jobStatusTone(status: string): "ok" | "warn" | "neutral" {
+  if (status === "OPEN") return "ok";
+  if (status === "DRAFT") return "warn";
+  return "neutral";
 }
 
 // Giá trị form rỗng (chế độ TẠO). JD-1: mô tả/yêu cầu/quyền lợi là văn bản định dạng (chuỗi HTML).

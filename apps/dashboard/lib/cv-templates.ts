@@ -8,7 +8,8 @@
 // không phải dò 18 chuỗi rải rác. Đổi `slug` mà quên đổi tên file trong `public/` → nút tải ra 404
 // (Next trả trang 404 chứ không phải file), nên hai bên PHẢI khớp từng ký tự.
 
-export type CvTemplate = {
+// Nội bộ file: chỉ `CV_TEMPLATES` bên dưới dùng (trang /cv-templates đọc mảng, không đọc kiểu).
+type CvTemplate = {
   /** Trùng TÊN FILE trong `public/cv-templates/` (không kèm đuôi). */
   slug: string;
   /** Tên ngành nghề hiện trên thẻ. */

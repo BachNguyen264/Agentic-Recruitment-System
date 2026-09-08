@@ -14,7 +14,9 @@ export default function ApplyListPage() {
   // sơ bị 429 → mất bài dự tuyển. Nay tắt tường minh cả bốn.
   const { data, isLoading, isError } = useQuery<PublicJob[]>({
     queryKey: ["public-jobs"],
-    queryFn: getOpenJobs,
+    // Bọc trong arrow: TanStack truyền QueryFunctionContext làm tham số ĐẦU, mà `getOpenJobs` nay
+    // nhận `JobQuery` — đưa thẳng thì context lọt vào chỗ tham số phân trang.
+    queryFn: () => getOpenJobs(),
     staleTime: Infinity,
     refetchOnWindowFocus: false,
     refetchOnMount: false,

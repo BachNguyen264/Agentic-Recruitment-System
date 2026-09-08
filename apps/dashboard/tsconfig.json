@@ -5,6 +5,10 @@
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
+    // Chặn biến/tham số chết ngay tại `typecheck` thay vì phải grep tay từng đợt dọn dẹp.
+    // Bật được vì code hiện tại đã sạch (đo thật: 0 lỗi lúc bật).
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",

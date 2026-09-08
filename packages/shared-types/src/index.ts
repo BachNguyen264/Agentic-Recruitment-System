@@ -1,7 +1,11 @@
 // Type dùng chung (scaffold) — phản chiếu schema backend (PRD §16).
 // Khớp với app/schemas (backend Python). Khi backend đổi -> cập nhật ở đây.
 
-export type ServiceState = "ok" | string; // "ok" hoặc "error: <Type>"
+// "ok" hoặc "error: <Type>". `(string & {})` chứ KHÔNG phải `string` trần: union giữa một string
+// literal và `string` bị TypeScript RÚT GỌN về `string`, nên `"ok" | string` không ràng buộc gì và
+// cũng không gợi ý gì. Giao ước `& {}` giữ "ok" trong danh sách autocomplete mà vẫn nhận chuỗi lỗi
+// bất kỳ — đúng hình dạng dữ liệu backend trả về (health check không liệt kê hết được tên lỗi).
+export type ServiceState = "ok" | (string & {});
 
 export interface HealthStatus {
   status: "ok" | "degraded";
@@ -53,25 +57,9 @@ export interface PipelineSnapshot {
   active: PipelineItem[];
 }
 
-export interface Application {
-  id: number;
-  job_id: number | null;
-  applicant_email: string;
-  // Slice 06: backend KHÔNG trả `cv_file_ref` nữa (path/key storage là chi tiết nội bộ — trước đây
-  // lộ đường dẫn tuyệt đối của server). Chỉ có cờ has_cv; tải file qua GET /api/applications/{id}/cv.
-  has_cv: boolean;
-  status: ApplicationStatus;
-  score: number | null;
-  confidence: number | null;
-  uncertainty_flags: string[];
-  escalation_reason: string | null;
-  screener_sent_at: string | null;
-  screener_deadline: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 // ── Màn HR danh sách/chi tiết ứng viên (slice 03a, CHỈ ĐỌC) — khớp ApplicationRead (backend) ──
+// (Interface `Application` cũ đã XOÁ: nó bị `ApplicationListItem` + `ApplicationDetail` thay thế
+//  hoàn toàn và không còn nơi nào tham chiếu — giữ lại chỉ tạo một hình dạng thứ ba để lệch.)
 
 // Item danh sách: đủ để hiển thị dòng ứng viên (không cần parsed_data/breakdown — giữ nhẹ).
 export interface ApplicationListItem {
@@ -154,6 +142,9 @@ export interface BookedInterview {
 // human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.
 export type ReviewDecision = "approve" | "reject";
 
+// Body của POST /api/applications/{id}/review — khớp ReviewRequest (backend). `lib/api.submitReview`
+// gắn kiểu này bằng `satisfies` để lệch schema bị bắt lúc biên dịch: tham số `body` của `postJson`
+// là `unknown`, nên nếu không gắn thì object literal gửi đi KHÔNG được kiểm kiểu gì cả.
 export interface ReviewRequest {
   decision: ReviewDecision;
   note?: string | null;
@@ -177,6 +168,10 @@ export interface RubricCriterion {
 }
 
 // ── JD-1: trường hướng-ứng-viên (PRD §16, §8.1) ──
+// Hai union này RÀNG BUỘC danh sách lựa chọn của form JD (`LEVEL_OPTIONS`/`EMPLOYMENT_TYPE_OPTIONS`
+// ở apps/dashboard/lib/jobs.ts) — trước đây chúng chỉ nằm trong comment nên hai danh sách tự do
+// trôi khỏi nhau. Trường `level`/`employment_type` của JD vẫn để `string | null` (permissive) vì JD
+// cũ trong DB có thể mang giá trị ngoài tập này; ràng buộc đặt ở chỗ NHẬP, không ở chỗ ĐỌC.
 export type JobLevel =
   | "intern" | "fresher" | "junior" | "mid" | "senior" | "lead" | "manager";
 export type EmploymentType = "full_time" | "part_time" | "contract" | "internship";

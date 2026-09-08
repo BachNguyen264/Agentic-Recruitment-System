@@ -19,11 +19,6 @@ export function btn(variant: BtnVariant = "secondary", extra = ""): string {
   return `${BTN_BASE} ${BTN_VARIANT[variant]} ${extra}`.trim();
 }
 
-/** Nút chỉ có icon — ô vuông 36px. */
-export function btnIcon(variant: BtnVariant = "secondary", extra = ""): string {
-  return `${BTN_BASE} ${BTN_VARIANT[variant]} !px-0 !py-0 h-9 w-9 flex-none ${extra}`.trim();
-}
-
 const TAG_TONE = {
   accent: "bg-accent-100 text-accent-800",
   neutral: "bg-steel-100 text-steel-800",
@@ -56,9 +51,17 @@ export function Tag({
 /** Ô nhập — nền surface, viền 2px, bo 8px (khớp thiết kế). Viền `ink/55` (không phải `divider`
  *  22%) để đạt ≥3:1 so với cả nền ô lẫn nền trang (WCAG 1.4.11 — ranh giới trường nhập phải nhìn
  *  thấy); divider chỉ 1.58:1, gần như vô hình. hover đậm hơn base (ink/70). placeholder ink/55 là
- *  chữ PHỤ (mọi ô đều có <label> riêng) nên chấp nhận < 4.5:1, nhưng vẫn tốt hơn hẳn ink/40 cũ. */
+ *  chữ PHỤ (mọi ô đều có <label> riêng) nên chấp nhận < 4.5:1, nhưng vẫn tốt hơn hẳn ink/40 cũ.
+ *
+ *  KHÔNG còn `focus-visible:outline-none`: lớp đó HUỶ outline toàn cục khai ở `globals.css`
+ *  (`:focus-visible { outline: 2px solid #1f6feb; outline-offset: 2px }`), để lại tín hiệu focus
+ *  duy nhất là viền đổi từ `ink/55` (xám navy) sang `accent` (cobalt) — hai màu đó tương phản với
+ *  NHAU quá thấp, trong khi WCAG 2.4.11 đòi chỉ báo focus tương phản ≥3:1 SO VỚI trạng thái không
+ *  focus. Bỏ nó đi là ô nhập nhận lại đúng vòng focus mà mọi phần tử bấm được khác trong ứng dụng
+ *  đang dùng (không thêm `ring-*` chồng lên: `ring-2 + ring-offset-2` chính là bản sao của outline
+ *  toàn cục, vẽ hai lần thì thành hai vòng lồng nhau). */
 export const inputClass =
-  "w-full min-h-9 rounded-lg border-2 border-ink/55 bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink/55 hover:border-ink/70 focus-visible:border-accent focus-visible:outline-none";
+  "w-full min-h-9 rounded-lg border-2 border-ink/55 bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink/55 hover:border-ink/70 focus-visible:border-accent";
 
 export function Field({
   label,
@@ -121,6 +124,29 @@ export function EmptyState({ children }: { children: React.ReactNode }) {
     <div className="rounded-xl border-2 border-dashed border-divider px-6 py-10 text-center text-[13px] text-ink/65">
       {children}
     </div>
+  );
+}
+
+/** Dòng "đang tải" — đối ứng của `EmptyState` cho trạng thái CHỜ.
+ *
+ *  Trước đây 15 chỗ tự viết chuỗi riêng và trôi khỏi nhau: `text-sm` ở màn HR, `text-[13px]` ở màn
+ *  ứng viên, `p-8` ở fallback của Suspense. Thống nhất về 13px cho khớp `EmptyState` ngay bên trên
+ *  (hai trạng thái này luôn thay chỗ cho nhau nên chữ phải cùng cỡ). `className` chỉ để truyền
+ *  KHOẢNG CÁCH của từng chỗ đặt (mt-4 / px-4 py-6 / p-8), không phải để đổi kiểu chữ.
+ *
+ *  `role="status"` để trình đọc màn hình xướng lên khi dòng này xuất hiện — không có nó thì người
+ *  dùng bàn phím bấm xong chỉ nghe im lặng cho tới lúc dữ liệu về. */
+export function Loading({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <p role="status" className={`text-[13px] text-ink/65 ${className}`.trim()}>
+      {children}
+    </p>
   );
 }
 
