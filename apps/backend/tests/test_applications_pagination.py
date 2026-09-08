@@ -94,8 +94,8 @@ def _patched(monkeypatch: pytest.MonkeyPatch):
     """Chặn hai truy vấn DB thật của route, giữ lại tham số đã truyền để assert."""
     seen: dict = {}
 
-    async def fake_list(_session, *, statuses=None, limit=100, offset=0):  # noqa: ANN001
-        seen.update(statuses=statuses, limit=limit, offset=offset)
+    async def fake_list(_session, *, statuses=None, q=None, limit=100, offset=0):  # noqa: ANN001
+        seen.update(statuses=statuses, q=q, limit=limit, offset=offset)
         return [_app_row(1), _app_row(2)]
 
     async def fake_no_slots(_session):  # noqa: ANN001
@@ -164,11 +164,15 @@ async def test_detail_still_has_heavy_fields(monkeypatch: pytest.MonkeyPatch) ->
 
 
 async def test_defaults_match_previous_behaviour(_patched) -> None:
-    """Không truyền gì = hành vi CŨ (100 dòng mới nhất) — `loadtest_apply.py` ghim WINDOW_LIMIT=100."""
+    """Không truyền gì = hành vi CŨ (100 dòng mới nhất) — `loadtest_apply.py` ghim WINDOW_LIMIT=100.
+
+    So khớp TOÀN BỘ dict chứ không phải từng khoá: thêm một tham số lọc mới mà quên cho nó mặc định
+    "không lọc" thì test này phải ĐỎ. Đó chính là điều đã xảy ra khi `q` được thêm vào.
+    """
     async with _client(RecordingSession([], _user())) as c:
         _authed(c)
         await c.get("/api/applications")
-    assert _patched == {"statuses": None, "limit": 100, "offset": 0}
+    assert _patched == {"statuses": None, "q": None, "limit": 100, "offset": 0}
 
 
 async def test_offset_and_limit_passed_through(_patched) -> None:

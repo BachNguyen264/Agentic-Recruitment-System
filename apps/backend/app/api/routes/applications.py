@@ -62,6 +62,13 @@ async def list_applications(
         list[str] | None,
         Query(alias="status", description="Lọc theo trạng thái (lặp lại để chọn nhiều)"),
     ] = None,
+    q: Annotated[
+        str | None,
+        Query(
+            max_length=254,
+            description="Tìm theo email ứng viên (khớp CHUỖI CON, không phân biệt hoa/thường)",
+        ),
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[ApplicationRead]:
@@ -71,9 +78,14 @@ async def list_applications(
     (`core/hardening.py` chỉ bọc login / ghi công khai / health sâu), nên `?limit=100000` sẽ tuần tự
     hoá cả bảng trong một request. Mặc định giữ 100 vì `scripts/loadtest_apply.py` ghim
     `WINDOW_LIMIT = 100` để đối soát — đổi mặc định là làm script báo sai mà không kêu.
+
+    `?q=` tìm theo `applicant_email` (chuỗi con, không phân biệt hoa/thường) và chạy ở SERVER: lọc
+    trên MỘT trang đã cắt thì ứng viên nằm ở trang sau sẽ "không tồn tại" — đúng lớp lỗi AUDIT-1.
+    Rỗng/khoảng trắng/không truyền = KHÔNG lọc. `max_length=254` = độ dài tối đa của một địa chỉ
+    email (RFC 5321): dài hơn thế không thể là chuỗi con của email nào, chỉ là mẫu LIKE thừa.
     """
     rows = await application_service.list_applications(
-        session, statuses=statuses, limit=limit, offset=offset
+        session, statuses=statuses, q=q, limit=limit, offset=offset
     )
     # MỘT truy vấn cho cả trang (không phải mỗi dòng một truy vấn): hồ sơ nào đã chạm cảnh hết
     # khung giờ thì dashboard phải nói đúng là LỊCH đang chặn, không phải ứng viên chậm (SCH-3).

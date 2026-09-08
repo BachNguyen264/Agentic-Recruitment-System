@@ -7,7 +7,18 @@ OPEN; validate loại/size/magic-bytes file ở SERVER. TÁI DÙNG logic tạo a
 
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
+from typing import Annotated
+
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from pydantic import ValidationError
 
 from app.api.deps import DBSession
@@ -33,8 +44,19 @@ router = APIRouter(prefix="/public", tags=["public"])
 
 
 @router.get("/jobs", response_model=list[PublicJobRead], summary="JD đang mở (công khai)")
-async def list_open_jobs(session: DBSession) -> list[PublicJobRead]:
-    rows = await job_service.list_open_jobs(session)
+async def list_open_jobs(
+    session: DBSession,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[PublicJobRead]:
+    """MỘT TRANG JD đang mở (mới nhất trước) — trước đây cắt CỨNG 100 JD, tức vị trí thứ 101 không
+    có đường nào để ứng viên nhìn thấy. Vẫn trả **mảng thuần** (quy ước sẵn có của repo).
+
+    Trần `le=100` CHẶT HƠN đường HR (`le=200`) vì đây là endpoint CÔNG KHAI, không cần đăng nhập:
+    rate-limit công khai (`core/hardening.py`) CỐ Ý chỉ siết method CÓ BODY — siết GET đã từng làm
+    ứng viên hết quota rồi mất bài dự tuyển — nên GET này không có xô nào đỡ, trần là chốt duy nhất.
+    """
+    rows = await job_service.list_open_jobs(session, limit=limit, offset=offset)
     return [PublicJobRead.model_validate(r) for r in rows]
 
 
