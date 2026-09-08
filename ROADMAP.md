@@ -28,12 +28,12 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 
 ---
 
-## 🟡 PHASE 2 — Real intake (JD posting + public CV submission + storage) — IN PROGRESS
+## ✅ PHASE 2 — Real intake (JD posting + public CV submission + storage) — COMPLETE
 
 > Goal: applicants submit real CVs for real JDs; HR manages JDs via web; files persist.
 
 - **05 — JD management UI** — **DONE** (create/edit/close, gate toggle, dynamic rubric, conditional re-embed).
-- **07 — Public CV submission ← NEXT** (PRD §8.2, §12.2). Public page listing OPEN JDs → applicant (guest,
+- **07 — Public CV submission ✅ DONE** (PRD §8.2, §12.2). Public page listing OPEN JDs → applicant (guest,
   email only) picks a JD → submits CV tied to that JD → async pipeline. Applicant is fire-and-forget: no account,
   confirmation screen only, outcome by email later. Public JD projection hides rubric/gate/screener. Reuses
   `CVUpload`. Local file storage for now.
@@ -102,7 +102,7 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - **10 — Analytics** (PRD §12.1) — **tí hon / tùy chọn.** Số CV, tỉ lệ passed/rejected/pending per JD (tính được từ DB cho báo cáo).
 - ~~**11 — Observability** (Langfuse)~~ — **ĐÃ BỎ** (không có Super Admin → không khán giả; ops-only). Ghi 'hướng mở rộng' trong báo cáo.
 - **12 — Anti-prompt-injection** (NFR-5) — **hạ ưu tiên → TÙY CHỌN** (probe prod: model kháng tự nhiên; vẫn nên sanitize/frame input, làm cuối nếu còn giờ).
-- **UI redesign.** Full visual pass over the UI (currently plain Tailwind scaffolding built to verify flows). Do
+- **UI redesign — ✅ DONE (merge `e69b57a`).** Full visual pass over the UI. Ghi chép gốc: Do
   it HERE, near the end, as its OWN work: incremental (screen by screen), no-backend-touched (presentational
   components make this safe), verify each piece. Prefer polishing in plain Tailwind (spacing/typography/color/
   hierarchy/consistency — enough for a modern look) over adopting a component library (bigger, riskier lift across a finished app).
@@ -233,7 +233,7 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 > **hành vi tính năng, không phải trang trí** — lọc điều hướng, guard route, danh sách responsive.
 > Sau khi cắt 6 hạng mục theo spec (§10), phần còn lại **không chứa thiết kế nguyên tử nào mới**.
 
-- **PWA-1 — HR dashboard rút gọn + offline trang "Mất kết nối" — ⏳ TO-DO** (PRD §14, FR-PWA-1, NFR-4):
+- **PWA-1 — HR dashboard rút gọn + offline trang "Mất kết nối" — ✅ DONE** (PRD §14, FR-PWA-1, NFR-4):
   khi chạy ở chế độ đã cài (`standalone`), PWA hiển thị **CHỈ ba màn:** Đăng nhập / Ứng viên
   (chi tiết rút gọn, chỉ đọc) / Hàng đợi review. Các màn còn lại (JD management, stat, live trace,
   gate toggle) **ẩn khỏi sidebar VÀ chặn ở đường dẫn** (redirect + lời giải thích). Offline: service
@@ -247,9 +247,11 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 
 ---
 
-## ⚪ PHASE 7 — UI redesign & tùy chọn cuối
+## 🟡 PHASE 7 — UI redesign ✅ XONG · tùy chọn cuối
 
-- **UI redesign** — đánh bóng toàn giao diện trên bản live (SAU khâu tạo-JD, vì user chính = HR). Từng phần,
+- **UI redesign — ✅ XONG** (merge `e69b57a`, ~23 commit: hệ token Marine, thương hiệu HireFlow,
+  redesign cổng công khai + đăng nhập, a11y WCAG AA). Ghi chép gốc bên dưới giữ lại làm bối cảnh:
+  đánh bóng toàn giao diện trên bản live (SAU khâu tạo-JD, vì user chính = HR). Từng phần,
   no-backend-touched (component presentational), verify từng cái. Ưu tiên Tailwind thuần (spacing/typography/màu/nhất quán).
 - **10 Analytics** (tí hon, tùy chọn) · **12 Anti-injection** (tùy chọn — model đã kháng) · Observability đã BỎ.
 - Rồi **VIẾT BÁO CÁO** — tư liệu sẵn: kiến trúc pipeline cố định (không Supervisor), Hướng A scoring, benchmark model,
@@ -317,14 +319,14 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
     hàng; `except` tự ném `PendingRollbackError`; giữ khoá hàng 1.29s qua lượt gửi mail + gửi thư trùng;
     thư mời bay trước khi ghi token → link 404; ứng viên bị từ chối vẫn tự đặt lịch được; deadlock ra
     500 thay vì 409) — đã vá + 5 test hồi quy trên DB thật.
-  - [ ] **SCH-3 hoàn thiện:** nhắc trước PV 24h · link hết hạn → nhắc 1 lần → `PENDING_REVIEW[booking_no_response]`
+  - [x] **SCH-3 hoàn thiện:** nhắc trước PV 24h · link hết hạn → nhắc 1 lần → `PENDING_REVIEW[booking_no_response]`
     (**KHÔNG auto-reject**) qua sweep 08c · link hủy → nhả slot + báo HR · HR xem/dời/hủy lịch trên dashboard.
 - [x] **CVT-1 kho CV mẫu** (`/cv-templates` công khai, lưới 3×3, tĩnh 100%, 186 B `○ Static`, lối vào từ
   /apply; adversarial review 13 agent → 7 lỗi thật đã vá) + **CVT-1b** (ba nút ba việc: Xem trước `.pdf`
   trong tab · Tải `.docx` · Sửa trên Google Docs — 9 link đã dán) — PRD §8.2b, FR-AP-6/7
-- [ ] **PWA-1 — HR dashboard rút gọn + offline** (PRD §14, FR-PWA-1, NFR-4)
+- [x] **PWA-1 — HR dashboard rút gọn + offline** (PRD §14, FR-PWA-1, NFR-4)
 - [ ] Dọn: **đổi mật khẩu admin prod**
-- [ ] PHASE 7 — UI redesign · 10 analytics(tùy chọn) · 12 anti-injection(tùy chọn) · [Observability BỎ] · **viết báo cáo**
+- [x] PHASE 7 — **UI redesign XONG** · [ ] 10 analytics(tùy chọn) · [ ] 12 anti-injection(tùy chọn) · [Observability BỎ] · [ ] **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)
 
 ---
@@ -348,3 +350,34 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 - **Còn nợ (đã ghi trong `docs/load-and-scale.md` §10):** `no_slots_at` giả · TOCTOU sinh khung giờ ·
   **rate limit công khai vô hiệu với người dùng thật** (ưu tiên cao — lỗ hổng chi phí LLM) ·
   `list_applications(limit=100)` làm HR mất ứng viên sau hồ sơ thứ 100 · dọn dữ liệu test trên prod.
+
+---
+
+## ✅ Các lát post-deploy đã xong nhưng trước đây KHÔNG được theo dõi ở file này
+
+> Bổ sung 08/09/2026 sau một đợt audit toàn repo. ROADMAP đã trôi khỏi mã nguồn: năm cụm việc dưới
+> đây đều đã merge vào `main` mà không có mục nào ở đây, nên file này không còn dùng được đúng vai
+> trò "bản đồ việc còn lại". Chi tiết đầy đủ từng cụm nằm ở mục **Current status** của `CLAUDE.md`.
+
+- [x] **SCH-1 · SCH-2 · SCH-3 — Ứng viên tự chọn giờ phỏng vấn** (PRD §10b). Nền đặt lịch + thư mời
+      kèm link + vòng đời sau khi gửi link (nhắc trước PV, nhắc chọn lịch, hết hạn → `PENDING_REVIEW`,
+      huỷ nhả slot tức thì). Ba lưới ghép vào sweep loop 08c, KHÔNG cơ chế nền mới.
+- [x] **EMAIL-1 — Giao hàng email có theo dõi.** Bảng `email_delivery` + webhook Resend đã ký (HMAC,
+      chống replay) + giữ nhịp/retry + cờ bounce/complaint hiện cho HR.
+- [x] **EMAIL-2 — `email.failed`.** Cờ RIÊNG `email_send_failed` (không phải `email_failed` — chuỗi đó
+      `scheduler._dispatch` đã chiếm làm tên audit action).
+- [x] **DASH-1 — Dashboard soi được pipeline đang chạy.** `PARSING`/`RANKING` trước đây chỉ nằm trong
+      graph state, DB không thấy ⇒ hồ sơ đứng ở `SUBMITTED` suốt ~34s. Thêm móc `on_node` +
+      `GET /api/applications/pipeline` (payload cỡ cố định) thay cho việc poll cả danh sách.
+- [x] **AUDIT-1 — Audit prod sau LOAD-1.** 32 phát hiện, 8 commit. Gốc rễ là
+      `list_applications(limit=100)` làm 86 hồ sơ đã chấm điểm sạch trở nên không thể chạm tới bằng
+      bất kỳ nút nào. Đã vá: phân trang + lọc `?status=` ở server, bỏ `parsed_data` khỏi danh sách,
+      trần 60k ký tự khi trích CV, nộp CV gọi thẳng Render để rate-limit đếm đúng IP ứng viên.
+- [x] **AUDIT-2 — Chặn CV dựng-để-phá.** Hạn giờ cứng bằng tiến trình con giết được (PDF một trang có
+      chi phí **bậc hai theo số glyph**, và PyMuPDF không nhả GIL nên `to_thread` không cô lập được),
+      tiền kiểm ZIP chống zip bomb, sửa lệch biên làm mất cờ `cv_truncated`.
+- [x] **CONFIG-1 — Cấu hình hệ thống đọc từ DB** (PRD §NFR-8). 39 hằng số nghiệp vụ rời `.env` sang
+      bảng `app_config` + màn `/system`. Kèm đường ĐỌC `audit_log` — bảng được 8 service ghi rất dày
+      nhưng trước đó không có endpoint nào đọc, muốn tra phải vào thẳng Postgres.
+- [x] **Gỡ Redis + Langfuse khỏi repo.** Cả hai chưa từng có một dòng code nghiệp vụ nào dùng tới;
+      Redis chỉ tồn tại để trả lời chính cái health check hỏi nó. Observability đã BỎ khỏi phạm vi.

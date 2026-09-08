@@ -36,7 +36,6 @@ def initial_state(*, force_review: bool = False, application_id: int | None = No
         "scratchpad": {},
         "messages": [],
         "status": "SUBMITTED",
-        "result": None,
         "error": None,
         "parsed_data": None,
         "score": None,
@@ -46,7 +45,6 @@ def initial_state(*, force_review: bool = False, application_id: int | None = No
         "uncertainty_flags": [],
         "escalation_reason": None,
         "require_human_review": False,
-        "awaiting_screener": False,
         "screener_answers": None,
     }
 

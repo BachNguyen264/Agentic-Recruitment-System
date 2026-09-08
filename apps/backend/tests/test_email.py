@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from app.services import email_service
-from app.services.email_templates import booking_confirmed_email, invite_email, rejection_email
+from app.services.email_templates import invite_email, rejection_email
 
 # SCH-2: thư mời BẮT BUỘC kèm link tự đặt lịch (PRD §10b.1) — không còn thư mời "sẽ liên hệ sau".
 _LINK = "http://localhost:3000/booking/tok123"

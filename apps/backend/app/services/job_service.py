@@ -6,7 +6,7 @@ BẤT BIẾN slice 02a: embedding/Qdrant lỗi KHÔNG làm sập tạo JD — JD
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.html_text import html_to_lines, html_to_text
@@ -250,25 +250,64 @@ async def get_job(session: AsyncSession, job_id: int) -> JobPosting | None:
 
 
 async def list_jobs(
-    session: AsyncSession, *, archived: bool = False, limit: int = 100
+    session: AsyncSession, *, archived: bool = False, limit: int = 100, offset: int = 0
 ) -> list[JobPosting]:
-    """Danh sách JD cho HR. Mặc định (archived=False) ẨN JD đã lưu trữ (JD-4, PRD §12.1 FR-HR-JD-3);
-    archived=True → CHỈ JD ARCHIVED (màn 'Đã lưu trữ' để khôi phục)."""
-    stmt = select(JobPosting).order_by(JobPosting.created_at.desc()).limit(limit)
+    """MỘT TRANG JD cho HR (mới nhất trước). Mặc định (archived=False) ẨN JD đã lưu trữ (JD-4, PRD
+    §12.1 FR-HR-JD-3); archived=True → CHỈ JD ARCHIVED (màn 'Đã lưu trữ' để khôi phục). Tổng số lấy
+    từ `count_jobs` (endpoint đếm RIÊNG) — đếm trên mảng trả về là đếm trong một trang.
+
+    ⚠ `order_by` PHẢI có `id.desc()` làm khoá phụ — CÙNG lớp lỗi AUDIT-1 đã vá ở `list_applications`:
+    `created_at` KHÔNG unique (JD nhập hàng loạt / seed demo trùng mili-giây) và `OFFSET` trên một
+    khoá không unique thì thứ tự giữa các hàng BẰNG NHAU do Postgres tuỳ ý chọn ⇒ trang 2 có thể LẶP
+    một JD của trang 1 và NUỐT một JD khác. Lỗi im lặng: HR không thấy gì bất thường, chỉ là một vị
+    trí không bao giờ xuất hiện.
+    """
+    stmt = select(JobPosting)
     stmt = stmt.where(JobPosting.status == "ARCHIVED") if archived else stmt.where(
         JobPosting.status != "ARCHIVED"
     )
-    result = await session.execute(stmt)
+    result = await session.execute(
+        stmt.order_by(JobPosting.created_at.desc(), JobPosting.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     return list(result.scalars().all())
 
 
-async def list_open_jobs(session: AsyncSession, *, limit: int = 100) -> list[JobPosting]:
-    """JD đang MỞ cho trang công khai (PRD §8.2, FR-AP-1). Chỉ status=OPEN."""
+async def count_jobs(session: AsyncSession) -> dict[str, int]:
+    """Đếm JD theo HAI nhóm UI cần — MỘT câu `GROUP BY`, đọc TOÀN BẢNG (payload cỡ CỐ ĐỊNH).
+
+    Vì sao phải là endpoint đếm RIÊNG: `list_jobs` trả về MỘT TRANG, nên chip "Đang tuyển (n)" /
+    "Đã lưu trữ (n)" mà đếm trên mảng nhận được sẽ nói dối ngay khi vượt `limit` — đúng lớp lỗi
+    AUDIT-1 (ba màn hình nói ba con số khác nhau vì cùng ăn từ một danh sách bị cắt cứng).
+
+    Phân nhóm ở Python nhưng vẫn CHỈ MỘT câu SQL: số status là hằng (DRAFT/OPEN/CLOSED/ARCHIVED).
+    """
+    rows = await session.execute(
+        select(JobPosting.status, func.count()).group_by(JobPosting.status)
+    )
+    counts = {"active": 0, "archived": 0}
+    for status, total in rows:
+        # Mọi status KHÁC "ARCHIVED" (kể cả status lạ của dữ liệu cũ) là JD đang sống — DÙNG CHUNG
+        # đúng phép phân nhóm với `list_jobs` (`status != "ARCHIVED"`), nếu không hai con số lệch.
+        counts["archived" if status == "ARCHIVED" else "active"] += int(total)
+    return counts
+
+
+async def list_open_jobs(
+    session: AsyncSession, *, limit: int = 100, offset: int = 0
+) -> list[JobPosting]:
+    """MỘT TRANG JD đang MỞ cho trang công khai (PRD §8.2, FR-AP-1). Chỉ status=OPEN.
+
+    Khoá phụ `id DESC` + `offset` cùng lý do với `list_jobs` (xem chú thích ở đó): trước đây cổng
+    công khai cắt cứng 100 JD nên vượt ngưỡng là ứng viên KHÔNG có đường nào thấy vị trí thứ 101.
+    """
     result = await session.execute(
         select(JobPosting)
         .where(JobPosting.status == "OPEN")
-        .order_by(JobPosting.created_at.desc())
+        .order_by(JobPosting.created_at.desc(), JobPosting.id.desc())
         .limit(limit)
+        .offset(offset)
     )
     return list(result.scalars().all())
 

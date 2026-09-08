@@ -1,27 +1,42 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { PublicJob } from "@ars/shared-types";
-import { EmptyState } from "@/components/ui";
+import { btn, EmptyState } from "@/components/ui";
 import { getOpenJobs } from "@/lib/api";
 import { employmentTypeLabel, formatSalary, htmlToPlainText, levelLabel } from "@/lib/jobs";
 
+// Số vị trí hiện mỗi lượt. Backend chặn `limit ≤ 100` cho đường công khai; xin thêm bằng nút
+// "Xem thêm" thay vì phân trang có số trang: ứng viên đang DUYỆT để chọn, không tra cứu theo trang,
+// và mỗi lượt bấm là một request đếm vào hạn mức theo IP — bắt họ lật qua lật lại là tự siết mình.
+const PAGE_SIZE = 20;
+
 export default function ApplyListPage() {
+  const [limit, setLimit] = useState(PAGE_SIZE);
   // Khoá refetch trên đường công khai (rate-limit theo IP): tải MỘT lần rồi thôi. Trước đây comment
   // nói "KHÔNG refetchOnWindowFocus" nhưng object KHÔNG hề tắt — refetchOnWindowFocus/OnMount/
   // OnReconnect mặc định BẬT (QueryClient trần). Ứng viên chuyển tab qua lại đốt quota rồi POST hồ
   // sơ bị 429 → mất bài dự tuyển. Nay tắt tường minh cả bốn.
   const { data, isLoading, isError } = useQuery<PublicJob[]>({
-    queryKey: ["public-jobs"],
-    queryFn: getOpenJobs,
+    queryKey: ["public-jobs", limit],
+    // Bọc trong arrow: TanStack truyền QueryFunctionContext làm tham số ĐẦU, mà `getOpenJobs` nay
+    // nhận `JobQuery` — đưa thẳng thì context lọt vào chỗ tham số phân trang.
+    queryFn: () => getOpenJobs({ limit }),
     staleTime: Infinity,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
     refetchOnReconnect: false,
+    // Giữ danh sách cũ trên màn khi đang xin thêm — nhấp nháy về "Đang tải" làm mất chỗ đang đọc.
+    placeholderData: (prev) => prev,
   });
 
   const jobs = data ?? [];
+  // Không có endpoint đếm cho đường công khai (cố ý: thêm một câu SQL cho người lạ gọi). Một trang
+  // đầy ĐÚNG bằng `limit` là dấu hiệu đủ tin cậy rằng còn nữa. Trước đây route cắt cứng 100 và
+  // KHÔNG có dấu hiệu nào cho ứng viên biết danh sách đã bị cắt — vị trí cũ hơn không bao giờ hiện.
+  const hasMore = jobs.length === limit;
 
   return (
     <main>
@@ -101,6 +116,19 @@ export default function ApplyListPage() {
           );
         })}
       </ul>
+
+      {hasMore && (
+        <div className="mt-5 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setLimit((n) => n + PAGE_SIZE)}
+            disabled={isLoading}
+            className={btn("ghost")}
+          >
+            {isLoading ? "Đang tải…" : "Xem thêm vị trí"}
+          </button>
+        </div>
+      )}
     </main>
   );
 }

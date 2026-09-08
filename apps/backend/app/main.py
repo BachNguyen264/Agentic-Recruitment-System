@@ -14,9 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents import checkpointer
 from app.api.deps import require_hr
-from app.api.routes import agents, applications, auth, health, jobs, public, webhooks
+from app.api.routes import admin, agents, applications, auth, health, jobs, public, webhooks
 from app.core.config import settings
-from app.core.database import engine
+from app.core.database import AsyncSessionLocal, engine
 from app.core.hardening import (
     BodySizeLimitMiddleware,
     OriginCheckMiddleware,
@@ -24,8 +24,7 @@ from app.core.hardening import (
 )
 from app.core.logging import get_logger, setup_logging
 from app.core.qdrant_client import qdrant_client
-from app.core.redis_client import redis_client
-from app.services import screening_scheduler
+from app.services import app_config_service, screening_scheduler
 from app.services.storage import get_storage
 from app.services.storage._executor import shutdown_storage_executor
 
@@ -113,6 +112,11 @@ async def lifespan(app: FastAPI):
     _warm_llm_imports()
     _warm_storage_client()
     await _warm_db_pool()
+    # Cấu hình hệ thống từ DB (NFR-8) → gán đè lên `settings`. PHẢI chạy TRƯỚC checkpointer/sweep:
+    # cả hai đọc `settings` lúc khởi tạo, nạp cấu hình sau chúng nghĩa là chúng dùng giá trị cũ.
+    # Không bao giờ ném — cấu hình hỏng thì chạy bằng mặc định, xem app_config_service.apply_from_db.
+    async with AsyncSessionLocal() as _cfg_session:
+        await app_config_service.apply_from_db(_cfg_session)
     # Checkpointer Postgres (PRD §10): pool + bảng checkpoint Neon, compile graph — MỘT LẦN ở đây.
     await checkpointer.setup_checkpointer()
     # Sweep timeout Screener (08c, PRD §10 FR-SCR-3/4): SAU checkpointer (sweep resume graph cần
@@ -124,11 +128,10 @@ async def lifespan(app: FastAPI):
     # Đóng kết nối sạch — dừng sweep TRƯỚC khi đóng checkpointer (sweep dùng graph/pool).
     await scheduler.stop()
     await checkpointer.teardown_checkpointer()
-    await redis_client.aclose()
     await qdrant_client.close()
     await engine.dispose()
     shutdown_storage_executor()
-    logger.info("Backend tắt — đã đóng sweep + Redis/Qdrant/DB.")
+    logger.info("Backend tắt — đã đóng sweep + Qdrant/DB.")
 
 
 app = FastAPI(
@@ -200,6 +203,7 @@ app.include_router(webhooks.router, prefix="/api")
 app.include_router(applications.router, prefix="/api", dependencies=_HR_ONLY)
 app.include_router(agents.router, prefix="/api", dependencies=_HR_ONLY)
 app.include_router(jobs.router, prefix="/api", dependencies=_HR_ONLY)
+app.include_router(admin.router, prefix="/api", dependencies=_HR_ONLY)
 
 
 @app.get("/", tags=["meta"])

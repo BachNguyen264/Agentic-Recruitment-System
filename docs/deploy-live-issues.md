@@ -5,7 +5,7 @@
 > gặp lại triệu chứng tương tự hoặc trước khi đụng checkpointer / rate-limit / cấu hình deploy.
 >
 > **Bối cảnh hạ tầng:** backend Render (Docker, tiến-trình-bền) sau **Cloudflare** (`*.onrender.com`);
-> frontend Vercel; DB **Neon** serverless (autosuspend ~300s); Redis Upstash; Qdrant Cloud; CV ở R2.
+> frontend Vercel; DB **Neon** serverless (autosuspend ~300s); Qdrant Cloud; CV ở R2.
 > Cross-domain: cookie auth `SameSite=None; Secure`, CORS allowlist. Audit ngày 2026-07-18.
 
 ---

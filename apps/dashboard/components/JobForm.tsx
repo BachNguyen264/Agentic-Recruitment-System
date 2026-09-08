@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { JobPostingInput, SalaryInfo } from "@ars/shared-types";
 import { RichTextEditor } from "@/components/RichTextEditor";
+import { Field, inputClass } from "@/components/ui";
 import { EMPLOYMENT_TYPE_OPTIONS, LEVEL_OPTIONS } from "@/lib/jobs";
 
 // JD-2a: JobForm CHỈ còn màn "Tin tuyển dụng" (field posting — ứng viên thấy). Rubric + câu hỏi sàng lọc
@@ -10,9 +11,14 @@ import { EMPLOYMENT_TYPE_OPTIONS, LEVEL_OPTIONS } from "@/lib/jobs";
 // rubric/screener_questions/gate_config đi XUYÊN QUA từ `initial` (không sửa ở màn này) — được làm sạch
 // khi submit để không gửi item rỗng (JobPostingCreate validate criterion non-empty).
 
-const INPUT =
-  "w-full min-h-9 rounded-lg border-2 border-ink/55 bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink/55 hover:border-ink/70 focus-visible:border-accent focus-visible:outline-none";
-const LABEL = "mb-1.5 block text-xs font-semibold text-ink/70";
+// Ô nhập / nhãn / nút lấy từ `components/ui` — KHÔNG chép chuỗi class nữa (bản cũ giữ hằng `INPUT`
+// sao y `inputClass` và tự viết class cho nút submit, nên nút ở màn JD trông khác nút ở mọi màn
+// khác: `font-medium` vs `font-semibold`, `disabled:opacity-50` vs `disabled:opacity-45`).
+//
+// Nhãn của ba trường soạn thảo (Mô tả / Yêu cầu / Quyền lợi) KHÔNG dùng `Field`: `RichTextEditor`
+// không phải phần tử form gắn được `htmlFor`, nên `<label>` ở đó chỉ là chữ trang trí (tên đọc được
+// thật nằm ở prop `ariaLabel` của editor). Dùng thẻ <p> để không hứa hẹn sai với trình đọc màn hình.
+const GROUP_LABEL = "mb-1.5 block text-xs font-semibold text-ink/70";
 
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
@@ -93,43 +99,45 @@ export function JobForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* role="alert": mọi màn khác trong repo đã có live region cho khối lỗi/cảnh báo — thiếu nó
+          thì bấm Lưu xong người dùng trình đọc màn hình không nghe gì và tưởng đã lưu xong. */}
       {(localError || errorMsg) && (
-        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <p
+          role="alert"
+          className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700"
+        >
           {localError ?? errorMsg}
         </p>
       )}
       {warning && (
-        <p className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-2 text-sm text-orange-800">
+        <p
+          role="alert"
+          className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-2 text-sm text-orange-800"
+        >
           {warning}
         </p>
       )}
 
       {/* Tiêu đề */}
-      <div className="space-y-1.5">
-        <label htmlFor="jd-title" className={LABEL}>
-          Tiêu đề <span className="text-red-500">*</span>
-        </label>
+      <Field label="Tiêu đề" required htmlFor="jd-title">
         <input
           id="jd-title"
           type="text"
           value={form.title}
           onChange={(e) => set("title", e.target.value)}
           placeholder="vd: Backend Intern (Node.js)"
-          className={INPUT}
+          className={inputClass}
         />
-      </div>
+      </Field>
 
       {/* Cấp bậc + loại việc */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <label htmlFor="jd-level" className={LABEL}>
-            Cấp bậc
-          </label>
+        <Field label="Cấp bậc" htmlFor="jd-level">
           <select
             id="jd-level"
             value={form.level ?? ""}
             onChange={(e) => set("level", e.target.value || null)}
-            className={INPUT}
+            className={inputClass}
           >
             <option value="">— Chọn cấp bậc —</option>
             {LEVEL_OPTIONS.map((o) => (
@@ -138,16 +146,13 @@ export function JobForm({
               </option>
             ))}
           </select>
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="jd-emptype" className={LABEL}>
-            Loại công việc
-          </label>
+        </Field>
+        <Field label="Loại công việc" htmlFor="jd-emptype">
           <select
             id="jd-emptype"
             value={form.employment_type ?? ""}
             onChange={(e) => set("employment_type", e.target.value || null)}
-            className={INPUT}
+            className={inputClass}
           >
             <option value="">— Chọn loại việc —</option>
             {EMPLOYMENT_TYPE_OPTIONS.map((o) => (
@@ -156,7 +161,7 @@ export function JobForm({
               </option>
             ))}
           </select>
-        </div>
+        </Field>
       </div>
 
       {/* Lương */}
@@ -180,7 +185,9 @@ export function JobForm({
               onChange={(e) => setSalary({ min: parseAmount(e.target.value) })}
               placeholder="Từ"
               aria-label="Lương tối thiểu"
-              className="w-40 rounded-lg border border-divider px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              // `!w-40` ghi đè `w-full` của `inputClass` (cùng nhóm width — đánh dấu important để
+              // thắng chắc chắn, không phụ thuộc thứ tự Tailwind sinh CSS).
+              className={`${inputClass} !w-40`}
             />
             <span className="text-ink/65">–</span>
             <input
@@ -190,7 +197,7 @@ export function JobForm({
               onChange={(e) => setSalary({ max: parseAmount(e.target.value) })}
               placeholder="Đến"
               aria-label="Lương tối đa"
-              className="w-40 rounded-lg border border-divider px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className={`${inputClass} !w-40`}
             />
             <select
               value={salary.currency}
@@ -207,7 +214,7 @@ export function JobForm({
 
       {/* Mô tả (editor định dạng) */}
       <div className="space-y-1.5">
-        <label className={LABEL}>
+        <label className={GROUP_LABEL}>
           Mô tả <span className="text-red-500">*</span>
         </label>
         <RichTextEditor
@@ -222,7 +229,7 @@ export function JobForm({
 
       {/* Yêu cầu (editor định dạng — dán cả khối) */}
       <div className="space-y-1.5">
-        <label className={LABEL}>Yêu cầu</label>
+        <label className={GROUP_LABEL}>Yêu cầu</label>
         <RichTextEditor
           value={form.requirements}
           onChange={(html) => set("requirements", html)}
@@ -233,7 +240,7 @@ export function JobForm({
 
       {/* Quyền lợi (editor định dạng) */}
       <div className="space-y-1.5">
-        <label className={LABEL}>Quyền lợi</label>
+        <label className={GROUP_LABEL}>Quyền lợi</label>
         <RichTextEditor
           value={form.benefits}
           onChange={(html) => set("benefits", html)}

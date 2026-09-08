@@ -1,5 +1,6 @@
 """ORM models — import tất cả để đăng ký vào Base.metadata (Alembic autogenerate cần)."""
 
+from app.models.app_config import AppConfig
 from app.models.application import Application, ApplicationStatus
 from app.models.audit_log import AuditLog
 from app.models.base import Base
@@ -11,6 +12,7 @@ from app.models.screening_session import ScreeningSession
 
 __all__ = [
     "Base",
+    "AppConfig",
     "JobPosting",
     "Application",
     "ApplicationStatus",

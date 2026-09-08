@@ -14,8 +14,6 @@ KHÔNG phải tín hiệu bất định. Ca có cờ/low-confidence LUÔN về h
 
 from __future__ import annotations
 
-import pytest
-
 from app.agents.policy import route_after_ranker
 from app.core.config import settings
 
@@ -93,7 +91,6 @@ def test_gate_node_sets_rejected() -> None:
     from app.models.application import ApplicationStatus
 
     assert out["status"] == ApplicationStatus.REJECTED.value
-    assert out["result"]["action"] == "auto_reject"
 
 
 # ── background: nhánh auto_reject → delegate scheduler (thư từ chối THẬT) ─────

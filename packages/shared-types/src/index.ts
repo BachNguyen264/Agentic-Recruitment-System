@@ -1,14 +1,17 @@
 // Type dùng chung (scaffold) — phản chiếu schema backend (PRD §16).
 // Khớp với app/schemas (backend Python). Khi backend đổi -> cập nhật ở đây.
 
-export type ServiceState = "ok" | string; // "ok" hoặc "error: <Type>"
+// "ok" hoặc "error: <Type>". `(string & {})` chứ KHÔNG phải `string` trần: union giữa một string
+// literal và `string` bị TypeScript RÚT GỌN về `string`, nên `"ok" | string` không ràng buộc gì và
+// cũng không gợi ý gì. Giao ước `& {}` giữ "ok" trong danh sách autocomplete mà vẫn nhận chuỗi lỗi
+// bất kỳ — đúng hình dạng dữ liệu backend trả về (health check không liệt kê hết được tên lỗi).
+export type ServiceState = "ok" | (string & {});
 
 export interface HealthStatus {
   status: "ok" | "degraded";
   api: "ok";
   services: {
     postgres: ServiceState;
-    redis: ServiceState;
     qdrant: ServiceState;
   };
 }
@@ -27,7 +30,8 @@ export type ApplicationStatus =
   | "RANKING"
   | "SCREENING"
   | "AWAITING_SCREENER"
-  | "REMINDED"
+  // KHÔNG có "REMINDED": nhắc là một SỰ KIỆN (mốc `screening_session.reminded_at`), không phải
+  // trạng thái — hồ sơ vẫn đứng ở AWAITING_SCREENER. Xem models/application.py.
   | "SCHEDULING"
   // SCH-2: thư mời + link đặt lịch đã gửi, chờ ứng viên tự chọn giờ (PRD §10b).
   | "AWAITING_BOOKING"
@@ -53,25 +57,9 @@ export interface PipelineSnapshot {
   active: PipelineItem[];
 }
 
-export interface Application {
-  id: number;
-  job_id: number | null;
-  applicant_email: string;
-  // Slice 06: backend KHÔNG trả `cv_file_ref` nữa (path/key storage là chi tiết nội bộ — trước đây
-  // lộ đường dẫn tuyệt đối của server). Chỉ có cờ has_cv; tải file qua GET /api/applications/{id}/cv.
-  has_cv: boolean;
-  status: ApplicationStatus;
-  score: number | null;
-  confidence: number | null;
-  uncertainty_flags: string[];
-  escalation_reason: string | null;
-  screener_sent_at: string | null;
-  screener_deadline: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 // ── Màn HR danh sách/chi tiết ứng viên (slice 03a, CHỈ ĐỌC) — khớp ApplicationRead (backend) ──
+// (Interface `Application` cũ đã XOÁ: nó bị `ApplicationListItem` + `ApplicationDetail` thay thế
+//  hoàn toàn và không còn nơi nào tham chiếu — giữ lại chỉ tạo một hình dạng thứ ba để lệch.)
 
 // Item danh sách: đủ để hiển thị dòng ứng viên (không cần parsed_data/breakdown — giữ nhẹ).
 export interface ApplicationListItem {
@@ -154,6 +142,9 @@ export interface BookedInterview {
 // human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.
 export type ReviewDecision = "approve" | "reject";
 
+// Body của POST /api/applications/{id}/review — khớp ReviewRequest (backend). `lib/api.submitReview`
+// gắn kiểu này bằng `satisfies` để lệch schema bị bắt lúc biên dịch: tham số `body` của `postJson`
+// là `unknown`, nên nếu không gắn thì object literal gửi đi KHÔNG được kiểm kiểu gì cả.
 export interface ReviewRequest {
   decision: ReviewDecision;
   note?: string | null;
@@ -177,6 +168,10 @@ export interface RubricCriterion {
 }
 
 // ── JD-1: trường hướng-ứng-viên (PRD §16, §8.1) ──
+// Hai union này RÀNG BUỘC danh sách lựa chọn của form JD (`LEVEL_OPTIONS`/`EMPLOYMENT_TYPE_OPTIONS`
+// ở apps/dashboard/lib/jobs.ts) — trước đây chúng chỉ nằm trong comment nên hai danh sách tự do
+// trôi khỏi nhau. Trường `level`/`employment_type` của JD vẫn để `string | null` (permissive) vì JD
+// cũ trong DB có thể mang giá trị ngoài tập này; ràng buộc đặt ở chỗ NHẬP, không ở chỗ ĐỌC.
 export type JobLevel =
   | "intern" | "fresher" | "junior" | "mid" | "senior" | "lead" | "manager";
 export type EmploymentType = "full_time" | "part_time" | "contract" | "internship";
@@ -382,4 +377,133 @@ export interface BookingCancelResult {
   // Hai câu dẫn tới hai hành vi hoàn toàn khác nhau nên UI không được đoán bừa.
   can_rebook: boolean;
   email_sent: boolean;
+}
+
+// ── Cấu hình hệ thống (khu quản trị HR — PRD §NFR-8) ──────────────────────────
+// Khớp `ConfigFieldOut`/`ConfigGroupOut`/`ConfigUpdateResult` ở app/schemas/admin.py.
+//
+// `value`/`default` để `string | number | null` chứ không `unknown`: registry backend chỉ khai bốn
+// kiểu (int | float | str | enum) nên đó là TẬP ĐỦ. Dùng `unknown` sẽ bắt mọi nơi đọc phải ép kiểu
+// lại, còn `any` thì CLAUDE.md cấm.
+
+export type ConfigFieldKind = "int" | "float" | "str" | "enum";
+
+export type ConfigValue = string | number | null;
+
+export interface ConfigField {
+  key: string;
+  label: string;
+  tooltip: string;
+  kind: ConfigFieldKind;
+  value: ConfigValue;
+  default: ConfigValue;
+  minimum: number | null;
+  maximum: number | null;
+  choices: string[] | null;
+  unit: string | null;
+  nullable: boolean;
+  // Cảnh báo hiện NGAY dưới ô nhập — dành cho cấu hình mà giá trị HỢP LỆ vẫn có thể vô nghĩa
+  // (vd trần buổi/ngày lớn hơn số mốc giờ mà lưới sinh ra nổi). KHÔNG phải lỗi.
+  warning: string | null;
+  // Đang KHÁC mặc định (có hàng trong `app_config`) → hiện dấu "đã chỉnh" + nút khôi phục.
+  is_overridden: boolean;
+}
+
+export interface ConfigGroup {
+  group: string;
+  fields: ConfigField[];
+}
+
+export interface ConfigUpdateResult {
+  // `saved` = những khoá backend đã ghi; `changed` = tập con thực sự đổi giá trị. Gửi lại đúng giá
+  // trị đang chạy là hợp lệ và cho `changed: []` — đó là TRẠNG THÁI, không phải lỗi.
+  saved: string[];
+  changed: string[];
+}
+
+// ── Nhật ký kiểm toán (PRD §16 / NFR-3) ───────────────────────────────────────
+// Khớp `AuditLogItem`/`AuditLogPage`. `application_id = null` = hành động cấp hệ thống (vd HR đổi
+// cấu hình), không thuộc hồ sơ nào.
+export interface AuditLogItem {
+  id: number;
+  application_id: number | null;
+  applicant_email: string | null;
+  node: string;
+  action: string;
+  confidence: number | null;
+  uncertainty_flags: string[];
+  escalation_reason: string | null;
+  detail: Record<string, unknown>;
+  // `DateTime(timezone=True)` phía backend ⇒ ISO CÓ offset ⇒ `formatVnDateTime` đọc đúng.
+  created_at: string;
+}
+
+export interface AuditLogPage {
+  total: number;
+  limit: number;
+  offset: number;
+  items: AuditLogItem[];
+}
+
+// ── Đồng hồ đo bão hoà (GET /api/health/metrics — HR-only, KHÔNG I/O) ─────────
+// Mọi ô là `number | null`: endpoint cố ý trả `null` cho ô đọc hỏng thay vì 500 (nó được thiết kế
+// để bị poll suốt một lượt load test). Hình dạng LỒNG NHAU giữ nguyên kể cả ở nhánh lỗi, nên đọc
+// `m.db_pool.checked_out` luôn an toàn.
+
+export interface DbPoolGauge {
+  size: number | null;
+  checked_out: number | null;
+  // ÂM là BÌNH THƯỜNG: SQLAlchemy khởi tạo `_overflow = -pool_size`.
+  overflow: number | null;
+  checked_in: number | null;
+  max: number | null;
+}
+
+export interface CheckpointerPoolGauge {
+  size: number | null;
+  available: number | null;
+  checked_out: number | null;
+  max: number | null;
+  waiting: number | null;
+}
+
+export interface ThreadPoolGauge {
+  max_workers: number | null;
+  // ĐỈNH LỊCH SỬ, không phải "đang bận": ThreadPoolExecutor không bao giờ bỏ luồng khỏi `_threads`.
+  // Bằng chứng bão hoà là `queue_depth > 0`.
+  threads_alive: number | null;
+  queue_depth: number | null;
+}
+
+export interface AnyioThreadGauge {
+  total_tokens: number | null;
+  borrowed: number | null;
+  waiting: number | null;
+}
+
+export interface PipelineGauge {
+  in_flight: number | null;
+  started_total: number | null;
+  finished_total: number | null;
+  failed_total: number | null;
+  // OPTIONAL có chủ ý: đường chạy bình thường (`pipeline_gauges`) TRẢ hai ô này, nhưng nhánh
+  // `except` của `/health/metrics` dựng lại dict chỉ 4 khoá nên chúng VẮNG khi endpoint tự cứu.
+  queued?: number | null;
+  limit?: number | null;
+}
+
+export interface HealthMetrics {
+  db_pool: DbPoolGauge;
+  checkpointer_pool: CheckpointerPoolGauge;
+  executor: ThreadPoolGauge;
+  storage_executor: ThreadPoolGauge;
+  anyio_threads: AnyioThreadGauge;
+  pipelines: PipelineGauge;
+  cpu_count: number | null;
+  thread_default_width: number | null;
+  // `null` ngoài Linux (máy dev Windows) — backend cố ý không đoán bừa.
+  rss_bytes: number | null;
+  uptime_seconds: number | null;
+  // CHỈ có ở nhánh lỗi: tên exception mà endpoint đã nuốt để không 500.
+  error?: string;
 }

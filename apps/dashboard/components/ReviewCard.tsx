@@ -30,6 +30,12 @@ export function ReviewCard({
   submitting = false,
 }: ReviewCardProps) {
   const [note, setNote] = useState("");
+  // U7: "Từ chối" GỬI THƯ TỪ CHỐI THẬT cho ứng viên và KHÔNG hoàn tác được — nó là hành động không
+  // quay lại được duy nhất trong màn này mà trước đây bắn thẳng từ một cú bấm. Đối chiếu trong
+  // chính repo: "Lưu trữ JD" (khôi phục được) có `window.confirm`, "Huỷ lịch phỏng vấn" có xác nhận
+  // hai nhịp. Dùng lại đúng mẫu `confirmingCancel` của trang chi tiết (xác nhận NGAY TẠI CHỖ, không
+  // phải hộp thoại trình duyệt) để câu giải thích hệ quả đọc được cùng lúc với hai nút.
+  const [confirmingReject, setConfirmingReject] = useState(false);
   const reco = RECO[app.recommendation];
   const skills = app.parsed_data?.skills ?? [];
   const topExp = app.parsed_data?.experiences?.[0];
@@ -161,39 +167,75 @@ export function ReviewCard({
           disabled={submitting}
           className={`${inputClass} bg-canvas`}
         />
-        <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={() => onApprove(note)}
-            className={btn("primary")}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-[15px] w-[15px]"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2.4}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
+        {confirmingReject ? (
+          <div className="mt-2.5 rounded-lg border-2 border-red-300 bg-red-50 px-3.5 py-3">
+            <p role="alert" className="text-[13px] text-red-900">
+              Từ chối{" "}
+              <strong className="font-bold">
+                {app.parsed_data?.full_name?.trim() || app.applicant_email}
+              </strong>
+              ? Thư từ chối gửi đi NGAY qua scheduler và{" "}
+              <strong className="font-bold">không thu hồi được</strong>.
+            </p>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => onReject(note)}
+                // `bg-canvas`: biến thể `danger` là nút viền nền trong suốt — đặt trên chính nền
+                // đỏ nhạt của khối xác nhận thì nó chìm mất.
+                className={btn("danger", "bg-canvas")}
+              >
+                {submitting ? "Đang gửi…" : "Xác nhận từ chối"}
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setConfirmingReject(false)}
+                className={btn("secondary")}
+              >
+                Quay lại
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => onApprove(note)}
+              className={btn("primary")}
             >
-              <path d="M20 6 9 17l-5-5" />
-            </svg>
-            {submitting ? "Đang xử lý…" : "Duyệt → mời phỏng vấn"}
-          </button>
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={() => onReject(note)}
-            className={btn("secondary")}
-          >
-            Từ chối → gửi thư từ chối
-          </button>
-          <Link href={`/applications/${app.id}`} className={btn("ghost", "ml-auto")}>
-            Xem chi tiết đầy đủ →
-          </Link>
-        </div>
+              <svg
+                viewBox="0 0 24 24"
+                className="h-[15px] w-[15px]"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2.4}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              {submitting ? "Đang xử lý…" : "Duyệt → mời phỏng vấn"}
+            </button>
+            {/* `danger` chứ không `secondary`: nhịp thứ hai mới là nút gửi thư, nhưng nhịp thứ nhất
+                cũng phải trông khác nút "Duyệt" — hai hành động ngược nhau mà cùng kiểu dáng là
+                cách người ta bấm nhầm. */}
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => setConfirmingReject(true)}
+              className={btn("danger")}
+            >
+              Từ chối → gửi thư từ chối
+            </button>
+            <Link href={`/applications/${app.id}`} className={btn("ghost", "ml-auto")}>
+              Xem chi tiết đầy đủ →
+            </Link>
+          </div>
+        )}
       </div>
     </article>
   );

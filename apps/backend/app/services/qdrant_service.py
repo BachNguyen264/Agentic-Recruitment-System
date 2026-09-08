@@ -1,4 +1,4 @@
-"""qdrant_service — collection + upsert/search vector JD (PRD §7.2, §16 embedding_ref).
+"""qdrant_service — collection + upsert/xoá/đọc vector JD (PRD §7.2, §16 embedding_ref).
 
 Một collection dùng chung JD + CV (payload "type" phân biệt — plan 02a; CV embed ở lát 2b).
 Point ID = UUID5 xác định từ "jd:{job_id}" — ổn định (upsert idempotent) và không đụng độ
@@ -99,20 +99,3 @@ async def get_jd_vector(job_id: int) -> list[float] | None:
         return None
     vector = records[0].vector
     return vector if isinstance(vector, list) else None
-
-
-async def search(
-    vector: list[float], *, top_k: int = 5, filter_type: str = "jd"
-) -> list[models.ScoredPoint]:
-    """Tra cứu tương đồng (Cosine), lọc theo payload type. Trả điểm + score."""
-    await ensure_collection()
-    result = await qdrant_client.query_points(
-        collection_name=settings.qdrant_collection,
-        query=vector,
-        limit=top_k,
-        query_filter=models.Filter(
-            must=[models.FieldCondition(key="type", match=models.MatchValue(value=filter_type))]
-        ),
-        with_payload=True,
-    )
-    return list(result.points)

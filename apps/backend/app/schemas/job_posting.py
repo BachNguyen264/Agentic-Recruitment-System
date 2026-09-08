@@ -163,24 +163,20 @@ class PublicJobRead(BaseModel):
         return SalaryInfo() if v is None else v
 
 
+class JobCounts(BaseModel):
+    """GET /api/jobs/counts: tổng số JD theo nhóm — nguồn chân lý cho chip đếm trên UI.
+
+    Cần MỘT endpoint đếm riêng vì `GET /api/jobs` nay trả MỘT TRANG: đếm độ dài mảng nhận được là
+    đếm trong trang, nên chip sẽ khẳng định sai ngay khi vượt `limit` (đúng lớp lỗi AUDIT-1). Hai
+    khoá LUÔN có mặt (kể cả bằng 0) để client không phải đoán khoá nào tồn tại.
+    """
+
+    active: int = 0     # JD đang sống: DRAFT + OPEN + CLOSED (mọi status != ARCHIVED)
+    archived: int = 0   # JD đã lưu trữ (soft-delete, JD-4)
+
+
 class JobPostingCreateResult(BaseModel):
     """POST /api/jobs: JD đã lưu + cảnh báo nếu embedding lỗi (JD vẫn tạo được)."""
 
     job: JobPostingRead
     embedding_warning: str | None = None
-
-
-class SearchTestRequest(BaseModel):
-    query: str = Field(min_length=1)
-    top_k: int = Field(default=5, ge=1, le=20)
-
-
-class SearchTestHit(BaseModel):
-    job_id: int
-    title: str
-    score: float
-
-
-class SearchTestResponse(BaseModel):
-    query: str
-    hits: list[SearchTestHit]

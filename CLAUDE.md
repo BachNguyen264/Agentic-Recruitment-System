@@ -12,7 +12,8 @@ Guidance for Claude Code working in this repo. Read every session.
   **giữ gọn**; đừng nhồi thêm chi tiết vào đây.
 - **`docs/AI_GUIDE.md`** giữ **ranh giới + gotcha** (tra cứu theo việc). **Mở nó TRƯỚC mọi task đụng code.**
 - **`ROADMAP.md`** is the map of remaining slices and their order.
-- `plan.md` / `slice-*.md` is a ONE-SHOT script for the current slice only; discard when done — never a reference.
+- A slice plan file (`plan.md` / `slice-*.md`), if one exists, is a ONE-SHOT script for the current
+  slice only; delete it when done — never a reference.
 
 ---
 
@@ -80,7 +81,7 @@ qua interface: `cv_reader.extract_text(data, name)` làm việc trên BYTES, `pa
 `GET /api/applications/{id}/cv` STREAM qua `storage.get()` trong router HR (`require_hr` → chưa login 401);
 bucket R2 **PRIVATE**, KHÔNG public URL (NFR-4). `reset_demo_data` xóa file qua storage (sau commit DB).
 
-**Deploy (13) — ✅ ĐÃ LIVE** (Render Docker sau Cloudflare + Vercel + Neon/Upstash/Qdrant/R2; cross-domain
+**Deploy (13) — ✅ ĐÃ LIVE** (Render Docker sau Cloudflare + Vercel + Neon/Qdrant/R2; cross-domain
 cookie `SameSite=None; Secure` + CORS allowlist chạy thật). **4 sự cố prod đã vá** — chi tiết +
 cách verify ở `docs/deploy-live-issues.md` (ĐỌC TRƯỚC khi đụng checkpointer / rate-limit / config deploy).
 Code-prep đã có: **CORS từ env**
@@ -198,10 +199,15 @@ tài nguyên tĩnh đã hash cache-first ở LẦN FETCH ĐẦU (không precache
 URL mang token (NFR-4). Web push (NOTI-1)
 KHÔNG thuộc slice này. Ba bẫy → `docs/AI_GUIDE.md` (3 gotcha cuối).
 
-**NOT yet done:** analytics; observability; anti-prompt-injection; `email.suppressed` (xem AI_GUIDE);
+**UI redesign XONG** (merge `e69b57a`, ~23 commit): hệ token **Marine** tự khai (canvas/surface/ink/
+accent/steel — `apps/dashboard/tailwind.config.ts`), thương hiệu hiển thị **HireFlow**, redesign cổng
+công khai + đăng nhập, a11y WCAG AA. Tên kỹ thuật vẫn là ARS.
+
+**NOT yet done:** analytics; observability (**ĐÃ BỎ khỏi phạm vi** — không có Super Admin nên không
+có khán giả; Langfuse đã gỡ khỏi repo); anti-prompt-injection; `email.suppressed` (xem AI_GUIDE);
 mở `/cv-check` cho ứng viên (**không phải "0 dòng code"** — `/api/agents/*` sau
 `require_hr`, cần endpoint công khai + rate-limit + chống lạm dụng LLM ⇒ slice riêng);
-**runbook của 13**; UI redesign; learning loop.
+**runbook của 13**; learning loop; Google Calendar (đang dùng `.ics`).
 
 **LOAD-1 (test tải + scale) XONG — số đo thật, xem `docs/load-and-scale.md`:** đo local (LLM giả lập
 đúng thời gian thật qua `OPENAI_API_BASE` → `scripts/mock_openai.py`, **0 đồng**) rồi xác nhận trên
@@ -225,13 +231,40 @@ mà `/applications` + `/review` + badge sidebar ĐỀU ăn từ đó ⇒ ba màn
 `?status=PENDING_REVIEW&limit=20` thay vì tải 100 rồi lọc client (**100 request × ~9 SQL → 20**), có
 `staleTime`/nhánh lỗi/xác nhận-sau-quyết-định đọc từ `data.status`; badge đọc `/pipeline` (205 B,
 15s) thay vì poll 81.5 KB mỗi 5s trên MỌI trang HR. Kèm: **trần 60k ký tự khi trích CV** (một PDF
-0.918 MB hợp lệ trích ra 12.46 TRIỆU ký tự ⇒ ~$0.36/request + OOM 512 MB, qua endpoint CÔNG KHAI) →
+0.918 MB hợp lệ trích ra 12.46 TRIỆU ký tự ⇒ ~$0.36/request, qua endpoint CÔNG KHAI — **trần ký tự
+KHÔNG chặn được OOM**, vì nó cắt SAU khi đã trích xong; chặn OOM là việc của AUDIT-2 bên dưới) →
 cờ `cv_truncated` mà **ranker phải CHỞ QUA** (nó thay mới trọn `uncertainty_flags`); **nộp CV gọi
 THẲNG Render** (`NEXT_PUBLIC_PUBLIC_API_BASE`) để rate-limit đếm đúng IP ứng viên — qua rewrite
 Vercel thì `CF-Connecting-IP` = IP egress của Vercel, xoay liên tục ⇒ 52 lượt 0 bị chặn; timeout cho
 `rubric_suggester` (client OpenAI DUY NHẤT còn thiếu) + nhả connection trước lượt LLM + bcrypt sang
 `run_in_threadpool`. **`BOOKING_MAX_PER_DAY=6` là CONFIG CHẾT** — lưới giờ làm chỉ sinh 5 mốc/ngày.
 Prod đã dọn sạch 206 hồ sơ test (+21.068 dòng checkpoint + 206 file R2 + JD `[LOADTEST]`).
+
+**AUDIT-2 (chặn CV dựng-để-phá) XONG:** review đối kháng chỉ ra bản vá trần ký tự của AUDIT-1 đóng
+được **chi phí token** nhưng KHÔNG đóng lỗ **RAM/CPU** — trong khi comment của chính nó khẳng định
+ngược lại. (1) **PDF một trang** (CRITICAL, endpoint CÔNG KHAI): trần ký tự chỉ được hỏi SAU khi
+`get_text()` cả trang chạy xong, mà chi phí một trang là **bậc hai theo số glyph** (2.1 KB→4.95s ·
+6.6 KB→90s · 37 KB→**>600s**) nên KHÔNG phép kiểm kích thước nào bắt được; tệ hơn PyMuPDF (SWIG)
+**không nhả GIL** ⇒ `asyncio.to_thread` KHÔNG cô lập, event loop đứng theo, kể cả `/api/health/live`
+⇒ Render tưởng service chết → SIGKILL → BackgroundTask đang bay bốc hơi. Vá bằng
+`extract_text_bounded`: **tiến trình con GIẾT ĐƯỢC** + `PARSER_EXTRACT_TIMEOUT_SECONDS` (20s; CV thật
+nặng nhất <1s), forkserver trên Unix / spawn trên Windows. (2) **DOCX zip bomb** (HIGH): `Document()`
+dựng lxml cho TOÀN BỘ `document.xml` trước khi vòng `break` chạy — .docx 442 KB chứa XML 116.5 MB làm
+RSS +639 MB ⇒ OOM instance 512 MB. Vá bằng tiền kiểm kích thước sau giải nén đọc từ central directory
+của ZIP (gần như miễn phí) + `PARSER_MAX_CV_UNCOMPRESSED_BYTES`. (3) **Lệch biên** làm CV bị cắt mà
+**mất cờ `cv_truncated`** — tức vô hiệu hoá đúng cái chốt AUDIT-1 vừa thêm. 7 test mới, mỗi bản vá
+đều được ĐỘT BIẾN để chứng minh test bắt được.
+
+**CONFIG-1 (cấu hình hệ thống đọc từ DB — PRD §NFR-8) XONG:** 39 hằng số nghiệp vụ chuyển từ `.env`
+sang bảng `app_config` + màn `/system` cho HR sửa (nhãn + tooltip + ràng buộc + khôi phục mặc định).
+**Cơ chế:** `settings` là object pydantic MUTABLE (không đặt `frozen`) nên gán đè lúc chạy có hiệu
+lực NGAY — KHÔNG phải sửa >100 điểm đọc. Hai cái bẫy đi kèm, mỗi cái một test hồi quy:
+`validate_assignment` KHÔNG bật ⇒ mọi giá trị phải qua `config_registry.coerce()` trước khi gán;
+và **4 `@lru_cache` đóng băng 24 field** — `load_booking_config()` cache CẢ 14 biến `BOOKING_*` mà mã
+sản phẩm chưa từng gọi `cache_clear()` ⇒ phải `invalidate_caches()` sau mỗi lần lưu, nếu không HR đổi
+giờ làm việc mà lưới khung giờ vẫn theo giờ cũ. Bảng **chỉ lưu dòng KHÁC mặc định** (bảng rỗng = chạy
+theo mặc định trong code). Kèm **đường ĐỌC `audit_log`** — bảng này được 8 service ghi rất dày nhưng
+trước đó không có endpoint nào đọc.
 
 `ENABLE_LLM=true` enables real parser+ranker; `false` keeps stubs (for `test_graph`).
 
@@ -240,12 +273,13 @@ Prod đã dọn sạch 206 hồ sơ test (+21.068 dòng checkpoint + 206 file R2
 ## Stack
 
 - **Backend:** Python 3.12 · FastAPI · LangGraph · SQLAlchemy 2 (async) · Alembic · Pydantic v2. Package mgr: `uv`.
-- **Infra (managed-first):** Neon (Postgres) · Upstash Redis · Qdrant Cloud. Local fallback: `docker-compose.local.yml`.
+- **Infra (managed-first):** Neon (Postgres) · Qdrant Cloud · Cloudflare R2. Local fallback: `docker-compose.local.yml`.
 - **LLM (OpenAI):** parser `gpt-4.1-mini`; ranker `gpt-5-mini` (reasoning_effort=low); embeddings
   `text-embedding-3-small` (1536-dim). **Email: Resend.**
-- **Async:** FastAPI BackgroundTasks (NO worker polling — kills Upstash free tier). Screener uses suspend/resume
-  (LangGraph interrupt + Postgres checkpointer — later phase).
-- **Frontend:** Next.js 14 · **plain Tailwind (slate palette)** · TanStack Query. shadcn/ui NOT installed —
+- **Async:** FastAPI BackgroundTasks (NO worker polling — no extra queue infra to feed). Screener uses
+  suspend/resume (LangGraph interrupt + Postgres checkpointer) — REAL, see 08a-08d above.
+- **Frontend:** Next.js 14 · **Tailwind thuần + hệ token "Marine" tự khai** (xem `tailwind.config.ts`) ·
+  TanStack Query. shadcn/ui NOT installed —
   use utility classes + hand-written components; DO NOT add a UI library. API base from env `NEXT_PUBLIC_API_BASE`.
 - **PWA:** installable HR dashboard (no separate mobile codebase).
 - **Monorepo:** pnpm workspaces; shared code in `packages/shared-types`.

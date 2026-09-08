@@ -45,6 +45,5 @@ def human_review_node(state: RecruitmentState) -> dict:
         "status": ApplicationStatus.PENDING_REVIEW.value,
         "require_human_review": True,
         "escalation_reason": reason,
-        "result": {"action": "queued_for_human_review"},
         "messages": [f"[human_review] -> PENDING_REVIEW (kèm ReviewCard — PRD §11). Lý do: {reason}"],
     }

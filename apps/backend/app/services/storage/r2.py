@@ -22,8 +22,6 @@ logger = get_logger("app.storage.r2")
 
 # Mã lỗi S3/R2 nghĩa là "không có object" → ánh xạ sang StorageNotFound.
 _NOT_FOUND_CODES = {"404", "NoSuchKey", "NotFound"}
-# Hạn presigned URL nếu ai đó dùng `url()` — RẤT ngắn (CV nhạy cảm). Đường phát CV chính vẫn là stream.
-_PRESIGN_TTL_SECONDS = 120
 
 
 class R2Storage:
@@ -117,13 +115,6 @@ class R2Storage:
             # delete_object của S3 vốn idempotent; chỉ lỗi thật (quyền/mạng) mới nổi lên.
             raise StorageError(f"Lỗi xóa CV trên R2 ({key}): {exc}") from exc
 
-    def _url_sync(self, key: str) -> str:
-        return self._get_client().generate_presigned_url(
-            "get_object",
-            Params={"Bucket": self._bucket, "Key": key},
-            ExpiresIn=_PRESIGN_TTL_SECONDS,
-        )
-
     # ── async API (hợp đồng FileStorage) ─────────────────────────────
     async def save(self, key: str, data: bytes, content_type: str) -> str:
         validate_key(key)
@@ -151,11 +142,3 @@ class R2Storage:
             raise
         except Exception as exc:  # noqa: BLE001
             raise StorageError(f"Lỗi xóa CV trên R2 ({key}): {exc}") from exc
-
-    async def url(self, key: str) -> str:
-        """Presigned hạn NGẮN. ⚠️ KHÔNG dùng phát CV — xem ghi chú `FileStorage.url` (NFR-4)."""
-        validate_key(key)
-        try:
-            return await run_in_storage_thread(self._url_sync, key)
-        except Exception as exc:  # noqa: BLE001
-            raise StorageError(f"Lỗi tạo presigned URL ({key}): {exc}") from exc

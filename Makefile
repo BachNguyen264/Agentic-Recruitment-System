@@ -3,18 +3,13 @@
 .DEFAULT_GOAL := help
 .PHONY: help install dev-backend dev-dashboard migrate makemigration health test check-env local-infra-up local-infra-down
 
+# Danh sách target ĐỌC TỪ chính các chú thích `##` bên dưới. Trước đây thân `help` chép tay lại 11
+# mô tả đó: hai danh sách phải sửa song song và đã lệch ngay ở `dev-backend` (chú thích nói
+# `python -m app`, dòng echo vẫn nói `uvicorn --reload`). Một nguồn duy nhất thì không lệch được nữa.
 help: ## Liệt kê các target
 	@echo "Targets:"
-	@echo "  install          - cài deps backend (uv) + workspace (pnpm)"
-	@echo "  dev-backend      - chạy FastAPI (uvicorn --reload :8000)"
-	@echo "  dev-dashboard    - chạy Next.js dashboard (:3000)"
-	@echo "  migrate          - alembic upgrade head"
-	@echo "  makemigration    - alembic revision --autogenerate"
-	@echo "  health           - curl /api/health"
-	@echo "  test             - pytest (backend)"
-	@echo "  check-env        - kiểm tra kết nối Neon/Upstash/Qdrant"
-	@echo "  local-infra-up   - docker compose (Postgres/Redis/Qdrant) — dự phòng"
-	@echo "  local-infra-down - tắt docker compose dự phòng"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s - %s\n", $$1, $$2}'
 
 install: ## Cài đặt phụ thuộc
 	cd apps/backend && uv sync
@@ -38,8 +33,8 @@ health: ## Gọi health endpoint
 test: ## Chạy test backend
 	cd apps/backend && uv run pytest -q
 
-check-env: ## Kiểm tra kết nối 3 dịch vụ managed (script độc lập, không cần backend)
-	uv run --no-project --with asyncpg --with "redis>=5" --with qdrant-client --with python-dotenv scripts/check_connections.py
+check-env: ## Kiểm tra kết nối 2 dịch vụ managed (script độc lập, không cần backend)
+	uv run --no-project --with asyncpg --with qdrant-client --with python-dotenv scripts/check_connections.py
 
 local-infra-up: ## Dựng hạ tầng local (dự phòng khi chưa có managed)
 	docker compose -f docker-compose.local.yml up -d

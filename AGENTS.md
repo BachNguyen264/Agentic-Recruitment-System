@@ -22,7 +22,7 @@
   HR là admin; ứng viên là **guest vĩnh viễn** (không tài khoản, không đăng nhập, không xem được điểm/trạng thái).
 - **Pipeline CỐ ĐỊNH, KHÔNG có Supervisor:** `parser → ranker → screener → scheduler` + `human_review` có điều kiện.
 - **Stack:** Python 3.12 · FastAPI · LangGraph · SQLAlchemy 2 async · Alembic · Pydantic v2 · `uv`.
-  Next.js 14 · Tailwind thuần (KHÔNG thêm thư viện UI) · TanStack Query. Neon · Upstash · Qdrant · Resend · OpenAI.
+  Next.js 14 · Tailwind thuần (KHÔNG thêm thư viện UI) · TanStack Query. Neon · Qdrant · Resend · OpenAI.
 - **Lệnh:** backend `make dev-backend` · `make test` · `make migrate`; frontend
   `pnpm --filter dashboard dev|build|typecheck`; git dùng `git -C <repo-root> …` (**tránh `cd`** — hook fnm vỡ).
 - **Quy ước bắt buộc:** async-first; config từ env (KHÔNG hardcode secret/URL/ngưỡng); type đầy đủ;

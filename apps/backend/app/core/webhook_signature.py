@@ -23,7 +23,7 @@ import base64
 import hashlib
 import hmac
 
-__all__ = ["sign_svix_payload", "verify_svix_signature"]
+__all__ = ["verify_svix_signature"]
 
 _PREFIX = "whsec_"
 _VERSION = "v1"
@@ -53,14 +53,6 @@ def _key(secret: str) -> bytes | None:
 def _digest(key: bytes, msg_id: str, timestamp: str, body: bytes) -> str:
     signed = b".".join([msg_id.encode("utf-8"), timestamp.encode("utf-8"), body])
     return base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode("ascii")
-
-
-def sign_svix_payload(*, secret: str, msg_id: str, timestamp: str, body: bytes) -> str:
-    """Dựng header `svix-signature` hợp lệ. Dùng cho TEST và để đặc tả thuật toán bằng code chạy được."""
-    key = _key(secret)
-    if key is None:
-        raise ValueError("Secret webhook không hợp lệ (phải là whsec_<base64>).")
-    return f"{_VERSION},{_digest(key, msg_id, timestamp, body)}"
 
 
 def verify_svix_signature(

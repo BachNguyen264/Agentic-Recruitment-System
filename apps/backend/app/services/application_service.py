@@ -34,14 +34,27 @@ async def get_application(session: AsyncSession, application_id: int) -> Applica
     return await session.get(Application, application_id)
 
 
+def escape_like(term: str) -> str:
+    r"""Trung hoà ký tự đại diện của SQL LIKE trong chuỗi NGƯỜI DÙNG gõ. `\` phải thay ĐẦU TIÊN.
+
+    Không escape thì HR gõ `%` là khớp MỌI hồ sơ — bộ lọc âm thầm trở thành no-op, và `_` khớp một
+    ký tự bất kỳ. Đây là lỗi "trả ra kết quả sai mà không có thông báo nào": HR tin rằng mình đang
+    xem kết quả tìm kiếm. Dùng KÈM `escape="\\"` ở chỗ gọi `ilike` — thiếu vế đó thì Postgres coi
+    `\` là ký tự thường và hàm này vô nghĩa.
+    """
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 async def list_applications(
     session: AsyncSession,
     *,
     statuses: Sequence[str] | None = None,
+    q: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[Application]:
-    """Một TRANG hồ sơ, mới nhất trước. Lọc trạng thái ở SERVER (không phải sau khi đã cắt trang).
+    """Một TRANG hồ sơ, mới nhất trước. Lọc trạng thái + tìm theo email ở SERVER (không phải sau
+    khi đã cắt trang).
 
     ⚠ `order_by` PHẢI có `id.desc()` làm khoá phụ. `created_at` KHÔNG unique (đo trên prod: 40 hồ sơ
     trong cùng một phút, nhiều hồ sơ trùng mili-giây) và cũng KHÔNG có index — `OFFSET` trên một khoá
@@ -56,6 +69,16 @@ async def list_applications(
     stmt = select(Application)
     if statuses:
         stmt = stmt.where(Application.status.in_(statuses))
+    term = (q or "").strip()
+    if term:
+        # `ilike` = khớp KHÔNG phân biệt hoa/thường ở SERVER (Postgres ILIKE) — HR gõ "Anh" phải ra
+        # "anh@…". `escape` khai `\` là ký tự thoát, để `escape_like` thật sự vô hiệu hoá `%`/`_`
+        # người dùng gõ; bỏ `escape` đi thì hàm escape kia chỉ chèn thêm backslash vào mẫu.
+        # Lọc ở SERVER (không phải sau khi đã cắt trang): tìm trên MỘT trang 100 dòng thì ứng viên
+        # cần tìm nằm ở trang 3 sẽ "không tồn tại" — đúng lớp lỗi AUDIT-1 đã vá.
+        stmt = stmt.where(
+            Application.applicant_email.ilike(f"%{escape_like(term)}%", escape="\\")
+        )
     result = await session.execute(
         stmt.order_by(Application.created_at.desc(), Application.id.desc())
         .limit(limit)

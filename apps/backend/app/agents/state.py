@@ -17,7 +17,6 @@ class RecruitmentState(TypedDict, total=False):
     scratchpad: dict[str, Any]
     messages: Annotated[list[str], operator.add]  # append-only (reducer cộng dồn)
     status: str
-    result: dict[str, Any] | None
     error: str | None
 
     # ── Parser (PRD §7.1): CV -> JSON có cấu trúc (ParsedCV.model_dump) ──
@@ -35,5 +34,4 @@ class RecruitmentState(TypedDict, total=False):
     require_human_review: bool
 
     # ── Screener bất đồng bộ (PRD §10 suspend/resume) ────────────────
-    awaiting_screener: bool
     screener_answers: dict[str, Any] | None

@@ -188,9 +188,8 @@
   THÀNH CÔNG). Nên mọi đường ghi CV phải: lưu storage OK rồi mới gán key; lưu hỏng → XÓA hồ sơ + báo lỗi
   (503), tuyệt đối không để lại hồ sơ cv_file_ref rỗng ("dữ liệu nói dối").
 - **Health check nền tảng ping VÀI GIÂY/LẦN, liên tục (13):** trỏ nó vào endpoint kiểm-sâu là tự phá hạ tầng
-  của chính mình — `/api/health` ping Postgres+Redis+Qdrant mỗi lượt ⇒ ~17k lượt/ngày ⇒ vượt hạn mức Upstash
-  free (10k lệnh/ngày) + giữ Neon không bao giờ tự ngủ (đốt compute-hours), trong khi KHÔNG có ai dùng hệ
-  thống. Dùng `/api/health/live` (không I/O). Endpoint kiểm-sâu công khai cũng cần rate-limit, nếu không một
+  của chính mình — `/api/health` ping Postgres+Qdrant mỗi lượt ⇒ ~17k lượt/ngày ⇒ giữ Neon không bao giờ tự
+  ngủ và đốt sạch compute-hours của gói free, trong khi KHÔNG có ai dùng hệ thống. Dùng `/api/health/live` (không I/O). Endpoint kiểm-sâu công khai cũng cần rate-limit, nếu không một
   vòng `curl` nặc danh đốt hộ.
 - **Rate-limit sau proxy: khoá quota là chỗ dễ vỡ NHẤT (13).** Không tin X-Forwarded-For ⇒ khoá = peer TCP =
   router của nền tảng ⇒ CẢ THẾ GIỚI CHUNG MỘT XÔ (vài request nặc danh khoá sạch login HR, lặp vô hạn). Tin
@@ -420,7 +419,7 @@
 
 - **"Chưa kết thúc" ≠ "đang chạy" — animation và nhịp hỏi phải bám cái thứ HAI (DASH-1, bắt trên
   prod).** `IN_FLIGHT` ở dashboard nghĩa là *chưa tới điểm kết thúc*, nên nó CHỨA `AWAITING_SCREENER`,
-  `REMINDED`, `AWAITING_BOOKING` — những trạng thái ĐANG CHỜ CON NGƯỜI và kéo dài hàng NGÀY. Lấy tập
+  `AWAITING_BOOKING` — những trạng thái ĐANG CHỜ CON NGƯỜI và kéo dài hàng NGÀY. Lấy tập
   đó để bật animation + nhịp nhanh thì sai hai đường cùng lúc: (a) ô node hiện "ĐANG CHẠY" kèm thanh
   chạy trong khi KHÔNG có tác tử nào chạy — đúng loại "trạng thái nói dối"; (b) một ứng viên chưa bấm
   link đặt lịch là ghim MỌI tab dashboard ở nhịp 2 giây vô thời hạn, tức tái tạo lại chính sự lãng phí

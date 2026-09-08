@@ -60,7 +60,3 @@ class LocalStorage:
                 pass
 
         await run_in_storage_thread(_remove)
-
-    async def url(self, key: str) -> str:
-        """Path nội bộ — KHÔNG phát cho người dùng (xem ghi chú `FileStorage.url`)."""
-        return str(self._path(key))

@@ -1,11 +1,13 @@
 // Dấu hiệu thương hiệu HireFlow: hai thanh dọc + đường luồng có mũi tên ở giữa — hồ sơ ứng viên
 // chảy qua pipeline. Dùng lại ở sidebar HR, trang đăng nhập và cổng công khai.
-export function LogoMark({ size = 28, className = "" }: { size?: number; className?: string }) {
+// Nội bộ file (KHÔNG export): chỉ `Logo` bên dưới dựng nó. Export ra ngoài thì `noUnusedLocals`
+// không còn phát hiện được nếu sau này nó thành code chết.
+function LogoMark({ size = 28 }: { size?: number }) {
   return (
     <span
       aria-hidden
       style={{ width: size, height: size }}
-      className={`flex flex-none items-center justify-center rounded-lg bg-accent ${className}`}
+      className="flex flex-none items-center justify-center rounded-lg bg-accent"
     >
       <svg
         width={size * 0.64}
@@ -32,14 +34,14 @@ export function LogoMark({ size = 28, className = "" }: { size?: number; classNa
 }
 
 // Khối logo + chữ, dùng ở đầu sidebar / trang công khai.
+// Tên thương hiệu cố định trong JSX: prop `wordmark` cũ không call site nào truyền (cả 4 chỗ đều
+// dùng mặc định "HireFlow"), tức nó chỉ là một cách để tên thương hiệu lệch nhau giữa các màn.
 export function Logo({
   size = 28,
-  wordmark = "HireFlow",
   suffix,
   subtitle,
 }: {
   size?: number;
-  wordmark?: string;
   suffix?: string;
   subtitle?: string;
 }) {
@@ -48,7 +50,7 @@ export function Logo({
       <div className="flex items-center gap-2.5">
         <LogoMark size={size} />
         <span className="font-heading text-[18px] font-bold leading-none tracking-tight">
-          {wordmark}
+          HireFlow
           {suffix && <span className="text-ink/65"> · {suffix}</span>}
         </span>
       </div>

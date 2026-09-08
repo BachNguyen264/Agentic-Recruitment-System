@@ -29,7 +29,11 @@ class ApplicationStatus(str, enum.Enum):
     RANKING = "RANKING"
     SCREENING = "SCREENING"
     AWAITING_SCREENER = "AWAITING_SCREENER"
-    REMINDED = "REMINDED"
+    # KHÔNG có `REMINDED`: PRD §13 ghi "+24h → REMINDED → (vẫn AWAITING)" — nhắc là một SỰ KIỆN, không
+    # phải trạng thái. Cơ chế thật ghi mốc `screening_session.reminded_at` và GIỮ NGUYÊN
+    # AWAITING_SCREENER, đúng như PRD; một hằng số trạng thái không bao giờ được gán chỉ mời gọi code
+    # sau viết `status == REMINDED` — điều kiện không bao giờ đúng, và nếu ai đó GÁN thật thì hồ sơ
+    # rơi khỏi mọi bộ lọc `AWAITING_SCREENER` (sweep nhắc/hết hạn + `screening._load_valid`).
     SCHEDULING = "SCHEDULING"
     # SCH-2 (PRD §10b, §13): thư mời + link đặt lịch ĐÃ gửi, đang chờ ứng viên tự chọn giờ.
     AWAITING_BOOKING = "AWAITING_BOOKING"
@@ -70,7 +74,6 @@ DASHBOARD_ACTIVE_STATUSES = frozenset(
         ApplicationStatus.RANKING.value,
         ApplicationStatus.SCREENING.value,
         ApplicationStatus.AWAITING_SCREENER.value,
-        ApplicationStatus.REMINDED.value,
         ApplicationStatus.SCHEDULING.value,
         ApplicationStatus.AWAITING_BOOKING.value,
     }

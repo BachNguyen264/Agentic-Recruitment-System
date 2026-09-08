@@ -20,7 +20,7 @@ Secrets đọc từ `.env` ở **gốc repo** (không phải thư mục này) �
 ```
 app/
 ├── main.py                 # FastAPI app + lifespan
-├── core/                   # config, database (Neon SSL), redis, qdrant, logging
+├── core/                   # config, database (Neon SSL), qdrant, logging
 ├── api/                    # deps + routes (health, applications, agents)
 ├── agents/                 # state, graph, policy, nodes/* (LangGraph — Phase 4)
 ├── models/                 # SQLAlchemy models (Phase 3)

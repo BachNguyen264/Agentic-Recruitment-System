@@ -44,9 +44,9 @@ function RecheckButton({ busy, onClick }: { busy: boolean; onClick: () => void }
 export function ServiceStatus() {
   // KIỂM THEO YÊU CẦU, KHÔNG theo nhịp. Panel này không đóng góp tính năng nào — nó chỉ trả lời câu
   // "hạ tầng còn sống không", thứ HR hỏi khi NGHI NGỜ chứ không phải mỗi vài phút. Mà `/api/health`
-  // là bản kiểm SÂU: mỗi lượt ping Postgres + Redis + Qdrant, và backend xếp nó chung hạn mức công
-  // khai 20 lượt/giờ theo IP (`core/hardening._bucket`). Hỏi tự động = một tab mở cả ngày vẫn đốt
-  // hạn mức Upstash free và giữ Neon không bao giờ tự ngủ, đổi lại không có gì.
+  // là bản kiểm SÂU: mỗi lượt ping Postgres + Qdrant, và backend xếp nó chung hạn mức công khai
+  // 20 lượt/giờ theo IP (`core/hardening._bucket`). Hỏi tự động = một tab mở cả ngày vẫn giữ Neon
+  // không bao giờ tự ngủ (đốt compute-hours gói free), đổi lại không có gì.
   //
   // Nạp MỘT lần lúc mở trang (panel trống trông như hỏng), sau đó chỉ chạy khi HR bấm:
   // `staleTime: Infinity` + tắt mọi refetch tự động ⇒ đi ra đi vào dashboard trong cùng phiên KHÔNG
@@ -86,7 +86,6 @@ export function ServiceStatus() {
           <>
             <Row label="API (FastAPI)" state={data.api} />
             <Row label="Postgres (Neon)" state={data.services.postgres} />
-            <Row label="Redis (Upstash)" state={data.services.redis} />
             <Row label="Qdrant Cloud" state={data.services.qdrant} />
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2.5">
               <span className="text-[13px] text-ink/65">

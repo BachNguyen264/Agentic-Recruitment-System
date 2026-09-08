@@ -27,13 +27,13 @@ const REFRESH_IDLE_MS = 6_000;
 // danh sách bên dưới nói hai chuyện khác nhau. Nhịp hỏi + animation bám `MACHINE_BUSY` bên dưới —
 // KHÔNG phải tập này (đổi từ commit 0000529).
 const IN_FLIGHT: ApplicationStatus[] = [
-  "SUBMITTED", "PARSING", "RANKING", "SCREENING", "AWAITING_SCREENER", "REMINDED", "SCHEDULING",
+  "SUBMITTED", "PARSING", "RANKING", "SCREENING", "AWAITING_SCREENER", "SCHEDULING",
   // SCH-2: thư mời + link đã gửi, đang chờ ứng viên tự chọn giờ — vẫn là "đang chạy", chưa kết thúc.
   "AWAITING_BOOKING",
 ];
 
 // TẬP KHÁC HẲN `IN_FLIGHT`: những trạng thái mà HỆ THỐNG đang thực sự làm việc, đổi trong vài giây.
-// `IN_FLIGHT` nghĩa là "chưa kết thúc" — bao gồm cả `AWAITING_SCREENER`/`REMINDED`/`AWAITING_BOOKING`,
+// `IN_FLIGHT` nghĩa là "chưa kết thúc" — bao gồm cả `AWAITING_SCREENER`/`AWAITING_BOOKING`,
 // tức đang CHỜ CON NGƯỜI, kéo dài hàng NGÀY. Dùng `IN_FLIGHT` để bật animation + nhịp nhanh là sai hai
 // đường: (a) ô node hiện "ĐANG CHẠY" kèm thanh chạy trong khi không có tác tử nào chạy — đúng loại
 // "trạng thái nói dối" mà repo này vốn né; (b) một ứng viên chưa bấm link đặt lịch là ghim MỌI tab
@@ -65,7 +65,7 @@ const NODES: { key: string; label: string; caption: string; statuses: Applicatio
   },
   {
     key: "screener", label: "screener", caption: "Hỏi đáp qua email — bất đồng bộ",
-    statuses: ["SCREENING", "AWAITING_SCREENER", "REMINDED"],
+    statuses: ["SCREENING", "AWAITING_SCREENER"],
     icon: (
       <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
         <rect width="20" height="16" x="2" y="4" rx="2" /><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
@@ -86,7 +86,7 @@ const NODES: { key: string; label: string; caption: string; statuses: Applicatio
 const STATUS_LABEL: Record<string, string> = {
   SUBMITTED: "Vừa nộp", PARSING: "Đang bóc tách", RANKING: "Đang chấm điểm",
   SCREENING: "Đang sàng lọc", AWAITING_SCREENER: "Chờ ứng viên trả lời",
-  REMINDED: "Đã nhắc", SCHEDULING: "Đang gửi thư", AWAITING_BOOKING: "Chờ chọn lịch",
+  SCHEDULING: "Đang gửi thư", AWAITING_BOOKING: "Chờ chọn lịch",
   PENDING_REVIEW: "Chờ HR duyệt", INTERVIEW_SCHEDULED: "Đã hẹn PV", REJECTED: "Đã từ chối",
 };
 
@@ -185,7 +185,10 @@ export default function DashboardPage() {
       return MACHINE_BUSY.some((s) => (counts[s] ?? 0) > 0) ? REFRESH_RUNNING_MS : REFRESH_IDLE_MS;
     },
   });
-  const { data: jobs } = useQuery<JobPosting[]>({ queryKey: ["jobs", "active"], queryFn: () => getJobs() });
+  const { data: jobs, isError: jobsError } = useQuery<JobPosting[]>({
+    queryKey: ["jobs", "active"],
+    queryFn: () => getJobs(),
+  });
 
   const counts = snapshot?.counts;
   const countOf = (statuses: ApplicationStatus[]) =>
@@ -208,7 +211,14 @@ export default function DashboardPage() {
 
   const autoReject = (jobs ?? []).filter((j) => j.gate_config.auto_reject).length;
   const autoInvite = (jobs ?? []).filter((j) => j.gate_config.auto_invite).length;
-  const gateLabel = (n: number) => (n > 0 ? `${n} JD bật` : "Tắt toàn hệ thống");
+  // "Tắt toàn hệ thống" là một KHẲNG ĐỊNH về cấu hình, không phải giá trị mặc định khi thiếu dữ
+  // liệu. `/api/jobs` hỏng ⇒ `jobs` là undefined ⇒ đếm ra 0 ⇒ màn hình quả quyết hai gate đều tắt
+  // trong khi thực tế có thể đang bật. Với HR đó là lời trấn an sai về thứ tự động gửi thư cho ứng
+  // viên. Chưa đọc được thì nói chưa đọc được.
+  const gateLabel = (n: number) => {
+    if (jobsError || !jobs) return "— chưa đọc được";
+    return n > 0 ? `${n} JD bật` : "Tắt toàn hệ thống";
+  };
 
   return (
     <div className="mx-auto max-w-[1120px] px-4 pb-8 pt-6 sm:px-8">

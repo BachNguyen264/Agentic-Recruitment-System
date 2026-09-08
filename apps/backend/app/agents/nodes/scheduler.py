@@ -364,6 +364,5 @@ def scheduler_node(state: RecruitmentState) -> dict:
     # 03c). INTERVIEW_SCHEDULED chỉ đặt khi thư mời ĐÃ gửi (tránh "trạng thái nói dối" — plan §3.2).
     return {
         "status": ApplicationStatus.SCHEDULING.value,
-        "result": {"action": "auto_invite", "note": "quyết định mời — background gửi thư mời thật"},
         "messages": ["[scheduler] auto-mời: SCHEDULING → background gửi thư mời (notify_decision invite)"],
     }

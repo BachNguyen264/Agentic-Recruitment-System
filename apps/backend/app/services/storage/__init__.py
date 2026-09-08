@@ -7,8 +7,8 @@ Nghiệp vụ **CHỈ** đi qua `FileStorage` — KHÔNG đọc/ghi path trực 
 - `R2Storage` (prod): Cloudflare R2 qua S3 API (boto3), **bucket PRIVATE**.
 
 **BẢO MẬT (NFR-4):** CV là dữ liệu cá nhân. Bucket KHÔNG public; HR tải qua endpoint STREAM có
-`require_hr` (slice 09). `url()` tồn tại theo hợp đồng interface nhưng KHÔNG dùng để phát CV —
-xem ghi chú ở `FileStorage.url`.
+`require_hr` (slice 09). Hợp đồng CỐ Ý không có `url()`: một hàm phát link trực tiếp (kể cả
+presigned hạn ngắn) là đường vòng qua `require_hr` — cần phát file thì thêm endpoint stream mới.
 """
 
 from __future__ import annotations
@@ -94,15 +94,6 @@ class FileStorage(Protocol):
 
     async def delete(self, key: str) -> None:
         """Xóa object. IDEMPOTENT: key không tồn tại → không lỗi."""
-        ...
-
-    async def url(self, key: str) -> str:
-        """URL truy cập trực tiếp (R2: presigned hạn NGẮN; local: path nội bộ).
-
-        ⚠️ **KHÔNG dùng để phát CV cho người dùng.** CV = dữ liệu cá nhân (NFR-4) → HR tải qua
-        endpoint STREAM có `require_hr` để MỌI lượt tải đều qua kiểm đăng nhập và không rò link.
-        Giữ theo hợp đồng interface cho nhu cầu tương lai (file KHÔNG nhạy cảm).
-        """
         ...
 
 

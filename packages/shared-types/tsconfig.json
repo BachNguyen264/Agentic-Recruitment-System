@@ -1,3 +1,8 @@
+// Gói này KHÔNG build ra dist: `apps/dashboard/next.config.mjs` khai
+// `transpilePackages: ["@ars/shared-types"]` nên Next biên dịch THẲNG file .ts nguồn.
+// Vì vậy `noEmit: true` và KHÔNG có `declaration` (khai `declaration` cạnh `noEmit` là vô nghĩa —
+// noEmit thắng, không .d.ts nào được sinh — chỉ khiến người đọc tưởng có bước build).
+// Script `build` cũng đã bỏ khỏi package.json vì nó chỉ là bản sao của `typecheck`.
 {
   "compilerOptions": {
     "target": "ES2020",
@@ -7,8 +12,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "esModuleInterop": true,
-    "isolatedModules": true,
-    "declaration": true
+    "isolatedModules": true
   },
   "include": ["src"]
 }

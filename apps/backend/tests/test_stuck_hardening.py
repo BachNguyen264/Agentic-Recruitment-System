@@ -489,3 +489,58 @@ async def test_sweep_statuses_exclude_scheduling_and_awaiting() -> None:
     assert ApplicationStatus.REJECTED.value not in stuck_applications._STUCK_STATUSES
     assert ApplicationStatus.INTERVIEW_SCHEDULED.value not in stuck_applications._STUCK_STATUSES
     assert set(stuck_applications._STUCK_STATUSES) == {"SUBMITTED", "PARSING", "RANKING"}
+
+
+# ── (d) VAN giới hạn pipeline đồng thời: trần phải CHỐT MỘT LẦN, không nửa nọ nửa kia ─────────────
+# Bản trước đọc lại `settings.max_concurrent_pipelines` mỗi lượt gọi nhưng chỉ dùng cho nhánh
+# "<= 0", còn Semaphore thì chỉ dựng khi biến toàn cục còn None ⇒ 15→30 KHÔNG có tác dụng (vẫn 15)
+# trong khi 15→0 lại TẮT van ngay. Ba test dưới khoá lại cả ba vế, và mỗi test tự đặt van về "chưa
+# chốt" trước khi chạy vì đây là trạng thái TOÀN CỤC của tiến trình.
+
+
+def _reset_valve(monkeypatch) -> None:  # noqa: ANN001
+    from app.tasks import background
+
+    monkeypatch.setattr(background, "_PIPELINE_SEMAPHORE", None)
+    monkeypatch.setattr(background, "_PIPELINE_LIMIT", None)
+
+
+async def test_pipeline_valve_freezes_limit_at_first_use(monkeypatch) -> None:
+    """Chốt trần ở lượt gọi ĐẦU rồi giữ nguyên — đổi settings sau đó không lén đổi van."""
+    from app.core.config import settings
+    from app.tasks import background
+
+    _reset_valve(monkeypatch)
+    monkeypatch.setattr(settings, "max_concurrent_pipelines", 3)
+    first = background._pipeline_semaphore()
+    assert first is not None and first._value == 3
+
+    monkeypatch.setattr(settings, "max_concurrent_pipelines", 30)
+    assert background._pipeline_semaphore() is first, "van bị dựng lại → đồng thời vọt lên cũ+mới"
+    assert first._value == 3
+
+
+async def test_pipeline_valve_off_stays_off(monkeypatch) -> None:
+    """`<= 0` lúc chốt = TẮT hẳn cho cả vòng đời tiến trình (đối xứng với test trên)."""
+    from app.core.config import settings
+    from app.tasks import background
+
+    _reset_valve(monkeypatch)
+    monkeypatch.setattr(settings, "max_concurrent_pipelines", 0)
+    assert background._pipeline_semaphore() is None
+
+    monkeypatch.setattr(settings, "max_concurrent_pipelines", 10)
+    assert background._pipeline_semaphore() is None, "van bật lại giữa chừng — trần không còn nhất quán"
+
+
+async def test_pipeline_gauges_report_the_limit_actually_in_force(monkeypatch) -> None:
+    """Endpoint chẩn đoán phải báo trần của VAN, không phải con số trong `settings`."""
+    from app.core.config import settings
+    from app.tasks import background
+
+    _reset_valve(monkeypatch)
+    monkeypatch.setattr(settings, "max_concurrent_pipelines", 4)
+    background._pipeline_semaphore()
+
+    monkeypatch.setattr(settings, "max_concurrent_pipelines", 40)
+    assert background.pipeline_gauges()["limit"] == 4

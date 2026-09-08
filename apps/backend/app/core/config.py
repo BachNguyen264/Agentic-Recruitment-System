@@ -292,7 +292,6 @@ class Settings(BaseSettings):
     # kết nối chết → `psycopg.errors.AdminShutdown`. Kèm `check` khi mượn (xem checkpointer.py) để
     # kết nối chết còn sót được phát hiện + tái tạo (đánh thức Neon ~1s) thay vì ném lỗi.
     checkpointer_pool_max_idle_seconds: float = 120.0
-    redis_url: str = "redis://localhost:6379"
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str | None = None
     # Một collection dùng chung JD + CV (phân biệt bằng payload "type") — plan 02a.
@@ -335,11 +334,6 @@ class Settings(BaseSettings):
     # Payload Resend thật chỉ cỡ 1–2KB; 64KB đã rộng rãi gấp hàng chục lần mà vẫn nhỏ hơn nhiều so
     # với 12MB.
     resend_webhook_max_bytes: int = 65_536
-
-    # ── Langfuse (observability — phase sau) ─────────────────────────
-    langfuse_public_key: str | None = None
-    langfuse_secret_key: str | None = None
-    langfuse_base_url: str | None = None
 
     @property
     def cors_allow_origins(self) -> list[str]:

@@ -36,7 +36,7 @@ const strokeProps = {
   strokeLinejoin: "round" as const,
 };
 
-// 5 mục — "Thống kê" của bản thiết kế tạm bỏ (hệ thống chưa có analytics thật; không dựng màn giả).
+// 6 mục — "Thống kê" của bản thiết kế tạm bỏ (hệ thống chưa có analytics thật; không dựng màn giả).
 const NAV: NavItem[] = [
   {
     href: "/",
@@ -95,6 +95,21 @@ const NAV: NavItem[] = [
         <path d="M14 2v4a2 2 0 0 0 2 2h4" />
         <circle cx="16" cy="17" r="3" />
         <path d="m21 22-1.5-1.5" />
+      </svg>
+    ),
+  },
+  // Khu quản trị (cấu hình + nhật ký kiểm toán + hạ tầng) — xếp CUỐI vì là việc hiếm, không phải
+  // việc hằng ngày. Nó KHÔNG nằm trong `PWA_NAV_HREFS` nên bản đã cài tự động ẩn + chặn cả URL
+  // trực tiếp (allow-list ở lib/pwa.ts, an toàn theo hướng đóng — route mới mặc định bị ẩn).
+  {
+    href: "/system",
+    label: "Cấu hình",
+    icon: (
+      <svg viewBox="0 0 24 24" className={ICON} {...strokeProps}>
+        <path d="M20 7h-9" />
+        <path d="M14 17H5" />
+        <circle cx="17" cy="17" r="3" />
+        <circle cx="7" cy="7" r="3" />
       </svg>
     ),
   },
@@ -241,7 +256,8 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
   if (!me) return null;
 
   // PWA-1 (PRD §14): ở chế độ đã cài chỉ còn Ứng viên + Hàng đợi review. Bảng điều hành, Tin tuyển
-  // dụng, Kiểm tra CV đều là ❌ ở cột "Điện thoại". Mở cùng địa chỉ bằng TRÌNH DUYỆT vẫn đủ 5 mục.
+  // dụng, Kiểm tra CV, Cấu hình đều là ❌ ở cột "Điện thoại". Mở cùng địa chỉ bằng TRÌNH DUYỆT vẫn
+  // đủ 6 mục.
   const navItems = isPwa ? NAV.filter((item) => PWA_NAV_HREFS.includes(item.href)) : NAV;
 
   return (
@@ -258,7 +274,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
 
       <aside
         // `invisible` khi đóng (mobile) là BẮT BUỘC, không chỉ trang trí: `-translate-x-full` chỉ
-        // đẩy sidebar ra ngoài màn hình nhưng 6 link BÊN TRONG vẫn nhận focus bàn phím → người dùng
+        // đẩy sidebar ra ngoài màn hình nhưng 7 link BÊN TRONG vẫn nhận focus bàn phím → người dùng
         // Tab lạc vào vùng khuất. visibility:hidden gỡ chúng khỏi thứ tự tab. `lg:visible` khôi phục
         // trên desktop (sidebar cố định luôn hiện).
         className={`fixed inset-y-0 left-0 z-40 flex w-[236px] flex-none flex-col border-r-2 border-divider bg-canvas transition-transform duration-200 lg:static lg:visible lg:translate-x-0 ${

@@ -101,9 +101,10 @@ pipeline đa tác tử bất đồng bộ.
 - **Trên điện thoại:** web dạng PWA (cài lên màn hình chính) — HR xem CV + duyệt human_review nhanh.
   Một app web duy nhất, responsive; KHÔNG có codebase mobile riêng.
 - **Backend (FastAPI + LangGraph):** pipeline đa tác tử; xử lý bất đồng bộ; suspend/resume cho Screener.
-- **Hạ tầng managed:** Neon (Postgres), Upstash Redis (cache/short-term memory), Qdrant Cloud (embedding JD–CV).
+- **Hạ tầng managed:** Neon (Postgres), Qdrant Cloud (embedding JD–CV).
 - **Tích hợp:** Email (gửi câu hỏi/thư mời/từ chối), tùy chọn Zalo OA; Google Calendar (đặt lịch).
-- **Observability:** Langfuse (giám sát chi phí/độ trễ — phase sau).
+- **Observability:** ĐÃ BỎ khỏi phạm vi — không có vai Super Admin nên dashboard ops không có khán giả.
+  Giữ lại như hướng mở rộng trong báo cáo.
 
 ---
 
@@ -423,7 +424,7 @@ SUBMITTED
 SCREENING
   → AWAITING_SCREENER  (suspend)
         trả lời    → (resume) → GATE MỜI
-        +24h       → REMINDED → (vẫn AWAITING)
+        +24h       → gửi thư nhắc (ghi mốc reminded_at) → (vẫn AWAITING_SCREENER)
         timeout    → PENDING_REVIEW[no_response]
   GATE MỜI:
         ổn + auto-invite ON → SCHEDULING
@@ -486,7 +487,8 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
   (`/screening/{token}`, `/booking/{token}`). Bảo vệ ở tầng HTTP cache của trình duyệt cho `/api/*`
   (`Cache-Control: no-store`) CHƯA có — còn để ngỏ.
 - NFR-5 (chống lạm dụng): chống prompt injection từ nội dung CV / câu trả lời ứng viên (phase sau).
-- NFR-6 (observability): giám sát chi phí token, độ trễ, tỉ lệ lỗi (Langfuse — phase sau).
+- NFR-6 (observability): giám sát chi phí token, độ trễ, tỉ lệ lỗi — ĐÃ BỎ khỏi phạm vi (xem §6).
+  Thay thế một phần: `audit_log` ghi mọi bước agent + quyết định HR, đọc được ở màn Cấu hình hệ thống.
 - NFR-7 (chi phí): ưu tiên dịch vụ managed free-tier; lường trần free-tier khi test tải.
 - NFR-8 (cấu hình): ngưỡng confidence, mốc nhắc/timeout, bộ câu hỏi Screener, hai gate — đều cấu hình được.
 

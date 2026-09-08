@@ -284,14 +284,12 @@ def _stub(state: RecruitmentState) -> dict:
             "confidence": 0.5,
             "uncertainty_flags": ["weak_match"],
             "escalation_reason": "Điểm sát ngưỡng / khớp yếu (demo ép nhánh review).",
-            "scratchpad": {**state.get("scratchpad", {}), "score": 0.5},
             "messages": ["[ranker] stub: confidence=0.5, flags=[weak_match] -> BẤT ĐỊNH"],
         }
     return {
         "status": ApplicationStatus.RANKING.value,
         "confidence": 1.0,
         "uncertainty_flags": [],
-        "scratchpad": {**state.get("scratchpad", {}), "score": 0.9},
         "messages": ["[ranker] stub: confidence=1.0 -> đủ tự tin (nhánh tự động)"],
     }
 
@@ -352,7 +350,6 @@ async def ranker_node(state: RecruitmentState) -> dict:
         "require_human_review": result["require_human_review"],
         "scratchpad": {
             **state.get("scratchpad", {}),
-            "score": result["score"],
             "rank_summary": result["summary"],
         },
         "messages": [msg],

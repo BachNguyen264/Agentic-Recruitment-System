@@ -35,8 +35,12 @@ export function toBreakdown(app: ApplicationDetail): ScoreBreakdownData {
 export type StatusBucket = "processing" | "review" | "passed" | "rejected";
 
 // Mọi trạng thái không phải PENDING_REVIEW / INTERVIEW_SCHEDULED / REJECTED đều là "đang xử lý"
-// (gồm cả REMINDED — sub-state của AWAITING_SCREENER).
-export function statusBucket(status: ApplicationStatus): StatusBucket {
+// (gồm cả giai đoạn đã gửi nhắc — vẫn là AWAITING_SCREENER).
+// Bốn hàm/hằng dưới đây KHÔNG export: chúng chỉ phục vụ các API công khai của chính file này
+// (`applicationStatusLabel` / `applicationStatusTone` / `STATUSES_IN_BUCKET` / `bucketTotal`).
+// Hạ xuống nội bộ để `noUnusedLocals` bắt được ngay nếu sau này chúng thật sự chết — export ra
+// ngoài là tự tắt cái lưới đó.
+function statusBucket(status: ApplicationStatus): StatusBucket {
   if (status === "PENDING_REVIEW") return "review";
   if (status === "INTERVIEW_SCHEDULED") return "passed";
   if (status === "REJECTED") return "rejected";
@@ -49,7 +53,6 @@ const STATUS_LABEL: Record<ApplicationStatus, string> = {
   RANKING: "Đang chấm điểm",
   SCREENING: "Sàng lọc",
   AWAITING_SCREENER: "Chờ trả lời sàng lọc",
-  REMINDED: "Đã nhắc",
   SCHEDULING: "Đang đặt lịch",
   // SCH-2: thư mời + link ĐÃ gửi — quả bóng đang ở sân ứng viên, HR không phải làm gì.
   AWAITING_BOOKING: "Chờ ứng viên chọn lịch",
@@ -58,7 +61,7 @@ const STATUS_LABEL: Record<ApplicationStatus, string> = {
   REJECTED: "Đã từ chối",
 };
 
-export function statusLabel(status: ApplicationStatus): string {
+function statusLabel(status: ApplicationStatus): string {
   return STATUS_LABEL[status] ?? status;
 }
 
@@ -95,7 +98,7 @@ const BUCKET_TONE = {
   rejected: "danger",
 } as const;
 
-export function statusTone(status: ApplicationStatus): "accent" | "warn" | "ok" | "danger" {
+function statusTone(status: ApplicationStatus): "accent" | "warn" | "ok" | "danger" {
   return BUCKET_TONE[statusBucket(status)];
 }
 
@@ -109,13 +112,12 @@ export const BUCKET_FILTERS: { key: StatusBucket | "all"; label: string }[] = [
 ];
 
 // Mọi trạng thái PRD §13, theo đúng thứ tự pipeline. NGUỒN DUY NHẤT cho hai suy dẫn bên dưới.
-export const ALL_STATUSES: readonly ApplicationStatus[] = [
+const ALL_STATUSES: readonly ApplicationStatus[] = [
   "SUBMITTED",
   "PARSING",
   "RANKING",
   "SCREENING",
   "AWAITING_SCREENER",
-  "REMINDED",
   "SCHEDULING",
   "AWAITING_BOOKING",
   "PENDING_REVIEW",

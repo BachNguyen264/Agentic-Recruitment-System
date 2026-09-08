@@ -11,6 +11,7 @@ import type {
   PublicJob,
   PublicSubmitResult,
   ReviewDecision,
+  ReviewRequest,
   RubricSuggestResult,
   ScreenerForm,
   ScreenerSubmitResult,
@@ -74,11 +75,13 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
   return sendJson<T>("POST", path, body);
 }
 
-export async function putJson<T>(path: string, body: unknown): Promise<T> {
+// Nội bộ file (KHÔNG export): chỉ `updateJob`/`setGate` bên dưới dùng. `lib/admin.ts` CỐ Ý không
+// dùng chúng (nó cần đọc thân lỗi 422 của backend — xem chú thích ở đó).
+async function putJson<T>(path: string, body: unknown): Promise<T> {
   return sendJson<T>("PUT", path, body);
 }
 
-export async function patchJson<T>(path: string, body: unknown): Promise<T> {
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
   return sendJson<T>("PATCH", path, body);
 }
 
@@ -132,18 +135,23 @@ export async function getMe(): Promise<HrUser | null> {
 // rồi mới lọc PENDING_REVIEW phía client, nên trên prod (206 hồ sơ) cửa sổ đó rơi trọn vào mẻ probe
 // và hàng đợi giấu mất 86 ca đã chấm điểm sạch. Tổng số KHÔNG lấy từ đây mà từ `getPipeline().counts`
 // (GROUP BY toàn bảng) — một trang không bao giờ biết được tổng.
-export type ApplicationQuery = {
+type ApplicationQuery = {
   status?: readonly ApplicationStatus[];
   limit?: number;
   offset?: number;
+  // Lọc theo applicant_email (khớp CHUỖI CON, không phân biệt hoa thường) — chạy Ở SERVER, vì một
+  // TRANG 50 dòng không lọc nổi trên tập 200 hồ sơ. Chuỗi rỗng = không gửi tham số (không lọc).
+  q?: string;
 };
 
-export const getApplications = (q: ApplicationQuery = {}) => {
+export const getApplications = (query: ApplicationQuery = {}) => {
   const p = new URLSearchParams();
   // Lặp `status=` nhiều lần (FastAPI đọc thành list) — KHÔNG phải chuỗi ngăn bằng dấu phẩy.
-  for (const s of q.status ?? []) p.append("status", s);
-  if (q.limit != null) p.set("limit", String(q.limit));
-  if (q.offset != null) p.set("offset", String(q.offset));
+  for (const s of query.status ?? []) p.append("status", s);
+  if (query.limit != null) p.set("limit", String(query.limit));
+  if (query.offset != null) p.set("offset", String(query.offset));
+  const term = query.q?.trim();
+  if (term) p.set("q", term);
   const qs = p.toString();
   return getJson<ApplicationListItem[]>(`/api/applications${qs ? `?${qs}` : ""}`);
 };
@@ -159,8 +167,24 @@ export const getApplication = (id: number) =>
 
 // ── Quản lý JD (slice 05) ──
 // JD-4: mặc định (archived=false) ẨN JD đã lưu trữ; archived=true → chỉ JD ARCHIVED (màn "Đã lưu trữ").
-export const getJobs = (archived = false) =>
-  getJson<JobPosting[]>(`/api/jobs?archived=${archived}`);
+//
+// `limit`/`offset`: cùng lớp lỗi mà AUDIT-1 đã vá cho `list_applications` — backend trước đây ghim
+// cứng `limit=100` và route không nhận tham số nào, nên JD thứ 101 trở đi KHÔNG có nút nào chạm
+// tới. Backend chặn `limit ≤ 200` (router HR không nằm trong xô rate-limit nào). Vẫn trả MẢNG
+// THUẦN (quy ước sẵn có của repo: danh sách = mảng, tổng số lấy từ endpoint ĐẾM riêng bên dưới).
+export type JobQuery = { limit?: number; offset?: number };
+
+export const getJobs = (archived = false, q: JobQuery = {}) => {
+  const p = new URLSearchParams({ archived: String(archived) });
+  if (q.limit != null) p.set("limit", String(q.limit));
+  if (q.offset != null) p.set("offset", String(q.offset));
+  return getJson<JobPosting[]>(`/api/jobs?${p.toString()}`);
+};
+
+// Tổng số JD theo rổ (MỘT câu GROUP BY toàn bảng). Tách khỏi danh sách vì một TRANG không bao giờ
+// biết được tổng — chip "Đang hoạt động (100)" trước đây là ĐỘ DÀI TRANG, không phải số JD đang mở.
+export const getJobCounts = () =>
+  getJson<{ active: number; archived: number }>("/api/jobs/counts");
 
 // JD đơn (dùng cho ngữ cảnh chấm điểm ở trang chi tiết + nạp form sửa).
 export const getJob = (id: number) => getJson<JobPosting>(`/api/jobs/${id}`);
@@ -218,8 +242,13 @@ export async function suggestRubric(id: number): Promise<RubricSuggestResult> {
 }
 
 // MUTATION human_review (PRD §11): HR duyệt/từ chối một ca PENDING_REVIEW.
+// `satisfies ReviewRequest`: tham số `body` của `postJson` là `unknown` nên nếu không gắn kiểu,
+// object gửi đi KHÔNG được kiểm gì cả — đổi tên trường ở backend sẽ lọt tới tận runtime.
 export const submitReview = (id: number, decision: ReviewDecision, note: string | null) =>
-  postJson<ApplicationDetail>(`/api/applications/${id}/review`, { decision, note });
+  postJson<ApplicationDetail>(`/api/applications/${id}/review`, {
+    decision,
+    note,
+  } satisfies ReviewRequest);
 
 // Tải CV gốc (slice 06). Endpoint STREAM trong khu HR (require_hr) — KHÔNG dùng public URL.
 // Tải bằng fetch (không phải thẻ <a>) để cookie đi kèm nhất quán như mọi call khác, kể cả khi
@@ -262,7 +291,18 @@ async function getPublicJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export const getOpenJobs = () => getPublicJson<PublicJob[]>("/api/public/jobs");
+// Cổng ứng tuyển công khai. `limit`/`offset` như bên HR nhưng TRẦN CHẶT HƠN (backend chặn ≤ 100):
+// đây là endpoint người lạ gọi được, mỗi lượt là một câu SQL — trần rộng ở đây là một cái cần
+// khuếch đại tải. Trước đây route cắt cứng 100 JD và KHÔNG có dấu hiệu nào cho ứng viên biết danh
+// sách đã bị cắt, nên vị trí cũ hơn không bao giờ hiện ra.
+export const getOpenJobs = (q: JobQuery = {}) => {
+  const p = new URLSearchParams();
+  if (q.limit != null) p.set("limit", String(q.limit));
+  if (q.offset != null) p.set("offset", String(q.offset));
+  const qs = p.toString();
+  return getPublicJson<PublicJob[]>(`/api/public/jobs${qs ? `?${qs}` : ""}`);
+};
+
 export const getPublicJob = (id: number) => getPublicJson<PublicJob>(`/api/public/jobs/${id}`);
 
 // Nộp CV công khai (multipart: job_id + email + file). Lỗi validate server → ném message rõ.

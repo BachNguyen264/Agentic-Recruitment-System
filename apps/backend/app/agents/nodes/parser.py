@@ -140,7 +140,6 @@ async def parser_node(state: RecruitmentState) -> dict:
         # Stub (scaffold) — giữ nguyên hành vi cũ để không phá run-demo/test_graph.
         return {
             "status": ApplicationStatus.PARSING.value,
-            "scratchpad": {**state.get("scratchpad", {}), "parsed": True},
             "confidence": 1.0,
             "uncertainty_flags": [],
             "messages": ["[parser] stub pass-through (ENABLE_LLM=false hoặc không có file CV)"],
@@ -172,6 +171,5 @@ async def parser_node(state: RecruitmentState) -> dict:
         "confidence": result["confidence"],
         "uncertainty_flags": result["uncertainty_flags"],
         "escalation_reason": result["escalation_reason"],
-        "scratchpad": {**state.get("scratchpad", {}), "parsed": not failed},
         "messages": [msg],
     }

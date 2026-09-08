@@ -1,24 +1,23 @@
-"""Routes JobPosting (JD) — tạo (kèm embed→Qdrant), đọc, và search-test verify (slice 02a)."""
+"""Routes JobPosting (JD) — tạo (kèm embed→Qdrant), đọc, sửa, đóng/mở, gate, gợi ý rubric."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import DBSession
 from app.core.config import settings
 from app.schemas.job_posting import (
     GateConfigUpdate,
+    JobCounts,
     JobPostingCreate,
     JobPostingCreateResult,
     JobPostingRead,
     JobStatusUpdate,
-    SearchTestHit,
-    SearchTestRequest,
-    SearchTestResponse,
 )
 from app.schemas.rubric_suggest import RubricSuggestResponse, SuggestedCriterion
-from app.services import job_service, qdrant_service, rubric_suggester
-from app.services.embedding_service import EmbeddingError, embed_text
+from app.services import job_service, rubric_suggester
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -32,10 +31,36 @@ async def create_job(payload: JobPostingCreate, session: DBSession) -> JobPostin
 
 
 @router.get("", response_model=list[JobPostingRead])
-async def list_jobs(session: DBSession, archived: bool = False) -> list[JobPostingRead]:
-    """`?archived=false` (mặc định) → JD hoạt động (ẨN đã-lưu-trữ); `?archived=true` → chỉ JD ARCHIVED (JD-4)."""
-    rows = await job_service.list_jobs(session, archived=archived)
+async def list_jobs(
+    session: DBSession,
+    archived: bool = False,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[JobPostingRead]:
+    """`?archived=false` (mặc định) → JD hoạt động (ẨN đã-lưu-trữ); `?archived=true` → chỉ JD ARCHIVED (JD-4).
+
+    MỘT TRANG (mới nhất trước) — tổng số ở `GET /api/jobs/counts`. Vẫn trả **mảng thuần** (không bọc
+    envelope) theo đúng quy ước sẵn có của repo (`GET /api/applications`), nên client cũ không truyền
+    gì vẫn nhận đúng hành vi cũ.
+
+    `le=200` KHÔNG phải trang trí: router HR không nằm trong bất kỳ xô rate-limit nào
+    (`core/hardening.py` chỉ bọc login / ghi công khai / health sâu), nên `?limit=100000` sẽ tuần tự
+    hoá cả bảng trong MỘT request — cùng trần đã đặt cho `GET /api/applications`.
+    """
+    rows = await job_service.list_jobs(session, archived=archived, limit=limit, offset=offset)
     return [JobPostingRead.model_validate(r) for r in rows]
+
+
+@router.get("/counts", response_model=JobCounts)
+async def count_jobs(session: DBSession) -> JobCounts:
+    """Tổng số JD theo nhóm (active/archived) — MỘT câu `GROUP BY`, payload cỡ CỐ ĐỊNH.
+
+    ⚠ PHẢI khai TRƯỚC `GET /{job_id}`: FastAPI khớp route theo THỨ TỰ khai báo, nên nếu đứng sau thì
+    "counts" rơi vào tay `get_job` và chết **422** ("counts" không parse ra int) — dashboard mất chip
+    đếm trong khi backend vẫn báo khoẻ. Đúng cái bẫy đã vấp ở `GET /api/applications/pipeline`; có
+    test gọi THẬT endpoint này để canh.
+    """
+    return JobCounts(**await job_service.count_jobs(session))
 
 
 @router.get("/{job_id}", response_model=JobPostingRead)
@@ -173,26 +198,3 @@ async def suggest_rubric(job_id: int, session: DBSession) -> RubricSuggestRespon
         remaining=max(0, max_retries - used),
         model_used=rubric_suggester.model_label(),
     )
-
-
-@router.post("/search-test", response_model=SearchTestResponse, summary="Verify tra cứu tương đồng")
-async def search_test(payload: SearchTestRequest) -> SearchTestResponse:
-    """Embed query → search Qdrant (type='jd') → JD khớp + score. Công cụ verify slice 02a."""
-    try:
-        vector = await embed_text(payload.query)
-    except EmbeddingError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    try:
-        points = await qdrant_service.search(vector, top_k=payload.top_k)
-    except Exception as exc:  # noqa: BLE001 — Qdrant down/timeout → 502 message rõ (không 500 chung)
-        raise HTTPException(status_code=502, detail=f"Lỗi truy vấn Qdrant: {exc}") from exc
-    hits = [
-        SearchTestHit(
-            job_id=int(p.payload["job_id"]),
-            title=str(p.payload.get("title", "")),
-            score=float(p.score),
-        )
-        for p in points
-        if p.payload and "job_id" in p.payload
-    ]
-    return SearchTestResponse(query=payload.query, hits=hits)

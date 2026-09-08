@@ -111,7 +111,13 @@ function ReviewQueue() {
   // Query hỏng bị `filter(Boolean)` NUỐT IM LẶNG: thẻ đơn giản không hiện, không báo gì.
   const failedCount = detailQueries.filter((q) => q.isError).length;
   const loadingDetails = detailQueries.some((q) => q.isLoading);
-  const hasMore = totalPending != null && offset + pendingIds.length < totalPending;
+  // ĐƯỜNG LÙI khi `/pipeline` hỏng (`totalPending == null`): không có nhánh này thì nút "Trang sau"
+  // biến mất và hàng đợi duyệt bị nhốt ở 20 ca đầu — trong khi những ca còn lại vẫn đang chờ người.
+  // Một trang đầy ĐÚNG bằng PAGE_SIZE là dấu hiệu đủ tin cậy rằng còn trang nữa.
+  const hasMore =
+    totalPending != null
+      ? offset + pendingIds.length < totalPending
+      : pendingIds.length === PAGE_SIZE;
 
   // Tên vị trí cho từng ca (ReviewCard hiện "email · vị trí" thay cho "JD #id").
   const { data: jobs } = useQuery<JobPosting[]>({

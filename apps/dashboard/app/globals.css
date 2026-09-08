@@ -35,13 +35,13 @@
   .eyebrow {
     @apply text-xs font-semibold uppercase tracking-[0.14em] text-accent;
   }
-  /* Panel phẳng viền 2px — ngôn ngữ chủ đạo của thiết kế (không dùng đổ bóng). */
-  .panel {
-    @apply rounded-xl border-2 border-divider bg-surface;
-  }
-  .panel-plain {
-    @apply rounded-xl border-2 border-divider bg-canvas;
-  }
+  /* ĐÃ XOÁ `.panel` / `.panel-plain` (`rounded-xl border-2 border-divider bg-surface|bg-canvas`).
+     Chúng chưa từng được gắn vào một className nào, và Tailwind chỉ phát CSS cho class XUẤT HIỆN
+     trong `content` — nghĩa là hai lớp đó không hề tồn tại trong bundle, chỉ tồn tại trong file này.
+     Không đổi hướng sang "dùng lại class ở 24 chỗ" vì 4 trong số đó nằm ở `app/(hr)/system/**`
+     (vùng đang được sửa song song, ngoài tầm với của lượt này): thay 20/24 chỗ sẽ tạo đúng thứ
+     repo này liên tục phải vá — MỘT token thiết kế có hai định nghĩa song song, đổi một bên là
+     bên kia lệch trong im lặng. Muốn gom lại thì gom TRỌN, trong một lượt chạm được cả hai vùng. */
 }
 
 /* Thanh cuộn mảnh cho vùng nội dung dài (khớp thiết kế). */

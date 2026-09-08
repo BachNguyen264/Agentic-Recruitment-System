@@ -1,11 +1,11 @@
-"""Phase 1 — Kiểm tra kết nối 3 dịch vụ managed (Neon · Upstash · Qdrant).
+"""Phase 1 — Kiểm tra kết nối 2 dịch vụ managed (Neon · Qdrant).
 
 Script ĐỘC LẬP (chưa cần backend). Đọc secret từ `.env` ở gốc repo, KHÔNG in secret.
 
 Chạy:
     make check-env
 hoặc trực tiếp:
-    uv run --no-project --with asyncpg --with "redis>=5" --with qdrant-client \
+    uv run --no-project --with asyncpg --with qdrant-client \
         --with python-dotenv scripts/check_connections.py
 """
 
@@ -61,23 +61,6 @@ async def check_postgres() -> tuple[bool, str]:
         return False, f"{type(exc).__name__}: {exc}"
 
 
-async def check_redis() -> tuple[bool, str]:
-    url = os.environ.get("REDIS_URL", "")
-    if not url:
-        return False, "REDIS_URL trống"
-    try:
-        import redis.asyncio as redis
-    except ImportError:
-        return False, "thiếu redis"
-    try:
-        client = redis.from_url(url, socket_timeout=20, socket_connect_timeout=20)
-        pong = await client.ping()
-        await client.aclose()
-        return bool(pong), "PONG" if pong else "không PONG"
-    except Exception as exc:  # noqa: BLE001
-        return False, f"{type(exc).__name__}: {exc}"
-
-
 def check_qdrant() -> tuple[bool, str]:
     url = os.environ.get("QDRANT_URL", "")
     key = os.environ.get("QDRANT_API_KEY", "")
@@ -106,7 +89,6 @@ async def main() -> int:
 
     results = [
         ("Neon Postgres", *(await check_postgres())),
-        ("Upstash Redis", *(await check_redis())),
         ("Qdrant Cloud", *check_qdrant()),
     ]
 
