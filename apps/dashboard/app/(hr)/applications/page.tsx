@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { ApplicationListItem, JobPosting } from "@ars/shared-types";
-import { PageHeader, Tag } from "@/components/ui";
-import { getApplications, getJobs, getPipeline } from "@/lib/api";
+import type { ApplicationListItem } from "@ars/shared-types";
+import { btn, inputClass, PageHeader, Tag } from "@/components/ui";
+import { getApplications, getPipeline } from "@/lib/api";
 import {
   BUCKET_FILTERS,
   bucketTotal,
@@ -15,6 +15,8 @@ import {
   isEmailFlag,
   type StatusBucket,
 } from "@/lib/applications";
+import { useJobTitles } from "@/lib/useJobTitles";
+import { formatVnDateTime } from "@/lib/datetime";
 
 // Một trang. 50 dòng là bảng đọc được mà không cần ảo hoá (mỗi dòng nay chỉ ~800 B vì danh sách
 // không còn chở parsed_data/score_breakdown — xem `response_model_exclude` ở routes/applications.py).
@@ -55,6 +57,15 @@ function StatusCell({ a }: { a: ApplicationListItem }) {
 export default function ApplicationsPage() {
   const [bucket, setBucket] = useState<StatusBucket | "all">("all");
   const [offset, setOffset] = useState(0);
+  // `search` = thứ đang gõ; `term` = thứ ĐÃ gửi đi. Tách ra để mỗi phím gõ không thành một request:
+  // router HR không nằm trong xô rate-limit nào nên gõ 20 ký tự = 20 câu SQL toàn bảng.
+  const [search, setSearch] = useState("");
+  const [term, setTerm] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setTerm(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+  const searching = term.length > 0;
 
   // Đổi rổ = xem một TẬP khác, nên phải về trang 1. Không reset thì bấm "Từ chối" lúc đang ở trang 3
   // sẽ ra bảng rỗng dù có hồ sơ bị từ chối — trông hệt như "không có dữ liệu".
@@ -67,30 +78,32 @@ export default function ApplicationsPage() {
   // "Từ chối (0)" không phân biệt được "hệ thống chưa từ chối ai" với "mọi ca từ chối đều nằm ngoài
   // cửa sổ 100 dòng". Hai câu trả lời trái ngược nhau, cùng một giao diện.
   const { data, isLoading, isError, error } = useQuery<ApplicationListItem[]>({
-    queryKey: ["applications", "list", bucket, offset],
+    queryKey: ["applications", "list", bucket, term, offset],
     queryFn: () =>
-      getApplications({ status: STATUSES_IN_BUCKET[bucket], limit: PAGE_SIZE, offset }),
+      getApplications({ status: STATUSES_IN_BUCKET[bucket], q: term, limit: PAGE_SIZE, offset }),
     refetchInterval: 15_000, // pipeline chạy nền — cập nhật khi CV chuyển trạng thái.
     placeholderData: (prev) => prev,
   });
 
   // Số trên chip + tổng lấy từ `counts` (GROUP BY TOÀN BẢNG), không đếm trong trang đang xem.
-  const { data: pipeline } = useQuery({
+  const { data: pipeline, isError: pipelineError } = useQuery({
     queryKey: ["pipeline"],
     queryFn: getPipeline,
     refetchInterval: 15_000,
   });
-  // Tên vị trí cho từng hồ sơ (thiết kế hiện cột "Vị trí" thay cho "JD #id").
-  const { data: jobs } = useQuery<JobPosting[]>({
-    queryKey: ["jobs", "active"],
-    queryFn: () => getJobs(),
-  });
-  const jobTitle = new Map((jobs ?? []).map((j) => [j.id, j.title]));
+  // Tên vị trí cho từng hồ sơ. Dùng hook chung vì nó nạp CẢ JD đã lưu trữ — hồ sơ cũ gắn vào JD đã
+  // lưu trữ mà chỉ hỏi rổ active thì hiện "JD #id" vĩnh viễn, đúng lúc cần đọc tên nhất.
+  const jobTitle = useJobTitles();
 
   // `data` ĐÃ được server lọc theo rổ → không lọc lại ở client (lọc hai lần chính là bug cũ).
   const filtered = data ?? [];
-  const total = bucketTotal(pipeline?.counts, bucket);
-  const hasMore = total != null && offset + filtered.length < total;
+  const total = searching ? null : bucketTotal(pipeline?.counts, bucket);
+  // ĐƯỜNG LÙI khi không biết tổng — `/pipeline` hỏng, hoặc đang tìm kiếm (counts đếm toàn bảng nên
+  // không nói gì về tập kết quả tìm được). Không có nhánh này thì `total == null` làm nút "Trang
+  // sau" biến mất HOÀN TOÀN: người dùng bị nhốt ở trang 1 mà màn hình trông như đã hết dữ liệu.
+  // Một trang đầy ĐÚNG bằng PAGE_SIZE là dấu hiệu đủ tin cậy rằng còn trang nữa.
+  const hasMore =
+    total != null ? offset + filtered.length < total : filtered.length === PAGE_SIZE;
 
   return (
     <div className="mx-auto max-w-[1120px] px-4 pb-8 pt-6 sm:px-8">
@@ -125,6 +138,37 @@ export default function ApplicationsPage() {
           );
         })}
       </div>
+
+      {/* U6: tìm ở SERVER (`?q=`), không lọc trang đang xem — ứng viên cần tìm hay nằm ở trang 3. */}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <label htmlFor="app-search" className="text-[13px] font-semibold text-ink/70">
+          Tìm theo email
+        </label>
+        <input
+          id="app-search"
+          type="search"
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setOffset(0);
+          }}
+          placeholder="vd: an.nguyen@"
+          className={`${inputClass} max-w-[280px]`}
+        />
+        {searching && (
+          <button type="button" onClick={() => { setSearch(""); setOffset(0); }} className={btn("ghost")}>
+            Xoá tìm kiếm
+          </button>
+        )}
+      </div>
+
+      {/* `/pipeline` hỏng thì mọi con số trên chip và dòng "đang hiện X trong Y" đều không có. Nói
+          thẳng ra, thay vì để người dùng tự đoán vì sao các số biến thành "…". */}
+      {pipelineError && (
+        <p role="status" className="mt-3 text-[13px] text-amber-700">
+          Chưa đọc được tổng số hồ sơ — các con số trên chip tạm ẩn. Danh sách bên dưới vẫn đúng.
+        </p>
+      )}
 
       {isError && (
         <p
@@ -166,11 +210,11 @@ export default function ApplicationsPage() {
               <table className="w-full min-w-[640px] border-collapse text-sm">
                 <thead>
                   <tr>
-                    {["Ứng viên", "Vị trí", "Điểm", "Trạng thái"].map((h, i) => (
+                    {["Ứng viên", "Vị trí", "Ngày nộp", "Điểm", "Trạng thái"].map((h, i) => (
                       <th
                         key={h}
                         className={`border-b-2 border-divider px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink/65 ${
-                          i === 2 ? "text-right" : "text-left"
+                          i === 3 ? "text-right" : "text-left"
                         }`}
                       >
                         {h}
@@ -198,6 +242,9 @@ export default function ApplicationsPage() {
                       </td>
                       <td className="px-3 py-2 text-ink/75">
                         {a.job_id ? (jobTitle.get(a.job_id) ?? `JD #${a.job_id}`) : "—"}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-[13px] text-ink/65">
+                        {formatVnDateTime(a.created_at)}
                       </td>
                       <td className="px-3 py-2 text-right font-heading text-base font-bold">
                         {a.score != null ? a.score : "—"}

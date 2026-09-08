@@ -185,7 +185,10 @@ export default function DashboardPage() {
       return MACHINE_BUSY.some((s) => (counts[s] ?? 0) > 0) ? REFRESH_RUNNING_MS : REFRESH_IDLE_MS;
     },
   });
-  const { data: jobs } = useQuery<JobPosting[]>({ queryKey: ["jobs", "active"], queryFn: () => getJobs() });
+  const { data: jobs, isError: jobsError } = useQuery<JobPosting[]>({
+    queryKey: ["jobs", "active"],
+    queryFn: () => getJobs(),
+  });
 
   const counts = snapshot?.counts;
   const countOf = (statuses: ApplicationStatus[]) =>
@@ -208,7 +211,14 @@ export default function DashboardPage() {
 
   const autoReject = (jobs ?? []).filter((j) => j.gate_config.auto_reject).length;
   const autoInvite = (jobs ?? []).filter((j) => j.gate_config.auto_invite).length;
-  const gateLabel = (n: number) => (n > 0 ? `${n} JD bật` : "Tắt toàn hệ thống");
+  // "Tắt toàn hệ thống" là một KHẲNG ĐỊNH về cấu hình, không phải giá trị mặc định khi thiếu dữ
+  // liệu. `/api/jobs` hỏng ⇒ `jobs` là undefined ⇒ đếm ra 0 ⇒ màn hình quả quyết hai gate đều tắt
+  // trong khi thực tế có thể đang bật. Với HR đó là lời trấn an sai về thứ tự động gửi thư cho ứng
+  // viên. Chưa đọc được thì nói chưa đọc được.
+  const gateLabel = (n: number) => {
+    if (jobsError || !jobs) return "— chưa đọc được";
+    return n > 0 ? `${n} JD bật` : "Tắt toàn hệ thống";
+  };
 
   return (
     <div className="mx-auto max-w-[1120px] px-4 pb-8 pt-6 sm:px-8">

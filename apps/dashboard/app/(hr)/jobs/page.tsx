@@ -5,7 +5,10 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { JobPosting } from "@ars/shared-types";
 import { btn, EmptyState, PageHeader, Tag, Toggle } from "@/components/ui";
-import { archiveJob, getJobs, restoreJob, setGate, setJobStatus } from "@/lib/api";
+
+// Một trang JD. Nhỏ hơn /applications vì mỗi thẻ JD cao hơn nhiều một dòng bảng.
+const PAGE_SIZE = 20;
+import { archiveJob, getJobCounts, getJobs, restoreJob, setGate, setJobStatus } from "@/lib/api";
 import { formatSalary, isValidRubric, jobStatusLabel } from "@/lib/jobs";
 
 function fmtDate(iso: string): string {
@@ -23,23 +26,27 @@ export default function JobsPage() {
   const qc = useQueryClient();
   const [showArchived, setShowArchived] = useState(false); // JD-4: xem JD đã lưu trữ
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [offset, setOffset] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const { data, isLoading, isError, error } = useQuery<JobPosting[]>({
-    queryKey: ["jobs", showArchived ? "archived" : "active"],
-    queryFn: () => getJobs(showArchived),
+    queryKey: ["jobs", "list", showArchived ? "archived" : "active", offset],
+    queryFn: () => getJobs(showArchived, { limit: PAGE_SIZE, offset }),
+    placeholderData: (prev) => prev,
   });
-  // Đếm cho nhãn hai tab — luôn lấy cả hai rổ để số không nhảy khi đổi tab.
-  const { data: activeJobs } = useQuery<JobPosting[]>({
-    queryKey: ["jobs", "active"],
-    queryFn: () => getJobs(false),
-  });
-  const { data: archivedJobs } = useQuery<JobPosting[]>({
-    queryKey: ["jobs", "archived"],
-    queryFn: () => getJobs(true),
+  // Số trên chip lấy từ GROUP BY TOÀN BẢNG. Trước đây trang này nạp CẢ HAI danh sách JD chỉ để lấy
+  // `.length` — vừa tốn hai truy vấn nặng mỗi lần mở màn, vừa nói dối: `.length` là ĐỘ DÀI TRANG,
+  // nên vượt trần trang thì chip đứng yên ở con số đó mãi.
+  const { data: counts, isError: countsError } = useQuery({
+    queryKey: ["jobs", "counts"],
+    queryFn: getJobCounts,
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["jobs"] });
+
+  // Lưu trữ/khôi phục một JD làm ĐỔI CẢ HAI rổ, nên tổng phải đọc lại — tiền tố ["jobs"] ở trên đã
+  // gồm cả khoá ["jobs","counts"].
+  const total = countsError ? null : (showArchived ? counts?.archived : counts?.active) ?? null;
   // Tuỳ chọn dùng chung cho các mutation dạng (id → gọi API → refetch).
   const byId = (failMsg: string) => ({
     onMutate: (id: number) => {
@@ -89,6 +96,7 @@ export default function JobsPage() {
   });
 
   const jobs = data ?? [];
+  const hasMore = total != null ? offset + jobs.length < total : jobs.length === PAGE_SIZE;
 
   return (
     <div className="mx-auto max-w-[1000px] px-4 pb-8 pt-6 sm:px-8">
@@ -119,15 +127,18 @@ export default function JobsPage() {
       {/* JD-4: bộ lọc Đang hoạt động / Đã lưu trữ */}
       <div className="flex flex-wrap gap-2">
         {[
-          { archived: false, label: "Đang hoạt động", n: activeJobs?.length },
-          { archived: true, label: "Đã lưu trữ", n: archivedJobs?.length },
+          { archived: false, label: "Đang hoạt động", n: counts?.active },
+          { archived: true, label: "Đã lưu trữ", n: counts?.archived },
         ].map((t) => {
           const active = showArchived === t.archived;
           return (
             <button
               key={t.label}
               type="button"
-              onClick={() => setShowArchived(t.archived)}
+              onClick={() => {
+                setShowArchived(t.archived);
+                setOffset(0); // đổi rổ = tập khác, ở lại trang 3 sẽ ra danh sách rỗng
+              }}
               aria-pressed={active}
               className={`rounded-lg border-2 px-3 py-1.5 text-[13px] font-semibold transition-colors ${
                 active
@@ -284,6 +295,35 @@ export default function JobsPage() {
           );
         })}
       </div>
+
+      {/* Phân trang. `total == null` (endpoint đếm hỏng) vẫn phải có đường đi tiếp: một trang đầy
+          ĐÚNG bằng PAGE_SIZE là dấu hiệu còn trang nữa. Không có nhánh này thì JD thứ 21 trở đi
+          không có nút nào chạm tới — đúng lớp lỗi AUDIT-1 đã vá ở danh sách hồ sơ. */}
+      {(hasMore || offset > 0) && (
+        <div className="mt-5 flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
+            disabled={offset === 0 || isLoading}
+            className={btn("ghost")}
+          >
+            ← Trang trước
+          </button>
+          <span className="text-[13px] text-ink/65">
+            {total != null
+              ? `${offset + 1}–${offset + jobs.length} / ${total}`
+              : `${offset + 1}–${offset + jobs.length}`}
+          </span>
+          <button
+            type="button"
+            onClick={() => setOffset((o) => o + PAGE_SIZE)}
+            disabled={!hasMore || isLoading}
+            className={btn("ghost")}
+          >
+            Trang sau →
+          </button>
+        </div>
+      )}
     </div>
   );
 }
