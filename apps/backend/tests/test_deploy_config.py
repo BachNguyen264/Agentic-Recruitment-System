@@ -241,6 +241,32 @@ def test_env_example_only_lists_real_settings_fields() -> None:
     assert not unknown, f".env.example có key KHÔNG tồn tại trong Settings: {sorted(unknown)}"
 
 
+def test_env_example_does_not_relist_runtime_tunables() -> None:
+    """39 hằng số nghiệp vụ sống trong bảng `app_config` (sửa ở /system) — KHÔNG được khai lại ở đây.
+
+    Vì sao là một test chứ một quy ước: giữ chúng trong file mẫu là mời người vận hành "sửa env cho
+    nhanh" rồi thắc mắc vì sao không đổi gì — hàng trong DB thắng env ngay khi ai đó bấm Lưu lần
+    đầu. Nặng nhất là 14 biến BOOKING_*: đổi giờ làm việc ở env mà lưới khung giờ vẫn theo giá trị
+    trong DB là loại sai lặng lẽ, chỉ lộ ra khi ứng viên phàn nàn không có khung giờ phù hợp.
+
+    Thêm một field TUNABLE mới mà tiện tay khai luôn vào .env.example thì test này ĐỎ.
+    """
+    import re
+    from pathlib import Path
+
+    from app.core.config_registry import FIELDS_BY_NAME
+
+    env_example = Path(__file__).resolve().parents[3] / ".env.example"
+    text = env_example.read_text(encoding="utf-8")
+    # Chỉ soi DÒNG GÁN (kể cả dòng đã comment) — nhắc tên biến trong văn xuôi giải thích là hợp lệ.
+    assigned = {m.lower() for m in re.findall(r"^#?\s*([A-Z][A-Z0-9_]{2,})=", text, re.M)}
+    leaked = sorted(assigned & set(FIELDS_BY_NAME))
+    assert not leaked, (
+        ".env.example khai lại cấu hình đã chuyển sang bảng app_config "
+        f"(sửa ở /system → Cấu hình): {leaked}"
+    )
+
+
 def test_uvicorn_options_production_binds_all_interfaces_no_reload() -> None:
     from app.__main__ import uvicorn_options
 
