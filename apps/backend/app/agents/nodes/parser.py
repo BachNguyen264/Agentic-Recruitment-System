@@ -18,7 +18,7 @@ from app.core.logging import get_logger
 from app.models.application import ApplicationStatus
 from app.schemas.parsed_cv import ParsedCV
 from app.services.storage import StorageError, get_storage
-from app.tools.cv_reader import CVReadError, extract_text_bounded
+from app.tools.cv_reader import HIDDEN_FLAG_MIN_CHARS, CVReadError, extract_text_bounded
 
 logger = get_logger("app.agents.parser")
 
@@ -96,7 +96,7 @@ def parse_cv(data: bytes, name: str, *, llm: Any | None = None) -> dict:
         # `extract_text_bounded`, KHÔNG `extract_text`: bytes ở đây đến từ file người lạ nộp qua
         # endpoint công khai, và một PDF một-trang dựng khéo tiêu hàng phút CPU trong khi PyMuPDF
         # giữ GIL — đủ để event loop đứng và Render giết cả service. Xem docstring của hàm đó.
-        text = extract_text_bounded(data, name, max_chars=budget)
+        text, hidden_chars = extract_text_bounded(data, name, max_chars=budget)
     except CVReadError as exc:
         logger.info("parser: parse_failed khi đọc %s — %s", name, exc)
         return _failed(str(exc))
@@ -116,15 +116,31 @@ def parse_cv(data: bytes, name: str, *, llm: Any | None = None) -> dict:
         logger.warning("parser: lỗi gọi LLM cho %s — %s", name, exc)
         return _failed(f"Lỗi gọi LLM khi parse CV: {exc}")
 
+    # Chữ ẩn ĐÃ bị loại khỏi `text` ở cv_reader nên LLM không đọc được nó. Cờ vẫn cần: người giấu
+    # chữ trong CV là người đang cố qua mặt hệ thống, và HR phải biết trước khi tin phần còn lại —
+    # kể cả khi điểm đẹp. Cờ kéo hồ sơ về human_review ⇒ không gate tự động nào được xử hồ sơ này.
+    hidden = hidden_chars >= HIDDEN_FLAG_MIN_CHARS
+    if hidden:
+        logger.warning("parser: CV %s có %d ký tự chữ ẩn — đã loại, gắn cờ hidden_text", name, hidden_chars)
+
+    flags: list[str] = []
+    reasons: list[str] = []
+    if truncated:
+        flags.append("cv_truncated")
+        reasons.append(
+            f"CV dài bất thường — chỉ đọc {budget:,} ký tự đầu để chấm điểm. Cần HR đọc bản gốc."
+        )
+    if hidden:
+        flags.append("hidden_text")
+        reasons.append(
+            f"CV chứa {hidden_chars:,} ký tự chữ ẩn (chữ trắng/cỡ siêu nhỏ/thuộc tính ẩn) — đã loại "
+            "khỏi phần chấm điểm. Có thể là cố tình thao túng hệ thống; cần HR mở bản gốc kiểm tra."
+        )
     return {
         "parsed_data": parsed.model_dump(),
         "confidence": _confidence(parsed),
-        "uncertainty_flags": ["cv_truncated"] if truncated else [],
-        "escalation_reason": (
-            f"CV dài bất thường — chỉ đọc {budget:,} ký tự đầu để chấm điểm. Cần HR đọc bản gốc."
-            if truncated
-            else None
-        ),
+        "uncertainty_flags": flags,
+        "escalation_reason": " ".join(reasons) or None,
     }
 
 

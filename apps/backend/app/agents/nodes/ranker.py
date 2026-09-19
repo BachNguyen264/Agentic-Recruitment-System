@@ -29,6 +29,8 @@ _WEAK_SIM = 0.2           # cosine < mức này → weak_match
 _MISMATCH_SIM_LOW = 0.2   # điểm đạt nhưng cosine rất thấp → nghi ngờ
 _MISMATCH_SIM_HIGH = 0.5  # điểm trượt nhưng cosine cao → nghi ngờ
 _OVERALL_DIVERGE = 20.0   # |điểm tính lại − điểm LLM| lớn → log (không tin mù)
+# Cờ parser đặt mà ranker phải chở qua (xem `ranker_node`).
+_PARSER_FLAGS_TO_CARRY = frozenset({"cv_truncated", "hidden_text"})
 
 _SENTINEL_FETCH: Any = object()  # jd_vector chưa truyền → tự fetch từ Qdrant
 
@@ -299,11 +301,13 @@ async def ranker_node(state: RecruitmentState) -> dict:
     parsed_data = state.get("parsed_data")
     jd = (state.get("input") or {}).get("jd")
 
-    # `cv_truncated` (parser) phải SỐNG SÓT qua ranker. MỌI nhánh return bên dưới đều THAY MỚI trọn
-    # `uncertainty_flags` bằng kết quả của riêng ranker, nên không chở tay thì cờ biến mất im lặng và
-    # hồ sơ CV-bị-cắt đi thẳng vào gate auto-mời với confidence cao — đúng lớp lỗi mà nhánh
-    # `parse_failed` ngay dưới đã phải dựng rào riêng để chặn.
-    carried = [f for f in (state.get("uncertainty_flags") or []) if f == "cv_truncated"]
+    # Cờ của parser (`cv_truncated`, `hidden_text`) phải SỐNG SÓT qua ranker. MỌI nhánh return bên
+    # dưới đều THAY MỚI trọn `uncertainty_flags` bằng kết quả của riêng ranker, nên không chở tay thì
+    # cờ biến mất im lặng và hồ sơ đi thẳng vào gate tự động với confidence cao — đúng lớp lỗi mà
+    # nhánh `parse_failed` ngay dưới đã phải dựng rào riêng để chặn.
+    carried = [
+        f for f in (state.get("uncertainty_flags") or []) if f in _PARSER_FLAGS_TO_CARRY
+    ]
 
     # AN TOÀN (adversarial JD-2b): parser THẬT SỰ thất bại (đặt cờ `parse_failed`, parsed_data=None) →
     # KHÔNG được rơi vào `_stub`. `_stub` XÓA cờ + đặt confidence=1.0 → CV-không-đọc-được trông "sạch" →
@@ -342,11 +346,13 @@ async def ranker_node(state: RecruitmentState) -> dict:
         "semantic_similarity": result["semantic_similarity"],
         "confidence": result["confidence"],
         "uncertainty_flags": [*carried, *result["uncertainty_flags"]],
-        # Ca điểm cao + CV bị cắt: ranker không có lý do gì để escalate (điểm đẹp), nhưng cờ sẽ kéo
-        # hồ sơ về human_review — mà ReviewCard đọc `escalation_reason` để nói HR biết VÌ SAO. Bỏ
-        # trống là đẩy cho HR một thẻ không lời giải thích.
-        "escalation_reason": result["escalation_reason"]
-        or (state.get("escalation_reason") if carried else None),
+        # Cờ chở qua kéo hồ sơ về human_review — mà ReviewCard đọc `escalation_reason` để nói HR biết
+        # VÌ SAO. Lý do của parser đứng TRƯỚC và KHÔNG bị lý do của ranker đè: CV có chữ ẩn mà điểm
+        # thấp thì câu "điểm dưới ngưỡng" một mình giấu mất điều HR cần biết nhất.
+        "escalation_reason": " ".join(
+            r for r in ((state.get("escalation_reason") if carried else None),
+                        result["escalation_reason"]) if r
+        ) or None,
         "require_human_review": result["require_human_review"],
         "scratchpad": {
             **state.get("scratchpad", {}),

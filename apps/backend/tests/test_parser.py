@@ -466,9 +466,9 @@ def test_extract_text_bounded_returns_normally_for_real_cv() -> None:
     """Đường bình thường phải y hệt `extract_text` — bọc tiến trình không được đổi kết quả."""
     from app.tools.cv_reader import extract_text_bounded
 
-    assert extract_text_bounded(_fixture("good_cv.docx"), "good_cv.docx") == extract_text(
-        _fixture("good_cv.docx"), "good_cv.docx"
-    )
+    got = extract_text_bounded(_fixture("good_cv.docx"), "good_cv.docx")
+    assert got.text == extract_text(_fixture("good_cv.docx"), "good_cv.docx")
+    assert got.hidden_chars == 0
 
 
 # ── Chốt việc DỪNG SỚM + biên chính xác (bắt lỗi off-by-one) ────────────────────────────────────
@@ -490,7 +490,16 @@ def test_reader_stops_early_instead_of_reading_everything(monkeypatch: pytest.Mo
     class _Para:
         text = "x" * 500
 
+        def iter_inner_content(self):  # noqa: ANN202 — không run nào ⇒ không chữ ẩn
+            return []
+
+    class _Element:
+        def find(self, _tag):  # noqa: ANN001, ANN202 — không có nền trang
+            return None
+
     class _Doc:
+        element = _Element()
+
         @property
         def paragraphs(self):  # noqa: ANN202
             def gen():
