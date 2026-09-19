@@ -390,7 +390,6 @@ async def process_application(application_id: int, *, force_review: bool = False
             auto_reject = out["branch"] == "auto_reject"
             if auto_reject:
                 reject_email = application.applicant_email
-                reject_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
                 reject_title = job_title
 
             # JD-2b: ca BỎ-QUA-screener (JD không câu hỏi) + JD auto_invite BẬT → route_after_screener rẽ
@@ -400,7 +399,6 @@ async def process_application(application_id: int, *, force_review: bool = False
             auto_invite = out["branch"] == "auto_invite"
             if auto_invite:
                 invite_email_to = application.applicant_email
-                invite_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
                 invite_title = job_title
 
             # Screener (08b): dừng ở screener → TẠO screening_session (token + hạn + ảnh chụp câu hỏi)
@@ -414,7 +412,6 @@ async def process_application(application_id: int, *, force_review: bool = False
                 screening.mark_screener_sent(application, screening_row)
                 screener_token = screening_row.token
                 screener_email_to = application.applicant_email
-                screener_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
                 screener_title = job_title
 
             await session.commit()
@@ -431,7 +428,7 @@ async def process_application(application_id: int, *, force_review: bool = False
                 try:
                     await scheduler.notify_decision(
                         session, "reject", application_id=application_id,
-                        applicant_email=reject_email, candidate_name=reject_name,
+                        applicant_email=reject_email,
                         job_title=reject_title,
                     )
                 except Exception:  # noqa: BLE001 — REJECTED đã commit; lỗi email/audit KHÔNG làm sập
@@ -453,7 +450,7 @@ async def process_application(application_id: int, *, force_review: bool = False
                     # Thứ tự email-trước-trạng-thái-sau nằm trong booking_flow, dùng chung cả 3 đường mời.
                     await booking_flow.dispatch_booking_invite(
                         session, application, applicant_email=invite_email_to,
-                        candidate_name=invite_name, job_title=invite_title, audit_node="gate",
+                        job_title=invite_title, audit_node="gate",
                     )
                 except Exception:  # noqa: BLE001 — CÔ LẬP: lỗi sau khi có thể đã gửi thư KHÔNG reset error
                     logger.exception(
@@ -469,7 +466,7 @@ async def process_application(application_id: int, *, force_review: bool = False
                     form_url = f"{settings.frontend_base_url.rstrip('/')}/screening/{screener_token}"
                     await scheduler.notify_screener(
                         session, application_id=application_id,
-                        applicant_email=screener_email_to, candidate_name=screener_name,
+                        applicant_email=screener_email_to,
                         job_title=screener_title, form_url=form_url,
                         # `:g` — biến này là FLOAT (cố ý, để verify đặt ngưỡng dưới 1 giờ), nên nội
                         # suy thẳng cho ra "72.0 giờ" trong thư gửi ứng viên. `:g` bỏ đuôi .0 mà vẫn
@@ -580,7 +577,6 @@ async def resume_screener(
         auto_invite = out["branch"] == "auto_invite"
         if auto_invite:
             invite_email_to = application.applicant_email
-            invite_name = (final.get("parsed_data") or {}).get("full_name") or "Ứng viên"
             invite_title = ((final.get("input") or {}).get("jd") or {}).get("title") or "vị trí ứng tuyển"
 
         if pre_commit is not None:  # 08b: đánh dấu used_at/answers CÙNG transaction (nguyên tử, one-time).
@@ -603,7 +599,7 @@ async def resume_screener(
                 # email-trước-trạng-thái-sau dùng chung cho cả gate lẫn HR duyệt).
                 await booking_flow.dispatch_booking_invite(
                     session, application, applicant_email=invite_email_to,
-                    candidate_name=invite_name, job_title=invite_title, audit_node="gate",
+                    job_title=invite_title, audit_node="gate",
                 )
             except Exception:  # noqa: BLE001 — CÔ LẬP: lỗi SAU khi có thể đã gửi thư KHÔNG reset case về error
                 logger.exception(

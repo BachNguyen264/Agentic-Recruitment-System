@@ -173,9 +173,9 @@ async def test_review_missing_application() -> None:
         await review.review_decision(FakeSession(None), 99, "approve", None)
 
 
-async def test_review_passes_candidate_and_job_to_scheduler(monkeypatch) -> None:
-    # Wiring 04: review_decision phải trích ĐÚNG tên (parsed_data.full_name) + vị trí (JD.title)
-    # + email và truyền vào notify_decision (điểm phát email). Chống swap-arg / sai key.
+async def test_review_passes_job_but_not_cv_name_to_scheduler(monkeypatch) -> None:
+    # Wiring 04: review_decision truyền ĐÚNG vị trí (JD.title) + email vào notify_decision (điểm
+    # phát email). Tên bóc từ CV thì KHÔNG được truyền dù parsed_data có — chống trạm phát thư.
     captured: dict = {}
 
     async def fake_notify(_session, mode, **kw):  # noqa: ANN001
@@ -198,7 +198,7 @@ async def test_review_passes_candidate_and_job_to_scheduler(monkeypatch) -> None
     await review.review_decision(SessionWithJob(app_row), 1, "approve", None)
 
     assert captured["applicant_email"] == "ung.vien@example.com"
-    assert captured["candidate_name"] == "Nguyễn Văn A"
+    assert "candidate_name" not in captured
     assert captured["job_title"] == "Backend Intern (Node.js)"
 
 
@@ -215,5 +215,5 @@ async def test_review_falls_back_when_no_parsed_name_or_job(monkeypatch) -> None
 
     await review.review_decision(FakeSession(app_row), 1, "reject", None)
 
-    assert captured["candidate_name"] == "Ứng viên"
+    assert "candidate_name" not in captured
     assert captured["job_title"] == "vị trí ứng tuyển"

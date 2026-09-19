@@ -59,13 +59,13 @@ async def test_notify_invite_sends_invite_email(monkeypatch) -> None:
 
     out = await scheduler.notify_decision(
         session, "invite", application_id=1, applicant_email="a@e.com",
-        candidate_name="Nguyễn Văn A", job_title="Backend Intern",
+        job_title="Backend Intern",
         booking_url="http://localhost:3000/booking/tok", deadline_text="72 giờ",
     )
 
     assert out["email_sent"] is True
     assert captured["to"] == "a@e.com"
-    assert "Nguyễn Văn A" in captured["html"] and "Backend Intern" in captured["html"]
+    assert "Chào bạn," in captured["html"] and "Backend Intern" in captured["html"]
     assert "mời" in captured["subject"].lower()
     assert "email_sent:invite" in _audit_actions(session)
 
@@ -81,7 +81,7 @@ async def test_notify_reject_sends_rejection_email(monkeypatch) -> None:
 
     out = await scheduler.notify_decision(
         session, "reject", application_id=2, applicant_email="b@e.com",
-        candidate_name="Trần Văn B", job_title="Kế toán",
+        job_title="Kế toán",
     )
 
     assert out["email_sent"] is True
@@ -111,7 +111,7 @@ async def test_booking_confirmed_email_still_goes_out_when_ics_fails(monkeypatch
     session = FakeSession()
 
     out = await scheduler.notify_booking_confirmed(
-        session, application_id=9, applicant_email="d@e.com", candidate_name="Lê C",
+        session, application_id=9, applicant_email="d@e.com",
         job_title="Backend Intern", booking=_booked_slot(),
     )
 
@@ -131,7 +131,7 @@ async def test_notify_swallows_send_error(monkeypatch) -> None:
     # KHÔNG raise — quyết định 03b đã commit, email lỗi không được làm sập luồng.
     out = await scheduler.notify_decision(
         session, "invite", application_id=3, applicant_email="c@e.com",
-        candidate_name="X", job_title="Y",
+        job_title="Y",
         booking_url="http://localhost:3000/booking/tok", deadline_text="72 giờ",
     )
 

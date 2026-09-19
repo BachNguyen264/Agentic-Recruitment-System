@@ -56,9 +56,9 @@ def _remaining_text(expires_at: datetime, now: datetime) -> str:
     return "ít phút tới"
 
 
-# Tên gọi / tên vị trí / liên kết: DÙNG CHUNG `booking_flow` (`booking_url`, `candidate_name_of`,
-# `job_title_of`). Đây là văn bản gửi ra ngoài, nên hai bản chép tay lệch nhau nghĩa là hai lá thư
-# về cùng một buổi phỏng vấn xưng hô khác nhau.
+# Tên vị trí / liên kết: DÙNG CHUNG `booking_flow` (`booking_url`, `job_title_of`). Đây là văn bản
+# gửi ra ngoài, nên hai bản chép tay lệch nhau nghĩa là hai lá thư về cùng một buổi phỏng vấn nói
+# khác nhau.
 
 
 # ── Truy vấn "đến hạn" (đọc, KHÔNG khoá) ─────────────────────────────────────────────────
@@ -170,7 +170,6 @@ async def send_interview_reminder(session: AsyncSession, booking: InterviewBooki
     if app_row is None:  # hồ sơ đã bị xoá — bỏ qua an toàn
         return
     job_title = await booking_flow.job_title_of(session, app_row)
-    name = booking_flow.candidate_name_of(app_row)
     applicant_email = app_row.applicant_email
     link_row = await booking_service.booked_session(session, booking.application_id)
     manage_url = booking_flow.booking_url(link_row.token) if link_row is not None else None
@@ -180,7 +179,7 @@ async def send_interview_reminder(session: AsyncSession, booking: InterviewBooki
 
     await scheduler.notify_interview_reminder(
         session, application_id=booking.application_id, applicant_email=applicant_email,
-        candidate_name=name, job_title=job_title, booking=booking, manage_url=manage_url,
+        job_title=job_title, booking=booking, manage_url=manage_url,
     )
 
 
@@ -194,7 +193,6 @@ async def send_booking_reminder(session: AsyncSession, sess: BookingSession) -> 
     if app_row is None:
         return
     job_title = await booking_flow.job_title_of(session, app_row)
-    name = booking_flow.candidate_name_of(app_row)
     applicant_email = app_row.applicant_email
     url = booking_flow.booking_url(sess.token)
     deadline = _remaining_text(sess.expires_at, _now())
@@ -204,7 +202,7 @@ async def send_booking_reminder(session: AsyncSession, sess: BookingSession) -> 
 
     await scheduler.notify_booking_reminder(
         session, application_id=sess.application_id, applicant_email=applicant_email,
-        candidate_name=name, job_title=job_title, booking_url=url, deadline_text=deadline,
+        job_title=job_title, booking_url=url, deadline_text=deadline,
     )
 
 

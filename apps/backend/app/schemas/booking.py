@@ -27,7 +27,6 @@ class PublicBookingRead(BaseModel):
     `Asia/Ho_Chi_Minh` (không để trình duyệt tự đoán múi giờ của máy người dùng)."""
 
     job_title: str
-    candidate_name: str
     # Đã chốt lịch rồi → UI hiện "Bạn đã đặt lịch lúc X" thay vì danh sách chọn. Đây là TRẠNG THÁI,
     # không phải lỗi: token không one-time nên mở lại link là chuyện bình thường.
     already_booked: bool = False

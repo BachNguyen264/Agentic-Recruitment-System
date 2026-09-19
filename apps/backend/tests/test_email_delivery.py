@@ -129,7 +129,7 @@ async def test_dispatch_records_delivery_row(monkeypatch) -> None:
 
     out = await scheduler.notify_decision(
         session, "invite", application_id=42, applicant_email="a@e.com",
-        candidate_name="A", job_title="Backend",
+        job_title="Backend",
         booking_url="http://localhost:3000/booking/tok", deadline_text="72 giờ",
     )
 
@@ -153,7 +153,7 @@ async def test_dispatch_skips_delivery_row_when_no_email_id(monkeypatch) -> None
     session = FakeSession()
     await scheduler.notify_decision(
         session, "reject", application_id=43, applicant_email="b@e.com",
-        candidate_name="B", job_title="Kế toán",
+        job_title="Kế toán",
     )
     assert _deliveries(session) == []
     assert any(isinstance(o, AuditLog) for o in session.added)  # audit VẪN ghi
@@ -167,7 +167,7 @@ async def test_dispatch_records_no_row_when_send_fails(monkeypatch) -> None:
     session = FakeSession()
     out = await scheduler.notify_decision(
         session, "reject", application_id=44, applicant_email="c@e.com",
-        candidate_name="C", job_title="X",
+        job_title="X",
     )
     assert out["email_sent"] is False
     assert _deliveries(session) == []
@@ -182,7 +182,7 @@ async def test_dispatch_uses_mode_verbatim_as_kind(monkeypatch) -> None:
     )
     session = FakeSession()
     await scheduler.notify_screener(
-        session, application_id=7, applicant_email="a@e.com", candidate_name="A",
+        session, application_id=7, applicant_email="a@e.com",
         job_title="B", form_url="http://x.test/screening/t", deadline_text="72 giờ",
         reminder=True,
     )
@@ -379,7 +379,7 @@ async def test_dispatch_does_not_touch_db_before_sending(monkeypatch) -> None:
     monkeypatch.setattr(scheduler.email_service, "send_email", fake_send)
     await scheduler.notify_decision(
         TrackingSession(), "reject", application_id=1, applicant_email="a@e.com",
-        candidate_name="A", job_title="B",
+        job_title="B",
     )
     assert touched_before_send == []
 
@@ -411,7 +411,7 @@ async def test_dispatch_commits_exactly_once_after_adding_delivery_row(monkeypat
     session = TrackingSession()
     out = await scheduler.notify_decision(
         session, "reject", application_id=1, applicant_email="a@e.com",
-        candidate_name="A", job_title="B",
+        job_title="B",
     )
 
     assert out["email_sent"] is True

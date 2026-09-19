@@ -54,7 +54,6 @@ async def review_decision(
 
     # Gom dữ liệu email TRƯỚC commit (sau commit thuộc tính có thể expire → tránh lazy-load).
     applicant_email = app_row.applicant_email
-    candidate_name = (app_row.parsed_data or {}).get("full_name") or "Ứng viên"
     job = await session.get(JobPosting, app_row.job_id) if app_row.job_id else None
     job_title = job.title if job else "vị trí ứng tuyển"
 
@@ -72,7 +71,7 @@ async def review_decision(
         # gian ở đây sẽ làm ca biến mất khỏi hàng chờ mà chẳng ai gửi thư.
         await session.commit()
         await booking_flow.dispatch_booking_invite(
-            session, app_row, applicant_email=applicant_email, candidate_name=candidate_name,
+            session, app_row, applicant_email=applicant_email,
             job_title=job_title, audit_node="human_review",
         )
         await session.refresh(app_row)
@@ -88,7 +87,7 @@ async def review_decision(
     await session.commit()
     await scheduler.notify_decision(
         session, mode, application_id=application_id, applicant_email=applicant_email,
-        candidate_name=candidate_name, job_title=job_title,
+        job_title=job_title,
     )
     await session.refresh(app_row)
     return app_row

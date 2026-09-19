@@ -1,8 +1,15 @@
 """Template email CỐ ĐỊNH cho Scheduler (PRD §7.4). KHÔNG sinh bằng LLM — nhất quán + an toàn
-pháp lý (cùng lý do bộ câu hỏi Screener cố định). Chỉ điền {candidate_name}, {job_title}.
+pháp lý (cùng lý do bộ câu hỏi Screener cố định). Chỉ điền {job_title} (HR soạn) + link/giờ do
+hệ thống dựng.
 
-An toàn: tên lấy từ CV (không tin cậy) → ESCAPE HTML trước khi nhúng vào thân email; tiêu đề
-(email header) → bỏ newline chống header injection.
+KHÔNG có chữ nào do ứng viên kiểm soát trong thư — kể cả tên, nên thư chào trung tính "Chào bạn".
+Tên trước đây lấy từ `parsed_data.full_name` = chữ do LLM bóc từ tệp người lạ nộp, mà người nộp
+còn tự chọn luôn địa chỉ nhận (ô email trên form). Ghép lại thành trạm phát thư: nhét một câu vào
+CV (TN-5 P6 đo được: tên bịa lọt vào thư) là có thư mang thương hiệu + domain đã xác thực của công
+ty gửi tới bất kỳ ai. Escape HTML không chặn được việc đó — nó chặn markup, không chặn nội dung.
+ĐỪNG nối lại tên vào thư; muốn cá nhân hoá thì phải giải bài toán này trước.
+
+Tiêu đề (email header) → bỏ newline chống header injection.
 """
 
 from __future__ import annotations
@@ -49,7 +56,6 @@ def format_vn_datetime(value: datetime) -> str:
 
 
 def invite_email(
-    candidate_name: str | None,
     job_title: str | None,
     *,
     booking_url: str,
@@ -61,7 +67,6 @@ def invite_email(
     "sẽ liên hệ sắp lịch" của bản cũ nay là sai sự thật vì sẽ chẳng có ai liên hệ nữa.
     `booking_url` do hệ thống dựng (FRONTEND_BASE_URL + token) — vẫn escape quote vì nằm trong href.
     """
-    name = _esc(candidate_name, fallback="Ứng viên")
     title = _esc(job_title, fallback="vị trí ứng tuyển")
     href = _html.escape(booking_url, quote=True)
     deadline = _esc(deadline_text, fallback="thời gian quy định")
@@ -70,7 +75,7 @@ def invite_email(
         fallback="Thư mời phỏng vấn",
     )
     html = _wrap(
-        f"<p>Kính gửi {name},</p>"
+        "<p>Chào bạn,</p>"
         f"<p>Chúc mừng bạn! Sau khi xem xét hồ sơ, chúng tôi trân trọng mời bạn tham gia phỏng vấn "
         f"cho vị trí <strong>{title}</strong>.</p>"
         f"<p>Bạn vui lòng <strong>tự chọn khung giờ phù hợp nhất</strong> với mình qua liên kết dưới "
@@ -84,7 +89,6 @@ def invite_email(
 
 
 def booking_confirmed_email(
-    candidate_name: str | None,
     job_title: str | None,
     *,
     start_at: datetime,
@@ -100,7 +104,6 @@ def booking_confirmed_email(
     mở ra thấy lịch đã chốt kèm nút huỷ. Một liên kết cho cả vòng đời thì ứng viên không phải phân
     biệt "link nào để xem, link nào để huỷ", và ta không có thêm token phải theo dõi.
     """
-    name = _esc(candidate_name, fallback="Ứng viên")
     title = _esc(job_title, fallback="vị trí ứng tuyển")
     when = _esc(format_vn_datetime(start_at), fallback="")
     minutes = max(1, round((end_at - start_at).total_seconds() / 60))
@@ -118,7 +121,7 @@ def booking_confirmed_email(
     else:
         change = "<p>Nếu bạn cần thay đổi, vui lòng phản hồi email này để chúng tôi hỗ trợ.</p>"
     html = _wrap(
-        f"<p>Kính gửi {name},</p>"
+        "<p>Chào bạn,</p>"
         f"<p>Chúng tôi xác nhận buổi phỏng vấn cho vị trí <strong>{title}</strong> đã được đặt vào:</p>"
         f'<p style="font-size:16px;font-weight:bold;color:#0f172a">{when} (giờ Việt Nam)</p>'
         f"<p>Thời lượng dự kiến: {minutes} phút. Chúng tôi có đính kèm tệp lịch "
@@ -128,7 +131,6 @@ def booking_confirmed_email(
 
 
 def interview_reminder_email(
-    candidate_name: str | None,
     job_title: str | None,
     *,
     start_at: datetime,
@@ -140,7 +142,6 @@ def interview_reminder_email(
     Đính kèm `.ics` LẦN NỮA là cố ý: ứng viên nào chưa thêm vào lịch lúc nhận thư xác nhận thì đây
     là cơ hội thứ hai, và đó chính là nhóm dễ quên buổi phỏng vấn nhất.
     """
-    name = _esc(candidate_name, fallback="Ứng viên")
     title = _esc(job_title, fallback="vị trí ứng tuyển")
     when = _esc(format_vn_datetime(start_at), fallback="")
     minutes = max(1, round((end_at - start_at).total_seconds() / 60))
@@ -162,7 +163,7 @@ def interview_reminder_email(
     else:
         change = "<p>Nếu có việc đột xuất, vui lòng phản hồi email này sớm nhất có thể.</p>"
     html = _wrap(
-        f"<p>Kính gửi {name},</p>"
+        "<p>Chào bạn,</p>"
         f"<p>Đây là lời nhắc về buổi phỏng vấn vị trí <strong>{title}</strong> của bạn:</p>"
         f'<p style="font-size:16px;font-weight:bold;color:#0f172a">{when} (giờ Việt Nam)</p>'
         f"<p>Thời lượng dự kiến: {minutes} phút. Tệp lịch (<code>.ics</code>) được đính kèm lần nữa "
@@ -173,7 +174,6 @@ def interview_reminder_email(
 
 
 def booking_reminder_email(
-    candidate_name: str | None,
     job_title: str | None,
     *,
     booking_url: str,
@@ -184,7 +184,6 @@ def booking_reminder_email(
     DÙNG LẠI đúng liên kết cũ (token KHÔNG one-time — §10b.3): phát link mới là ứng viên có hai thư
     với hai liên kết và không biết cái nào còn sống. Đối xứng `screener_reminder_email` của 08c.
     """
-    name = _esc(candidate_name, fallback="Ứng viên")
     title = _esc(job_title, fallback="vị trí ứng tuyển")
     href = _html.escape(booking_url, quote=True)
     deadline = _esc(deadline_text, fallback="thời gian còn lại")
@@ -193,7 +192,7 @@ def booking_reminder_email(
         fallback="Nhắc: chọn giờ phỏng vấn",
     )
     html = _wrap(
-        f"<p>Kính gửi {name},</p>"
+        "<p>Chào bạn,</p>"
         f"<p>Chúng tôi nhận thấy bạn chưa chọn khung giờ phỏng vấn cho vị trí <strong>{title}</strong>. "
         f"Đây là lời nhắc thân thiện — liên kết dưới đây còn hiệu lực trong <strong>{deadline}</strong>:</p>"
         f'<p><a href="{href}">Chọn giờ phỏng vấn</a></p>'
@@ -204,7 +203,6 @@ def booking_reminder_email(
 
 
 def booking_cancelled_email(
-    candidate_name: str | None,
     job_title: str | None,
     *,
     start_at: datetime,
@@ -223,7 +221,6 @@ def booking_cancelled_email(
     `by_hr` chỉ đổi CÂU MỞ: ứng viên tự bấm huỷ mà nhận thư "chúng tôi đã huỷ lịch của bạn" thì đọc
     như bị từ chối.
     """
-    name = _esc(candidate_name, fallback="Ứng viên")
     title = _esc(job_title, fallback="vị trí ứng tuyển")
     when = _esc(format_vn_datetime(start_at), fallback="")
     subject = _subject_safe(
@@ -244,11 +241,10 @@ def booking_cancelled_email(
         )
     else:
         tail = "<p>Bộ phận Tuyển dụng sẽ liên hệ với bạn để sắp xếp lại thời gian phù hợp.</p>"
-    return subject, _wrap(f"<p>Kính gửi {name},</p>{opening}{tail}")
+    return subject, _wrap(f"<p>Chào bạn,</p>{opening}{tail}")
 
 
 def screener_email(
-    candidate_name: str | None,
     job_title: str | None,
     *,
     form_url: str,
@@ -258,7 +254,6 @@ def screener_email(
 
     `form_url` do hệ thống dựng (FRONTEND_BASE_URL + token urlsafe) — vẫn escape quote vì nằm trong
     `href="..."`. Trả (subject, html)."""
-    name = _esc(candidate_name, fallback="Ứng viên")
     title = _esc(job_title, fallback="vị trí ứng tuyển")
     href = _html.escape(form_url, quote=True)
     deadline = _esc(deadline_text, fallback="thời gian quy định")
@@ -267,7 +262,7 @@ def screener_email(
         fallback="Bổ sung thông tin ứng tuyển",
     )
     html = _wrap(
-        f"<p>Kính gửi {name},</p>"
+        "<p>Chào bạn,</p>"
         f"<p>Cảm ơn bạn đã ứng tuyển vị trí <strong>{title}</strong>. Để tiếp tục quy trình, vui lòng "
         f"dành ít phút trả lời một vài câu hỏi bổ sung qua liên kết dưới đây trong vòng <strong>{deadline}</strong>.</p>"
         f'<p><a href="{href}">Trả lời câu hỏi sàng lọc</a></p>'
@@ -278,7 +273,6 @@ def screener_email(
 
 
 def screener_reminder_email(
-    candidate_name: str | None,
     job_title: str | None,
     *,
     form_url: str,
@@ -287,7 +281,6 @@ def screener_reminder_email(
     """Thư NHẮC trả lời bộ câu hỏi sàng lọc (08c · PRD §10 FR-SCR-3). Gửi MỘT LẦN khi quá mốc nhắc mà
     chưa phản hồi; DÙNG LẠI magic-link cũ (token còn hạn). Cùng cơ chế escape như screener_email
     (name/title escape HTML; form_url trong href escape quote). Trả (subject, html)."""
-    name = _esc(candidate_name, fallback="Ứng viên")
     title = _esc(job_title, fallback="vị trí ứng tuyển")
     href = _html.escape(form_url, quote=True)
     deadline = _esc(deadline_text, fallback="thời gian còn lại")
@@ -298,7 +291,7 @@ def screener_reminder_email(
         fallback="Nhắc: bổ sung thông tin ứng tuyển",
     )
     html = _wrap(
-        f"<p>Kính gửi {name},</p>"
+        "<p>Chào bạn,</p>"
         f"<p>Chúng tôi nhận thấy bạn chưa hoàn tất phần câu hỏi bổ sung cho vị trí "
         f"<strong>{title}</strong>. Đây là lời nhắc thân thiện — vui lòng dành ít phút trả lời qua "
         f"liên kết dưới đây trong vòng <strong>{deadline}</strong> để chúng tôi tiếp tục xem xét hồ sơ của bạn.</p>"
@@ -309,16 +302,15 @@ def screener_reminder_email(
     return subject, html
 
 
-def rejection_email(candidate_name: str | None, job_title: str | None) -> tuple[str, str]:
+def rejection_email(job_title: str | None) -> tuple[str, str]:
     """Thư từ chối — cảm ơn, rất tiếc chưa phù hợp, chúc may mắn. Trả (subject, html)."""
-    name = _esc(candidate_name, fallback="Ứng viên")
     title = _esc(job_title, fallback="vị trí ứng tuyển")
     subject = _subject_safe(
         f"Kết quả ứng tuyển — vị trí {job_title}" if job_title else "Kết quả ứng tuyển",
         fallback="Kết quả ứng tuyển",
     )
     html = _wrap(
-        f"<p>Kính gửi {name},</p>"
+        "<p>Chào bạn,</p>"
         f"<p>Cảm ơn bạn đã quan tâm và ứng tuyển vị trí <strong>{title}</strong> tại công ty "
         "chúng tôi.</p>"
         "<p>Sau khi cân nhắc kỹ lưỡng, rất tiếc hồ sơ của bạn chưa phù hợp với yêu cầu vị trí ở "

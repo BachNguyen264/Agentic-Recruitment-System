@@ -101,7 +101,6 @@ async def send_screening_reminder(session: AsyncSession, sess: ScreeningSession)
         return
     job = await session.get(JobPosting, app_row.job_id) if app_row.job_id is not None else None
     job_title = job.title if job is not None else "vị trí ứng tuyển"
-    name = (app_row.parsed_data or {}).get("full_name") or "Ứng viên"
     form_url = f"{settings.frontend_base_url.rstrip('/')}/screening/{sess.token}"
 
     sess.reminded_at = _now()  # once-only: chốt TRƯỚC khi gửi (idempotent kể cả email lỗi)
@@ -109,7 +108,7 @@ async def send_screening_reminder(session: AsyncSession, sess: ScreeningSession)
 
     await scheduler.notify_screener(
         session, application_id=sess.application_id, applicant_email=app_row.applicant_email,
-        candidate_name=name, job_title=job_title, form_url=form_url,
+        job_title=job_title, form_url=form_url,
         deadline_text=_remaining_text(sess.expires_at, _now()), reminder=True,
     )
 

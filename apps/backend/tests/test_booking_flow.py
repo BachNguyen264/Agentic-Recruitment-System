@@ -109,7 +109,7 @@ async def test_invite_sets_awaiting_booking_only_after_email_sent(monkeypatch) -
     session, app_row = FakeSession(), _app()
 
     sent = await booking_flow.dispatch_booking_invite(
-        session, app_row, applicant_email="me@e.com", candidate_name="Nguyễn Văn A",
+        session, app_row, applicant_email="me@e.com",
         job_title="Backend", audit_node="gate",
     )
 
@@ -138,7 +138,7 @@ async def test_invite_email_failure_keeps_case_with_hr_and_kills_session(monkeyp
     session, app_row = FakeSession(), _app()
 
     sent = await booking_flow.dispatch_booking_invite(
-        session, app_row, applicant_email="me@e.com", candidate_name="A",
+        session, app_row, applicant_email="me@e.com",
         job_title="Backend", audit_node="gate",
     )
 
@@ -160,7 +160,7 @@ async def test_invite_link_uses_configured_frontend_base(monkeypatch) -> None:
     monkeypatch.setattr(booking_flow.settings, "frontend_base_url", "https://ars.example.com/")
 
     await booking_flow.dispatch_booking_invite(
-        FakeSession(), _app(), applicant_email="a@e.com", candidate_name="A",
+        FakeSession(), _app(), applicant_email="a@e.com",
         job_title="B", audit_node="gate",
     )
     # Bỏ "/" thừa — "https://x.com//booking/tok" vẫn chạy nhưng trông như lỗi trong email gửi ứng viên.
@@ -177,7 +177,7 @@ async def test_notify_decision_invite_requires_booking_url() -> None:
     with pytest.raises(ValueError, match="booking_url"):
         await scheduler.notify_decision(
             FakeSession(), "invite", application_id=1, applicant_email="a@e.com",
-            candidate_name="A", job_title="B",
+            job_title="B",
         )
 
 
@@ -277,12 +277,11 @@ def test_public_booking_payload_has_no_internal_fields() -> None:
 
     dumped = PublicBookingRead(
         job_title="Backend",
-        candidate_name="Nguyễn Văn A",
         slots=[PublicSlot(booking_id=1, start_at=_now(), end_at=_now())],
     ).model_dump()
 
     assert set(dumped) == {
-        "job_title", "candidate_name", "already_booked",
+        "job_title", "already_booked",
         "booked_start_at", "booked_end_at", "slots", "hold_expires_at",
     }
     # Khẳng định sự VẮNG MẶT — thêm field vào model KHÔNG được tự động rò ra trang công khai.

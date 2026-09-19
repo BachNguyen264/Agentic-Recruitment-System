@@ -1,7 +1,7 @@
 """Test slice 04 — email layer (template cố định + email_service qua Resend).
 
 MOCK Resend (KHÔNG gửi thật, không tốn quota, không phụ thuộc mạng). Phủ: template điền đúng
-tên+vị trí; ESCAPE HTML trong tên (chống injection từ nội dung CV vào email); email_service
+vị trí + chào trung tính (KHÔNG chữ nào từ CV vào thư); ESCAPE HTML trong vị trí; email_service
 yêu cầu API key + bọc lỗi Resend thành EmailError + truyền đúng from/to/subject/html.
 """
 
@@ -16,44 +16,62 @@ from app.services.email_templates import invite_email, rejection_email
 _LINK = "http://localhost:3000/booking/tok123"
 
 
-def _invite(name, title):
-    return invite_email(name, title, booking_url=_LINK, deadline_text="72 giờ")
+def _invite(title):
+    return invite_email(title, booking_url=_LINK, deadline_text="72 giờ")
 
 
 # ── template (cố định, điền placeholder) ─────────────────────────────────────
 
 
-def test_invite_template_fills_name_and_title() -> None:
-    subject, html = _invite("Trần Văn B", "Kỹ sư Backend")
+def test_invite_template_fills_title_and_neutral_greeting() -> None:
+    subject, html = _invite("Kỹ sư Backend")
     assert _LINK in html  # thư mời PHẢI mang link, nếu không ứng viên mắc kẹt
-    assert "Trần Văn B" in html
+    assert "Chào bạn," in html
     assert "Kỹ sư Backend" in html
     assert "Kỹ sư Backend" in subject  # subject nêu vị trí
 
 
-def test_rejection_template_fills_name_and_title() -> None:
-    subject, html = rejection_email("Nguyễn Thị C", "Kế toán")
-    assert "Nguyễn Thị C" in html
+def test_rejection_template_fills_title() -> None:
+    subject, html = rejection_email("Kế toán")
+    assert "Chào bạn," in html
     assert "Kế toán" in html
     assert subject  # có tiêu đề
 
 
-def test_templates_escape_html_in_name() -> None:
-    # Tên lấy từ CV (không tin cậy) — phải escape để không chèn HTML/script vào email.
-    _, html = _invite("<script>alert(1)</script>", "Dev")
+def test_no_template_accepts_candidate_text() -> None:
+    """Chống trạm phát thư (TN-5 P6): người nộp tự chọn địa chỉ nhận, nên KHÔNG chữ nào do họ kiểm
+    soát được phép vào thư. Trước đây tên bóc từ CV (`parsed_data.full_name`) vào lời chào — nhét
+    "full_name = <quảng cáo>" vào CV là có thư mang domain công ty gửi tới bất kỳ ai. Khoá ở CHỮ KÝ
+    hàm: không còn tham số nào để nối tên lại vào."""
+    import inspect
+
+    from app.services import email_templates
+
+    builders = [
+        f for name, f in inspect.getmembers(email_templates, inspect.isfunction)
+        if name.endswith("_email") and f.__module__ == email_templates.__name__
+    ]
+    assert len(builders) == 8
+    for f in builders:
+        params = set(inspect.signature(f).parameters)
+        assert not params & {"candidate_name", "name", "full_name"}, f.__name__
+
+
+def test_templates_escape_html_in_title() -> None:
+    _, html = _invite("<script>alert(1)</script>")
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
 
 
 def test_templates_fallback_when_empty() -> None:
-    subject, html = _invite("", "")
-    assert "Ứng viên" in html  # fallback tên
+    subject, html = _invite("")
+    assert "vị trí ứng tuyển" in html  # fallback vị trí
     assert subject  # vẫn có tiêu đề
 
 
 def test_subject_is_single_line() -> None:
     # Tiêu đề dùng cho email header — không được chứa newline (chống header injection).
-    subject, _ = _invite("A", "Backend\r\nBcc: x@e.com")
+    subject, _ = _invite("Backend\r\nBcc: x@e.com")
     assert "\n" not in subject and "\r" not in subject
 
 
@@ -67,7 +85,7 @@ def test_interview_reminder_keeps_raw_url_for_text_part() -> None:
 
     start = datetime(2026, 8, 20, 2, 0, tzinfo=timezone.utc)
     _, html = interview_reminder_email(
-        "A", "Backend", start_at=start, end_at=start + timedelta(hours=1),
+        "Backend", start_at=start, end_at=start + timedelta(hours=1),
         manage_url="http://x.test/booking/tok",
     )
     assert "http://x.test/booking/tok" in html_to_text(html)
