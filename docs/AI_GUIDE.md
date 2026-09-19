@@ -595,6 +595,12 @@
   **27/27** (prompt cũ cũng 27/27), P6 17/27 (cũ 18/27). Lớp chặn thật là **hậu kiểm xác định**
   (`tools/injection_signals.py`): 54/54 ca P3+P6 bị cờ, 0/54 A0/A1 bị cờ nhầm. Đừng coi lời dặn trong
   prompt là biện pháp an ninh; nó chỉ là thứ tốt-nếu-có. Số liệu: `scripts/tn5_sau_va_chu_hien.py`.
+  **Thứ giảm được việc thi hành là KHÔNG ĐƯA câu lệnh cho LLM:** `strip_instructions` cắt từ chỗ khớp
+  mẫu tới hết dòng trước khi gửi → P3 **27/27 → 0/27**, P6 **17/27 → 0/27**, số năm/họ tên bóc ra về
+  đúng giá trị của bản sạch, A0/A1 không đổi. Cắt tới HẾT DÒNG chứ không cắt cả dòng: payload hay nối
+  vào cuối một đoạn thật. Lý do cho HR vẫn trích câu lệnh NGUYÊN VĂN (đọc tín hiệu trên văn bản gốc).
+  Giới hạn: câu lệnh chỉ bị cắt nếu khớp mẫu — lệnh né được mọi mẫu vẫn tới LLM (lưới `parsed_signals`
+  phía sau bắt phần hậu quả), và PDF xuống dòng giữa câu lệnh thì chỉ cắt được dòng có mẫu.
 - **Harness giấu MỌI payload cùng một cách sẽ thổi phồng bộ lọc chữ ẩn (12).** TN-5 nhét cả P1–P6
   bằng chữ trắng 1pt, nên riêng bộ lọc chữ ẩn đã đưa 57/57 về 0 — con số đó KHÔNG nói gì về injection
   viết bằng chữ thường. Đo lại bằng biến thể chữ HIỆN (bỏ màu/cỡ khỏi run) để tách từng lớp.
