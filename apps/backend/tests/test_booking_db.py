@@ -478,7 +478,7 @@ async def test_booking_view_projection_and_already_booked(Session, apps: list[in
         assert view["already_booked"] is False
         assert view["slots"] and view["hold_expires_at"] is not None
         assert set(view) == {
-            "job_title", "candidate_name", "already_booked",
+            "job_title", "already_booked",
             "booked_start_at", "booked_end_at", "slots", "hold_expires_at",
         }
 
@@ -637,7 +637,7 @@ async def test_invite_reuses_live_session_instead_of_minting_second_token(  # no
         app_row = await s.get(Application, apps[0])
         for _ in range(2):
             await booking_flow.dispatch_booking_invite(
-                s, app_row, applicant_email="a@e.com", candidate_name="A",
+                s, app_row, applicant_email="a@e.com",
                 job_title="Backend", audit_node="human_review",
             )
         assert len(urls) == 1, f"gửi {len(urls)} thư mời cho một quyết định"
@@ -935,7 +935,7 @@ async def test_two_concurrent_invites_produce_one_link(  # noqa: N803
         async with Session() as s:
             app_row = await s.get(Application, app_id)
             await booking_flow.dispatch_booking_invite(
-                s, app_row, applicant_email="a@e.com", candidate_name="A",
+                s, app_row, applicant_email="a@e.com",
                 job_title="Backend", audit_node="human_review",
             )
 

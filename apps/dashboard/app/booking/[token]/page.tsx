@@ -217,8 +217,7 @@ export default function BookingPage() {
         <>
           <h1 className="text-[26px] sm:text-[30px]">Chọn giờ phỏng vấn</h1>
           <p className="mt-2 max-w-[62ch] text-[15px] leading-relaxed text-ink/70">
-            Chào <strong className="font-semibold text-ink">{view.candidate_name}</strong>, vui lòng
-            chọn một khung giờ phù hợp cho buổi phỏng vấn vị trí{" "}
+            Chào bạn, vui lòng chọn một khung giờ phù hợp cho buổi phỏng vấn vị trí{" "}
             <strong className="font-semibold text-ink">{view.job_title}</strong>. Tất cả thời gian
             theo giờ Việt Nam.
           </p>

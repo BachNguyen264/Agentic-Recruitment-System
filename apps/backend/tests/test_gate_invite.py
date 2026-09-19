@@ -224,7 +224,7 @@ async def test_resume_auto_invite_sends_invite_and_schedules(monkeypatch) -> Non
     assert app_row.status == ApplicationStatus.AWAITING_BOOKING.value  # chỉ đặt khi thư mời đã gửi
     assert res["status"] == ApplicationStatus.AWAITING_BOOKING.value and res["branch"] == "auto_invite"
     assert captured["mode"] == "invite" and captured["applicant_email"] == "me@e.com"
-    assert captured["candidate_name"] == "Nguyễn Văn A" and captured["job_title"] == "Backend Intern"
+    assert "candidate_name" not in captured and captured["job_title"] == "Backend Intern"
     assert "/booking/" in captured["booking_url"], "thư mời PHẢI kèm link tự đặt lịch (PRD §10b.1)"
     # Phiên đặt lịch được tạo CÙNG lượt (token trong link phải tra được, nếu không ứng viên gặp 404).
     sessions = [o for o in session.added if isinstance(o, BookingSession)]

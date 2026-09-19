@@ -163,7 +163,6 @@ async def notify_decision(
     *,
     application_id: int,
     applicant_email: str,
-    candidate_name: str,
     job_title: str,
     booking_url: str | None = None,
     deadline_text: str = "",
@@ -184,10 +183,10 @@ async def notify_decision(
                 "sẽ để ứng viên mắc kẹt (PRD §10b.1)."
             )
         subject, html = invite_email(
-            candidate_name, job_title, booking_url=booking_url, deadline_text=deadline_text
+            job_title, booking_url=booking_url, deadline_text=deadline_text
         )
     else:
-        subject, html = rejection_email(candidate_name, job_title)
+        subject, html = rejection_email(job_title)
 
     return await _dispatch(
         session, application_id=application_id, mode=mode,
@@ -200,7 +199,6 @@ async def notify_screener(
     *,
     application_id: int,
     applicant_email: str,
-    candidate_name: str,
     job_title: str,
     form_url: str,
     deadline_text: str,
@@ -214,7 +212,7 @@ async def notify_screener(
     mode = "screener_reminder" if reminder else "screener"
     builder = screener_reminder_email if reminder else screener_email
     subject, html = builder(
-        candidate_name, job_title, form_url=form_url, deadline_text=deadline_text
+        job_title, form_url=form_url, deadline_text=deadline_text
     )
     return await _dispatch(
         session, application_id=application_id, mode=mode,
@@ -227,7 +225,6 @@ async def notify_booking_confirmed(
     *,
     application_id: int,
     applicant_email: str,
-    candidate_name: str,
     job_title: str,
     booking: InterviewBooking,
     manage_url: str | None = None,
@@ -245,7 +242,7 @@ async def notify_booking_confirmed(
     nhận vì một tệp đính kèm là bỏ rơi đúng người vừa đặt lịch xong.
     """
     subject, html = booking_confirmed_email(
-        candidate_name, job_title, start_at=booking.start_at, end_at=booking.end_at,
+        job_title, start_at=booking.start_at, end_at=booking.end_at,
         manage_url=manage_url,
     )
     attachments, calendar_ref = await _interview_ics(
@@ -263,7 +260,6 @@ async def notify_interview_reminder(
     *,
     application_id: int,
     applicant_email: str,
-    candidate_name: str,
     job_title: str,
     booking: InterviewBooking,
     manage_url: str | None = None,
@@ -274,7 +270,7 @@ async def notify_interview_reminder(
     được vào ứng dụng lịch hay không, nên vẫn gửi thư (không đính kèm) thay vì bỏ nhắc.
     """
     subject, html = interview_reminder_email(
-        candidate_name, job_title, start_at=booking.start_at, end_at=booking.end_at,
+        job_title, start_at=booking.start_at, end_at=booking.end_at,
         manage_url=manage_url,
     )
     attachments, calendar_ref = await _interview_ics(
@@ -292,14 +288,13 @@ async def notify_booking_reminder(
     *,
     application_id: int,
     applicant_email: str,
-    candidate_name: str,
     job_title: str,
     booking_url: str,
     deadline_text: str,
 ) -> dict:
     """Thư NHẮC ứng viên chọn giờ khi liên kết sắp hết hạn (SCH-3 · FR-BOOK-3). DÙNG LẠI link cũ."""
     subject, html = booking_reminder_email(
-        candidate_name, job_title, booking_url=booking_url, deadline_text=deadline_text
+        job_title, booking_url=booking_url, deadline_text=deadline_text
     )
     return await _dispatch(
         session, application_id=application_id, mode="booking_reminder",
@@ -312,7 +307,6 @@ async def notify_booking_cancelled(
     *,
     application_id: int,
     applicant_email: str,
-    candidate_name: str,
     job_title: str,
     start_at: datetime,
     end_at: datetime | None = None,
@@ -330,7 +324,7 @@ async def notify_booking_cancelled(
     Sinh tệp hỏng KHÔNG được chặn thư huỷ: biết mình bị huỷ quan trọng hơn tệp đính kèm.
     """
     subject, html = booking_cancelled_email(
-        candidate_name, job_title, start_at=start_at, rebook_url=rebook_url, by_hr=by_hr
+        job_title, start_at=start_at, rebook_url=rebook_url, by_hr=by_hr
     )
     attachments: Attachments | None = None
     if booking_id is not None and end_at is not None:

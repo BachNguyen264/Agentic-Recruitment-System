@@ -349,7 +349,6 @@ export interface BookingSlot {
 
 export interface BookingView {
   job_title: string;
-  candidate_name: string;
   // Đã chốt lịch → hiện "bạn đã đặt lúc X", KHÔNG render danh sách chọn. Đây là TRẠNG THÁI bình
   // thường (token không one-time nên mở lại link là chuyện thường), không phải lỗi.
   already_booked: boolean;

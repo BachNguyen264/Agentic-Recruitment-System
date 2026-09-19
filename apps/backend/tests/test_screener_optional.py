@@ -270,7 +270,7 @@ async def test_process_no_questions_auto_invite_sends_invite(monkeypatch) -> Non
 
     assert app_row.status == ApplicationStatus.AWAITING_BOOKING.value  # chỉ đặt khi thư mời đã gửi
     assert captured["mode"] == "invite" and captured["applicant_email"] == "me@e.com"
-    assert captured["candidate_name"] == "Nguyễn Văn A" and captured["job_title"] == "Backend Intern"
+    assert "candidate_name" not in captured and captured["job_title"] == "Backend Intern"
     assert "/booking/" in captured["booking_url"]
     audits = [(a.node, a.action) for a in session.added if isinstance(a, AuditLog)]
     assert ("gate", "booking_invite_sent") in audits

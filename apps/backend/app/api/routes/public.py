@@ -160,7 +160,6 @@ async def get_booking(token: str, session: DBSession) -> PublicBookingRead:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
     return PublicBookingRead(
         job_title=view["job_title"],
-        candidate_name=view["candidate_name"],
         already_booked=view["already_booked"],
         booked_start_at=view["booked_start_at"],
         booked_end_at=view["booked_end_at"],

@@ -182,7 +182,7 @@ async def test_background_auto_reject_delegates_scheduler(monkeypatch) -> None:
     assert app_row.status == ApplicationStatus.REJECTED.value
     assert captured["mode"] == "reject"
     assert captured["applicant_email"] == "me@e.com"
-    assert captured["candidate_name"] == "Nguyễn Văn A"
+    assert "candidate_name" not in captured
     assert captured["job_title"] == "Backend Intern"
     # Audit gate/auto_reject được ghi (điểm phát email do scheduler tự ghi).
     audits = [(a.node, a.action) for a in session.added if isinstance(a, AuditLog)]
