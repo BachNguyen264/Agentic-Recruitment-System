@@ -20,7 +20,7 @@ from app.models.application import ApplicationStatus
 from app.schemas.parsed_cv import ParsedCV
 from app.services.storage import StorageError, get_storage
 from app.tools.cv_reader import HIDDEN_FLAG_MIN_CHARS, CVReadError, extract_text_bounded
-from app.tools.injection_signals import parsed_signals, text_signals
+from app.tools.injection_signals import parsed_signals, strip_instructions, text_signals
 
 logger = get_logger("app.agents.parser")
 
@@ -135,9 +135,14 @@ def parse_cv(data: bytes, name: str, *, llm: Any | None = None) -> dict:
     if truncated:
         logger.warning("parser: CV %s dài quá trần %d ký tự — đã cắt, gắn cờ cv_truncated", name, budget)
 
+    # Tín hiệu đọc trên văn bản GỐC (HR cần thấy câu lệnh nguyên văn trong lý do); LLM chỉ nhận bản
+    # ĐÃ CẮT — lời dặn trong prompt không ngăn được parser thi hành lệnh (đo: 27/27), cắt thì được.
+    text_hits = text_signals(text)
+    llm_text, cut_chars = strip_instructions(text) if text_hits else (text, 0)
+
     try:
         client = llm or _build_parser_llm()
-        parsed: ParsedCV = client.invoke(_messages(text))
+        parsed: ParsedCV = client.invoke(_messages(llm_text))
     except Exception as exc:  # noqa: BLE001 — lỗi LLM/API KHÔNG được làm sập pipeline (PRD §7.1)
         logger.warning("parser: lỗi gọi LLM cho %s — %s", name, exc)
         return _failed(f"Lỗi gọi LLM khi parse CV: {exc}")
@@ -166,13 +171,16 @@ def parse_cv(data: bytes, name: str, *, llm: Any | None = None) -> dict:
     # Hậu kiểm: prompt đã dặn không thi hành lệnh trong CV, nhưng lời dặn không phải bảo đảm — ở
     # TN-5 parser từng thi hành 9/9 lượt. Đây là lưới XÁC ĐỊNH phía sau: văn bản có hình dạng chỉ dẫn
     # gửi cho máy, hoặc kết quả bóc tách mang dấu vết bị điều khiển → về người, không gate nào xét.
-    signals = text_signals(text) + parsed_signals(parsed.model_dump())
+    signals = text_hits + parsed_signals(parsed.model_dump())
     if signals:
         logger.warning("parser: CV %s nghi chèn chỉ dẫn — %s", name, "; ".join(signals))
         flags.append("injection_suspected")
+        cut_note = (
+            f" Đã cắt {cut_chars:,} ký tự chứa chỉ dẫn khỏi phần chấm điểm." if cut_chars else ""
+        )
         reasons.append(
-            "Nghi CV chứa chỉ dẫn nhằm điều khiển hệ thống chấm: " + "; ".join(signals)
-            + ". Dữ liệu bóc tách có thể đã bị làm sai — cần HR đối chiếu bản gốc."
+            "Nghi CV chứa chỉ dẫn nhằm điều khiển hệ thống chấm: " + "; ".join(signals) + "."
+            + cut_note + " Dữ liệu bóc tách có thể vẫn bị làm sai — cần HR đối chiếu bản gốc."
         )
     return {
         "parsed_data": parsed.model_dump(),

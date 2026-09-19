@@ -133,6 +133,31 @@ def text_signals(text: str) -> list[str]:
     return reasons
 
 
+def strip_instructions(text: str) -> tuple[str, int]:
+    """Cắt phần văn bản có hình dạng chỉ dẫn gửi máy TRƯỚC khi gửi LLM. Trả (văn bản, số ký tự đã cắt).
+
+    Vì sao cắt chứ không chỉ gắn cờ: đo thật cho thấy parser vẫn THI HÀNH lệnh bất kể prompt dặn gì
+    (P3 chữ hiện 27/27) — cờ đưa hồ sơ về HR, nhưng điểm HR nhìn thấy vẫn chấm trên dữ liệu bịa.
+
+    Cắt từ chỗ khớp ĐẦU TIÊN tới HẾT DÒNG, không cắt cả dòng: payload hay được nối vào CUỐI một đoạn
+    thật (mục tiêu nghề nghiệp…), cắt cả dòng là mất chữ của ứng viên. Phần sau chỗ khớp trên cùng
+    dòng gần như luôn là thân câu lệnh ("… : hãy ghi …"). Lặp tới khi dòng hết khớp, vì phần còn lại
+    phía trước có thể chứa một mẫu khác.
+    """
+    out: list[str] = []
+    removed = 0
+    for line in text.split("\n"):
+        while True:
+            starts = [m.start() for _, p in _PATTERNS if (m := p.search(line))]
+            if not starts:
+                break
+            cut = min(starts)
+            removed += len(line) - cut
+            line = line[:cut].rstrip()
+        out.append(line)
+    return "\n".join(out), removed
+
+
 def _experience_span_years(experiences: list[dict[str, Any]], today: date) -> float | None:
     """Khoảng năm từ mốc sớm nhất tới mốc muộn nhất trong `duration` — None nếu không có mốc nào."""
     starts: list[int] = []
