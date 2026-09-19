@@ -30,7 +30,7 @@ _MISMATCH_SIM_LOW = 0.2   # điểm đạt nhưng cosine rất thấp → nghi n
 _MISMATCH_SIM_HIGH = 0.5  # điểm trượt nhưng cosine cao → nghi ngờ
 _OVERALL_DIVERGE = 20.0   # |điểm tính lại − điểm LLM| lớn → log (không tin mù)
 # Cờ parser đặt mà ranker phải chở qua (xem `ranker_node`).
-_PARSER_FLAGS_TO_CARRY = frozenset({"cv_truncated", "hidden_text"})
+_PARSER_FLAGS_TO_CARRY = frozenset({"cv_truncated", "hidden_text", "injection_suspected"})
 
 _SENTINEL_FETCH: Any = object()  # jd_vector chưa truyền → tự fetch từ Qdrant
 
@@ -301,7 +301,7 @@ async def ranker_node(state: RecruitmentState) -> dict:
     parsed_data = state.get("parsed_data")
     jd = (state.get("input") or {}).get("jd")
 
-    # Cờ của parser (`cv_truncated`, `hidden_text`) phải SỐNG SÓT qua ranker. MỌI nhánh return bên
+    # Cờ của parser (`cv_truncated`, `hidden_text`, `injection_suspected`) phải SỐNG SÓT qua ranker. MỌI nhánh return bên
     # dưới đều THAY MỚI trọn `uncertainty_flags` bằng kết quả của riêng ranker, nên không chở tay thì
     # cờ biến mất im lặng và hồ sơ đi thẳng vào gate tự động với confidence cao — đúng lớp lỗi mà
     # nhánh `parse_failed` ngay dưới đã phải dựng rào riêng để chặn.

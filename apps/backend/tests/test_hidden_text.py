@@ -244,8 +244,9 @@ class _CapturingLLM:
     def __init__(self) -> None:
         self.prompt = ""
 
-    def invoke(self, prompt: str) -> ParsedCV:
-        self.prompt = prompt
+    def invoke(self, messages: list[tuple[str, str]]) -> ParsedCV:
+        # Ghép NỘI DUNG — `"x" not in <list>` luôn đúng và làm mọi assert bên dưới xanh giả.
+        self.prompt = "\n".join(content for _, content in messages)
         return ParsedCV(full_name="Nguyễn Văn A", email="a@e.com", skills=["Python"])
 
 
