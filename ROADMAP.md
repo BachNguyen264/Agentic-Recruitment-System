@@ -101,7 +101,11 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
 
 - **10 — Analytics** (PRD §12.1) — **tí hon / tùy chọn.** Số CV, tỉ lệ passed/rejected/pending per JD (tính được từ DB cho báo cáo).
 - ~~**11 — Observability** (Langfuse)~~ — **ĐÃ BỎ** (không có Super Admin → không khán giả; ops-only). Ghi 'hướng mở rộng' trong báo cáo.
-- **12 — Anti-prompt-injection** (NFR-5) — **hạ ưu tiên → TÙY CHỌN** (probe prod: model kháng tự nhiên; vẫn nên sanitize/frame input, làm cuối nếu còn giờ).
+- **12 — Anti-prompt-injection** (NFR-5) — **✅ XONG (09/2026).** ⚠ Đính chính: câu cũ "probe prod: model kháng
+  tự nhiên" là SAI vì thiếu sót — probe chỉ thử loại "bảo ranker cho 100 điểm" (loại DUY NHẤT tự bị chặn). TN-5
+  (126 lượt LLM thật) cho thấy **parser THI HÀNH** lệnh chèn trong CV (bịa số năm/kỹ năng 9/9 lượt) và tên bịa lọt
+  vào thư. Vá 4 lớp: gỡ tên khỏi thư · loại chữ ẩn + cờ `hidden_text` · prompt parser tách system + dấu phân cách
+  ngẫu nhiên · hậu kiểm xác định → cờ `injection_suspected`. Ranh giới → `docs/AI_GUIDE.md` *Untrusted CV boundary*.
 - **UI redesign — ✅ DONE (merge `e69b57a`).** Full visual pass over the UI. Ghi chép gốc: Do
   it HERE, near the end, as its OWN work: incremental (screen by screen), no-backend-touched (presentational
   components make this safe), verify each piece. Prefer polishing in plain Tailwind (spacing/typography/color/
@@ -253,9 +257,9 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   redesign cổng công khai + đăng nhập, a11y WCAG AA). Ghi chép gốc bên dưới giữ lại làm bối cảnh:
   đánh bóng toàn giao diện trên bản live (SAU khâu tạo-JD, vì user chính = HR). Từng phần,
   no-backend-touched (component presentational), verify từng cái. Ưu tiên Tailwind thuần (spacing/typography/màu/nhất quán).
-- **10 Analytics** (tí hon, tùy chọn) · **12 Anti-injection** (tùy chọn — model đã kháng) · Observability đã BỎ.
+- **10 Analytics** (tí hon, tùy chọn) · **12 Anti-injection** (✅ XONG — model KHÔNG tự kháng ở bước parser, xem mục 12) · Observability đã BỎ.
 - Rồi **VIẾT BÁO CÁO** — tư liệu sẵn: kiến trúc pipeline cố định (không Supervisor), Hướng A scoring, benchmark model,
-  screener bền qua autosuspend (connection-pool resilience), 2 gate + 'cờ thắng gate', 4 sự cố prod, kháng injection.
+  screener bền qua autosuspend (connection-pool resilience), 2 gate + 'cờ thắng gate', 4 sự cố prod, chống injection (TN-5 + 4 lớp vá).
 
 ---
 
@@ -326,7 +330,7 @@ Verified end-to-end live: **CV in → scored → (confident: pass→continue / c
   trong tab · Tải `.docx` · Sửa trên Google Docs — 9 link đã dán) — PRD §8.2b, FR-AP-6/7
 - [x] **PWA-1 — HR dashboard rút gọn + offline** (PRD §14, FR-PWA-1, NFR-4)
 - [ ] Dọn: **đổi mật khẩu admin prod**
-- [x] PHASE 7 — **UI redesign XONG** · [ ] 10 analytics(tùy chọn) · [ ] 12 anti-injection(tùy chọn) · [Observability BỎ] · [ ] **viết báo cáo**
+- [x] PHASE 7 — **UI redesign XONG** · [ ] 10 analytics(tùy chọn) · [x] 12 anti-injection · [Observability BỎ] · [ ] **viết báo cáo**
 - [ ] PHASE 8 — 15 optional (Zalo/push/learning-loop/hard-delete...)
 
 ---
