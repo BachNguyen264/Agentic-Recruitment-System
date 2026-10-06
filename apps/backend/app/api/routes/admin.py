@@ -14,6 +14,8 @@ BA NHÓM, cố ý gom một chỗ vì cùng một khán giả (HR ở vai quản
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
@@ -141,6 +143,45 @@ def _field_or_404(key: str):
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
 # 2) Nhật ký kiểm toán
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
+_CREATED_FROM = Query(
+    None, description="Chỉ lấy bản ghi từ thời điểm này (ISO 8601 CÓ múi giờ, BAO GỒM mốc này)"
+)
+_CREATED_TO = Query(
+    None, description="Chỉ lấy bản ghi TRƯỚC thời điểm này (ISO 8601 CÓ múi giờ, KHÔNG bao gồm)"
+)
+
+
+def _created_range(created_from: datetime | None, created_to: datetime | None) -> list:
+    """Điều kiện lọc theo khoảng `[created_from, created_to)` — dùng CHUNG cho danh sách và số đếm
+    theo bước, để chip "Tất cả (n)" đếm đúng tập mà bảng đang hiện.
+
+    Nửa mở (bao gồm đầu, không bao gồm cuối): "đến hết ngày 06/10" = `< 07/10 00:00`, không cần
+    đoán giây cuối cùng của một ngày.
+
+    Mốc KHÔNG múi giờ bị từ chối thay vì đoán: server chạy UTC còn giao diện nghĩ theo giờ Việt Nam,
+    nên một `2026-10-06T00:00:00` trần bị hiểu thành 07:00 sáng giờ VN — bảng lệch 7 tiếng mà
+    không có gì báo lỗi (cùng chính sách với `booking_service._as_utc`).
+    """
+    for value in (created_from, created_to):
+        if value is not None and value.tzinfo is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Thời điểm lọc phải kèm múi giờ (vd 2026-10-06T00:00:00+07:00) — giờ không có múi giờ "
+                "sẽ bị hiểu theo UTC, lệch 7 tiếng so với giờ Việt Nam.",
+            )
+    if created_from is not None and created_to is not None and created_from >= created_to:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Khoảng thời gian rỗng: 'Từ ngày' phải trước 'Đến ngày'.",
+        )
+    where = []
+    if created_from is not None:
+        where.append(AuditLog.created_at >= created_from)
+    if created_to is not None:
+        where.append(AuditLog.created_at < created_to)
+    return where
+
+
 @router.get("/audit-log", response_model=AuditLogPage, summary="Đọc nhật ký kiểm toán")
 async def list_audit_log(
     session: DBSession,
@@ -148,6 +189,8 @@ async def list_audit_log(
     offset: int = Query(0, ge=0),
     node: str | None = Query(None, description="Lọc theo node: parser|ranker|screener|scheduler|human_review|system"),
     application_id: int | None = Query(None, description="Chỉ lấy nhật ký của một hồ sơ"),
+    created_from: datetime | None = _CREATED_FROM,
+    created_to: datetime | None = _CREATED_TO,
 ) -> AuditLogPage:
     """Phân trang SERVER, mới nhất trước.
 
@@ -157,7 +200,7 @@ async def list_audit_log(
 
     Trần `limit` là 200 vì mỗi dòng chở theo `detail` JSONB có thể khá nặng.
     """
-    where = []
+    where = _created_range(created_from, created_to)
     if node:
         where.append(AuditLog.node == node)
     if application_id is not None:
@@ -203,13 +246,21 @@ async def list_audit_log(
 
 
 @router.get("/audit-log/nodes", response_model=dict[str, int], summary="Đếm bản ghi theo node")
-async def audit_log_node_counts(session: DBSession) -> dict[str, int]:
+async def audit_log_node_counts(
+    session: DBSession,
+    created_from: datetime | None = _CREATED_FROM,
+    created_to: datetime | None = _CREATED_TO,
+) -> dict[str, int]:
     """Nguồn cho bộ lọc: chỉ hiện node THỰC SỰ có dữ liệu, kèm số lượng.
 
     MỘT câu SQL GROUP BY, payload cỡ cố định — cùng lý do như `/applications/pipeline`: đừng bắt
-    giao diện tải cả bảng về rồi tự đếm.
+    giao diện tải cả bảng về rồi tự đếm. Nhận CÙNG khoảng thời gian với danh sách: đếm cả bảng trong
+    khi bảng chỉ hiện vài dòng là hai con số nói hai chuyện khác nhau trên cùng một màn.
     """
+    where = _created_range(created_from, created_to)
     rows = (
-        await session.execute(select(AuditLog.node, func.count()).group_by(AuditLog.node))
+        await session.execute(
+            select(AuditLog.node, func.count()).where(*where).group_by(AuditLog.node)
+        )
     ).all()
     return {node: count for node, count in rows}
