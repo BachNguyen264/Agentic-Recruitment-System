@@ -49,6 +49,9 @@ export interface PipelineItem {
   applicant_email: string;
   job_id: number | null;
   status: ApplicationStatus;
+  // Dịch vụ gửi đã từ chối lá thư gần nhất — để dòng "Đang chạy trực tiếp" không ghi "Chờ ứng viên trả
+  // lời" cho một ứng viên chưa từng có link (prod 06/10/2026).
+  email_send_failed: boolean;
 }
 
 export interface PipelineSnapshot {

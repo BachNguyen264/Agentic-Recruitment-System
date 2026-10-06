@@ -47,16 +47,21 @@ const RESEND_DONE: Record<ResendableEmail, string> = {
 
 // Banner ⛔ phải chỉ ĐÚNG bước tiếp theo theo trạng thái. Câu chung cũ ("gửi lại cho chính địa chỉ
 // này") hứa một nút KHÔNG tồn tại ở phần lớn các trạng thái — HR đọc xong không biết bấm vào đâu.
-function sendFailureNextStep(app: ApplicationDetail): string {
-  if (app.resendable_email === "screener")
-    return "bấm Gửi lại thư sàng lọc bên dưới — hệ thống phát liên kết MỚI, hạn trả lời tính lại từ đầu, liên kết cũ ngừng hoạt động.";
-  if (app.resendable_email === "reject") return "bấm Gửi lại thư từ chối bên dưới.";
+// Trên bản PWA đã cài, mọi nút gửi thư ở trang này bị ẩn (PRD §14) — câu gợi ý không được hứa chúng.
+function sendFailureNextStep(app: ApplicationDetail, readOnly: boolean): string {
   if (app.email_complained)
-    return "đừng gửi lại — ứng viên đã báo cáo thư là spam (xem cảnh báo phía trên).";
+    return "KHÔNG gửi lại — ứng viên đã báo cáo thư là spam (xem cảnh báo phía trên).";
   if (app.status === "PENDING_REVIEW")
-    return "quyết định ở hàng chờ review — Duyệt hay Từ chối đều gửi một thư mới cho ứng viên.";
-  if (app.status === "AWAITING_BOOKING") return "dùng nút Gửi lại link đặt lịch bên dưới.";
-  return "liên hệ ứng viên thủ công nếu cần.";
+    return "Sửa cấu hình gửi thư, rồi quyết định ở hàng chờ review — Duyệt hay Từ chối đều gửi một thư mới cho ứng viên.";
+  if (readOnly && (Boolean(app.resendable_email) || app.status === "AWAITING_BOOKING"))
+    return "Mở hồ sơ này trên bản web để gửi lại thư — bản cài trên điện thoại chỉ để xem.";
+  if (app.resendable_email === "screener")
+    return "Sửa cấu hình gửi thư, rồi bấm Gửi lại thư sàng lọc bên dưới — hệ thống phát liên kết MỚI, hạn trả lời tính lại từ đầu, liên kết cũ ngừng hoạt động.";
+  if (app.resendable_email === "reject")
+    return "Sửa cấu hình gửi thư, rồi bấm Gửi lại thư từ chối bên dưới.";
+  if (app.status === "AWAITING_BOOKING")
+    return "Sửa cấu hình gửi thư, rồi dùng nút Gửi lại link đặt lịch bên dưới.";
+  return "Sửa cấu hình gửi thư; liên hệ ứng viên thủ công nếu cần.";
 }
 
 export default function ApplicationDetailPage() {
@@ -254,8 +259,10 @@ export default function ApplicationDetailPage() {
               <p className="mt-1.5 text-[13px] text-amber-900">
                 Thư gửi tới <strong>{app.applicant_email}</strong> KHÔNG rời khỏi hệ thống (khác với
                 bounce: ở đây địa chỉ ứng viên không có lỗi gì). Thường do cạn hạn mức gửi, domain
-                chưa xác thực, hoặc khoá API hỏng — sửa cấu hình gửi thư trước, rồi{" "}
-                {sendFailureNextStep(app)}
+                chưa xác thực, hoặc khoá API hỏng.
+              </p>
+              <p className="mt-1.5 text-[13px] text-amber-900">
+                <strong>Bước tiếp theo:</strong> {sendFailureNextStep(app, readOnly)}
               </p>
               {app.email_send_failure_reason && (
                 <p className="mt-1.5 break-words text-[13px] text-amber-900">

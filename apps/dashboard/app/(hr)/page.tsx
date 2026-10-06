@@ -380,12 +380,23 @@ export default function DashboardPage() {
                     {a.job_id ? (jobTitle.get(a.job_id) ?? `JD #${a.job_id}`) : "Không gắn JD"}
                   </span>
                 </span>
-                <span className="flex flex-none items-center gap-2">
-                  <span className="h-[7px] w-[7px] rounded-full bg-accent motion-safe:animate-pulse-dot" aria-hidden />
-                  <span className="hidden text-[13px] text-ink/65 sm:inline">
-                    {STATUS_LABEL[a.status] ?? a.status}
+                {/* Thư bị dịch vụ gửi từ chối: "Chờ ứng viên trả lời" ở đây là nói dối — ứng viên có
+                    thể chưa từng có link (prod 06/10/2026). Không nhấp nháy: không có gì đang chạy. */}
+                {a.email_send_failed ? (
+                  <span className="flex flex-none items-center gap-2">
+                    <span className="h-[7px] w-[7px] rounded-full bg-amber-500" aria-hidden />
+                    <span className="hidden text-[13px] font-semibold text-amber-800 sm:inline">
+                      ⛔ Thư chưa gửi được
+                    </span>
                   </span>
-                </span>
+                ) : (
+                  <span className="flex flex-none items-center gap-2">
+                    <span className="h-[7px] w-[7px] rounded-full bg-accent motion-safe:animate-pulse-dot" aria-hidden />
+                    <span className="hidden text-[13px] text-ink/65 sm:inline">
+                      {STATUS_LABEL[a.status] ?? a.status}
+                    </span>
+                  </span>
+                )}
               </Link>
             ))}
           </div>

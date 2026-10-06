@@ -108,7 +108,11 @@ export function AuditLogTab({ active }: { active: boolean }) {
   // `min`/`max` của ô ngày chỉ ràng buộc bộ chọn — gõ tay vẫn ra khoảng ngược, và Chrome cho gõ cả
   // năm 5–6 chữ số (ô date nhận tới năm 275760; bắt gặp thật khi kiểm). Chặn ở đây (so chuỗi
   // YYYY-MM-DD là so ngày) thay vì để backend trả 422 rồi hiện như "không tải được nhật ký".
-  const wellFormed = (day: string) => day === "" || /^\d{4}-\d{2}-\d{2}$/.test(day);
+  // Năm 1970–2999 (khớp chốt chặn backend `admin._created_range`): ngoài khoảng đó backend trả 422, và
+  // năm 0000–0099 còn bị `Date.UTC` hiểu thành 1900–1999 khi tính mốc ngày hôm sau.
+  const wellFormed = (day: string) =>
+    day === "" ||
+    (/^\d{4}-\d{2}-\d{2}$/.test(day) && Number(day.slice(0, 4)) >= 1970 && Number(day.slice(0, 4)) <= 2999);
   const malformed = !wellFormed(fromDay) || !wellFormed(toDay);
   const reversed = !malformed && fromDay !== "" && toDay !== "" && fromDay > toDay;
   const badRange = malformed || reversed;
@@ -224,7 +228,7 @@ export function AuditLogTab({ active }: { active: boolean }) {
       {badRange && (
         <p role="alert" className="mb-4 text-[13px] font-semibold text-red-700">
           {malformed
-            ? "Ngày không hợp lệ — kiểm tra lại năm (4 chữ số)."
+            ? "Ngày không hợp lệ — năm phải từ 1970 đến 2999."
             : "“Từ ngày” phải trước hoặc bằng “Đến ngày”."}
         </p>
       )}
