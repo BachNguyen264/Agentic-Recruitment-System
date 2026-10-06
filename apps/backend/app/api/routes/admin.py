@@ -14,7 +14,7 @@ BA NHÓM, cố ý gom một chỗ vì cùng một khán giả (HR ở vai quản
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -149,6 +149,10 @@ _CREATED_FROM = Query(
 _CREATED_TO = Query(
     None, description="Chỉ lấy bản ghi TRƯỚC thời điểm này (ISO 8601 CÓ múi giờ, KHÔNG bao gồm)"
 )
+# Năm 0001 parse được thành datetime nhưng đổi sang UTC thì asyncpg tràn số (OverflowError → HTTP 500),
+# và ô date của trình duyệt cho gõ năm tuỳ ý. Khoảng rộng hơn mọi nhật ký thật mà hệ thống có thể có.
+_EARLIEST = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_LATEST = datetime(3000, 1, 1, tzinfo=timezone.utc)
 
 
 def _created_range(created_from: datetime | None, created_to: datetime | None) -> list:
@@ -163,11 +167,18 @@ def _created_range(created_from: datetime | None, created_to: datetime | None) -
     không có gì báo lỗi (cùng chính sách với `booking_service._as_utc`).
     """
     for value in (created_from, created_to):
-        if value is not None and value.tzinfo is None:
+        if value is None:
+            continue
+        if value.tzinfo is None:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Thời điểm lọc phải kèm múi giờ (vd 2026-10-06T00:00:00+07:00) — giờ không có múi giờ "
                 "sẽ bị hiểu theo UTC, lệch 7 tiếng so với giờ Việt Nam.",
+            )
+        if not _EARLIEST <= value < _LATEST:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Thời điểm lọc phải nằm trong khoảng năm 1970–2999.",
             )
     if created_from is not None and created_to is not None and created_from >= created_to:
         raise HTTPException(

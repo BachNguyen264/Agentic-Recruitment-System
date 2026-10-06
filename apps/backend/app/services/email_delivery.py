@@ -77,8 +77,11 @@ _REASON_SCREENER = "Thư SÀNG LỌC không tới được ứng viên — cần
 _REASON_INVITE_FAILED = (
     "Hệ thống KHÔNG GỬI ĐƯỢC thư mời phỏng vấn (lỗi phía dịch vụ gửi) — kiểm tra lý do rồi gửi lại."
 )
+# KHÔNG hứa "gửi lại": hồ sơ đã bị hạ về PENDING_REVIEW và phiên sàng lọc đã đóng, nên nút "Gửi lại
+# thư sàng lọc" (FR-SCR-7, chỉ cho AWAITING_SCREENER) không áp dụng — việc của HR là quyết định.
 _REASON_SCREENER_FAILED = (
-    "Hệ thống KHÔNG GỬI ĐƯỢC thư sàng lọc (lỗi phía dịch vụ gửi) — kiểm tra lý do rồi gửi lại."
+    "Hệ thống KHÔNG GỬI ĐƯỢC thư sàng lọc (lỗi phía dịch vụ gửi) — ứng viên chưa có link trả lời. "
+    "Kiểm tra lý do, sửa cấu hình gửi thư rồi Duyệt hoặc Từ chối."
 )
 _BOUNCE_REASONS = frozenset(
     {_REASON_INVITE, _REASON_SCREENER, _REASON_INVITE_FAILED, _REASON_SCREENER_FAILED}

@@ -74,6 +74,15 @@ async def test_naive_timestamp_is_rejected(client: httpx.AsyncClient, path: str,
 
 
 @pytest.mark.parametrize("path", ["/api/admin/audit-log", "/api/admin/audit-log/nodes"])
+async def test_year_out_of_range_is_rejected_not_a_500(client: httpx.AsyncClient, path: str) -> None:
+    """Năm 0001 parse được thành datetime, nhưng đổi sang UTC thì asyncpg tràn (OverflowError) →
+    HTTP 500. Ô date của trình duyệt cho gõ năm tuỳ ý nên đây không phải ca lý thuyết."""
+    async with client as c:
+        r = await c.get(path, params={"created_from": "0001-01-01T00:00:00+07:00"})
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize("path", ["/api/admin/audit-log", "/api/admin/audit-log/nodes"])
 async def test_reversed_range_is_rejected(client: httpx.AsyncClient, path: str) -> None:
     async with client as c:
         r = await c.get(path, params={

@@ -13,16 +13,23 @@ Thư MỜI cố ý VẮNG MẶT: nó đã có đường cứu riêng (gửi hỏ
 "Gửi lại link đặt lịch"). Thêm đường thứ hai ở đây là lặp lại thứ tự email-trước-trạng-thái-sau mà
 AI_GUIDE bắt mọi đường mời phải đi chung qua `booking_flow.dispatch_booking_invite`.
 
-THỨ TỰ trong `resend_failed_email` là có chủ ý — mỗi bước chặn một lỗi đã từng cắn ở repo này:
-khoá theo hồ sơ → đọc lại dưới khoá → GỠ CỜ + phát phiên mới + audit → COMMIT → gửi → `refresh`.
+BA PHA trong `resend_failed_email`, mỗi pha chặn một lỗi đã tái hiện được trên Postgres thật:
+1. CHIẾM (`_claim`): khoá tư vấn → khoá hàng PHIÊN sàng lọc → khoá hàng HỒ SƠ → gỡ cờ + đóng phiên cũ +
+   phát phiên mới + audit → COMMIT. Thứ tự khoá TRÙNG với `screening.submit_answers` và sweep hết hạn
+   (hàng phiên trước, hàng hồ sơ sau) — ngược thứ tự là deadlock với chính lượt ứng viên nộp câu trả
+   lời. Gỡ cờ trước khi gửi là chốt chống bấm đúp (lượt hai thấy hết cờ → 409).
+2. GỬI qua `scheduler` (điểm phát DUY NHẤT), KHÔNG giữ connection/khoá nào (Load boundary).
+3. CHỐT hoặc HOÀN: gửi được → ghi mốc hiển thị; gửi hỏng → đóng phiên MỚI (chưa tới tay ai) và MỞ LẠI
+   phiên cũ — ứng viên có thể đang cầm đúng link đó (ca chỉ thư NHẮC hỏng), đóng nó rồi gửi hỏng là họ
+   mất cả hai link.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Literal
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.nodes import scheduler
@@ -34,6 +41,7 @@ from app.models.email_delivery import DeliveryStatus, EmailDelivery
 from app.models.screening_session import ScreeningSession
 from app.services import audit_service, booking_flow, booking_service, screening
 from app.services.email_delivery import EMAIL_COMPLAINED_FLAG, EMAIL_SEND_FAILED_FLAG
+from app.services.resend_policy import ResendableEmail, resendable_email
 
 logger = get_logger("app.services.email_resend")
 
@@ -44,14 +52,6 @@ __all__ = [
     "resend_failed_email",
     "resendable_email",
 ]
-
-ResendableEmail = Literal["screener", "reject"]
-
-# Trạng thái → loại thư gửi lại được ở trạng thái đó. Chỉ hai ca KHÔNG còn đường cứu nào khác.
-_RESENDABLE_BY_STATUS: dict[str, ResendableEmail] = {
-    ApplicationStatus.AWAITING_SCREENER.value: "screener",
-    ApplicationStatus.REJECTED.value: "reject",
-}
 
 # Lý do là văn bản do BÊN NGOÀI trả về (Resend) — cắt ngắn trước khi lên UI, cùng trần với
 # `email_delivery._MAX_REASON`.
@@ -68,28 +68,25 @@ class ResendError(Exception):
         self.status_code = status_code
 
 
+@dataclass(frozen=True)
+class _Claim:
+    """Những gì pha CHIẾM đã cam kết — chỉ giá trị nguyên thuỷ, vì session bị `expunge_all` trước
+    lượt gửi (xem `resend_failed_email`)."""
+
+    kind: ResendableEmail
+    applicant_email: str
+    job_title: str
+    new_session_id: int | None = None
+    new_token: str | None = None
+    retired_session_ids: tuple[int, ...] = ()
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def resendable_email(status: str, flags: list | None) -> ResendableEmail | None:
-    """Loại thư HR gửi lại được cho hồ sơ này, hoặc `None`. Nguồn DUY NHẤT cho cả nút trên UI
-    (`ApplicationRead.resendable_email`) lẫn chốt chặn của `resend_failed_email` — hai nơi tự suy
-    riêng thì HR thấy nút rồi bấm ra 409.
-
-    - Phải có `email_send_failed`: đây là đường CỨU một lá thư hỏng, không phải kênh nhắc tuỳ ý.
-      Bounce KHÔNG tính — địa chỉ chết thì gửi lại vào đúng địa chỉ đó là vô ích.
-    - Ứng viên đã báo spam (`email_complained`) → không bao giờ gửi thêm: complaint hại danh tiếng
-      gửi email của CẢ hệ thống.
-    """
-    current = set(flags or [])
-    if EMAIL_SEND_FAILED_FLAG not in current or EMAIL_COMPLAINED_FLAG in current:
-        return None
-    return _RESENDABLE_BY_STATUS.get(status)
-
-
 async def latest_send_failure_reason(session: AsyncSession, application_id: int) -> str | None:
-    """Lý do GẦN NHẤT khiến dịch vụ gửi không đẩy được thư đi — cho banner ⛔ của HR.
+    """Lý do của lần gửi hỏng GẦN NHẤT — cho banner ⛔ của HR.
 
     Hai nguồn, vì hai đường vào của CÙNG một sự kiện (EMAIL-2) để lại dấu ở hai bảng khác nhau:
     - Resend từ chối NGAY lúc gọi (403 sandbox, cạn hạn mức…) → `_dispatch` KHÔNG tạo hàng
@@ -97,7 +94,8 @@ async def latest_send_failure_reason(session: AsyncSession, application_id: int)
       `scheduler/email_failed`. Trước bản vá, banner bảo HR "kiểm tra lý do bên dưới" mà bên dưới
       trống trơn đúng ở ca phổ biến nhất này.
     - Resend nhận rồi mới báo hỏng qua webhook → `email_delivery.status = FAILED` + `bounce_reason`.
-    Lấy cái MỚI hơn: thứ HR cần đọc là lỗi đang chặn họ bây giờ, không phải lỗi đã qua.
+    Chọn SỰ KIỆN mới hơn rồi mới lấy lý do của nó: sự kiện mới nhất không kèm lý do thì trả `None`,
+    KHÔNG mượn lý do của một lần hỏng cũ (có thể đã hết) — đó là trình bày sai nguyên nhân.
     """
     delivery = (
         await session.execute(
@@ -123,14 +121,15 @@ async def latest_send_failure_reason(session: AsyncSession, application_id: int)
         )
     ).first()
 
-    candidates: list[tuple[datetime, str]] = []
-    if delivery is not None and delivery.bounce_reason:
-        candidates.append((delivery.updated_at, delivery.bounce_reason))
-    if audit is not None and (audit.detail or {}).get("error"):
-        candidates.append((audit.created_at, str(audit.detail["error"])))
-    if not candidates:
+    events: list[tuple[datetime, str | None]] = []
+    if delivery is not None:
+        events.append((delivery.updated_at, delivery.bounce_reason))
+    if audit is not None:
+        events.append((audit.created_at, (audit.detail or {}).get("error")))
+    if not events:
         return None
-    return max(candidates, key=lambda c: c[0])[1][:_MAX_REASON]
+    reason = max(events, key=lambda e: e[0])[1]
+    return str(reason)[:_MAX_REASON] if reason else None
 
 
 def _refusal(app_row: Application) -> str:
@@ -146,85 +145,88 @@ def _refusal(app_row: Application) -> str:
     )
 
 
-async def _reissue_screening_session(session: AsyncSession, app_row: Application) -> ScreeningSession:
-    """Đóng phiên sàng lọc đang mở + phát phiên MỚI (FR-SCR-7). KHÔNG commit — caller commit.
+async def _lock_screening_sessions(
+    session: AsyncSession, application_id: int, *, ids: tuple[int, ...] | None = None
+) -> list[ScreeningSession]:
+    """Khoá (FOR UPDATE) hàng phiên sàng lọc — LUÔN gọi TRƯỚC khi chạm hàng hồ sơ.
 
-    Phiên MỚI chứ không dùng lại token cũ (quyết định của người dùng, cùng nguyên tắc §10b.6 "phát
-    phiên MỚI, TTL mới"): ứng viên chưa từng nhận thư, nên hạn 72h và mốc nhắc 24h phải tính từ lúc
-    họ THỰC SỰ nhận được — dùng lại phiên cũ thì gửi lại ở giờ thứ 70 chỉ còn 2 giờ để trả lời.
-
-    Phiên cũ PHẢI đóng (`timed_out_at`, đúng cách `email_delivery._abandon_in_flight_session` đóng
-    phiên): để nó sống thì lưới sweep vẫn đi nhắc bằng link CŨ, rồi tới hạn CŨ nó resume graph với
-    `no_response` và kéo hồ sơ về `PENDING_REVIEW` trong khi phiên mới còn nguyên hạn.
-
-    Bộ câu hỏi lấy từ phiên gần nhất, KHÔNG đọc lại JD: ảnh chụp lúc gửi là thứ ứng viên được hỏi
-    (PRD §16), HR sửa JD sau đó không được đổi câu hỏi giữa chừng.
+    `ids=None` → các phiên đang MỞ của hồ sơ (pha chiếm); có `ids` → đúng những phiên đó (pha chốt/
+    hoàn). Lượt nộp câu trả lời đang resume giữ khoá hàng phiên: ta CHỜ ở đây, mà không giữ khoá hàng
+    hồ sơ nào để nó phải chờ lại — nên không thể có deadlock. Sau khi nó commit, Postgres xét lại
+    điều kiện WHERE trên bản mới, nên phiên vừa được dùng (`used_at`) tự rơi khỏi kết quả.
     """
-    latest = (
-        await session.execute(
-            select(ScreeningSession)
-            .where(ScreeningSession.application_id == app_row.id)
-            .order_by(ScreeningSession.created_at.desc(), ScreeningSession.id.desc())
-            .limit(1)
+    stmt = select(ScreeningSession).where(ScreeningSession.application_id == application_id)
+    if ids is None:
+        stmt = stmt.where(
+            ScreeningSession.used_at.is_(None), ScreeningSession.timed_out_at.is_(None)
         )
-    ).scalar_one_or_none()
-    if latest is None:
-        raise ResendError("Không tìm thấy phiên sàng lọc nào của hồ sơ này để gửi lại.", status_code=409)
-    questions = list(latest.questions or [])
+    else:
+        stmt = stmt.where(ScreeningSession.id.in_(ids))
+    rows = await session.execute(stmt.order_by(ScreeningSession.id).with_for_update())
+    return list(rows.scalars().all())
 
-    await session.execute(
-        update(ScreeningSession)
-        .where(
-            ScreeningSession.application_id == app_row.id,
-            ScreeningSession.used_at.is_(None),
-            ScreeningSession.timed_out_at.is_(None),
-        )
-        .values(timed_out_at=_now())
+
+async def _locked_application(session: AsyncSession, application_id: int) -> Application | None:
+    """Đọc LẠI hồ sơ dưới khoá hàng: `populate_existing` để không tin bản cũ trong identity map."""
+    return await session.get(
+        Application, application_id, populate_existing=True, with_for_update=True
     )
-    fresh = screening.create_session(session, app_row.id, questions)
-    screening.mark_screener_sent(app_row, fresh)
-    return fresh
 
 
-async def resend_failed_email(session: AsyncSession, application_id: int) -> Application:
-    """Gửi lại lá thư đã hỏng của hồ sơ này. Trả hàng đã nạp lại (serialize được ngay).
-
-    `ResendError`: 404 không có hồ sơ · 409 không có gì để gửi lại · 502 dịch vụ gửi VẪN từ chối
-    (hồ sơ giữ nguyên trạng thái, `_dispatch` đã gắn lại cờ — HR sửa cấu hình rồi bấm lại).
-    """
-    # Khoá theo hồ sơ TRƯỚC khi đọc — CÙNG khoá với `booking_flow` và webhook `email_delivery`, nên
-    # một lượt webhook hạ trạng thái không chen được vào giữa "đọc cờ" và "gỡ cờ" của ta.
+async def _claim(session: AsyncSession, application_id: int) -> _Claim:
+    """Pha CHIẾM — xem docstring module. COMMIT trước khi trả về; không giữ khoá nào sau đó."""
+    # Khoá tư vấn: CÙNG khoá với `booking_flow` và webhook `email_delivery`, nên webhook hạ trạng
+    # thái không chen được vào giữa "đọc cờ" và "gỡ cờ".
     await booking_service.lock_application(session, application_id)
-    app_row = await session.get(Application, application_id)
+    open_sessions = await _lock_screening_sessions(session, application_id)
+    app_row = await _locked_application(session, application_id)
     if app_row is None:
         await session.rollback()  # nhả khoá + connection
         raise ResendError(f"Application {application_id} không tồn tại.", status_code=404)
 
     kind = resendable_email(app_row.status, app_row.uncertainty_flags)
     if kind is None:
-        message = _refusal(app_row)
+        message = _refusal(app_row)  # đọc TRƯỚC rollback — rollback expire mọi object
         await session.rollback()
         raise ResendError(message, status_code=409)
 
-    # Gom nguyên thuỷ TRƯỚC mọi commit (gotcha expire/refresh — lỗi #3 SCH-2).
     applicant_email = app_row.applicant_email
     job_title = await booking_flow.job_title_of(session, app_row)
-
-    # GỠ CỜ TRƯỚC KHI GỬI (at-most-once, cùng triết lý mốc nhắc của sweep): lượt bấm thứ hai — đúp
-    # chuột, hai tab — chờ khoá xong sẽ thấy hết cờ và nhận 409, thay vì phát thêm một link khiến
-    # link vừa gửi chết dưới chân ứng viên. Gửi hỏng thì `_dispatch` tự gắn cờ lại.
     app_row.uncertainty_flags = [
         f for f in (app_row.uncertainty_flags or []) if f != EMAIL_SEND_FAILED_FLAG
     ]
+
+    claim = _Claim(kind=kind, applicant_email=applicant_email, job_title=job_title)
     detail: dict = {"to": applicant_email}
-    form_url = ""
     if kind == "screener":
-        try:
-            fresh = await _reissue_screening_session(session, app_row)
-        except ResendError:
+        # Bộ câu hỏi từ phiên GẦN NHẤT, KHÔNG đọc lại JD: ảnh chụp lúc gửi là thứ ứng viên được hỏi
+        # (PRD §16) — HR sửa JD sau đó không được đổi câu hỏi giữa chừng.
+        questions = (
+            await session.execute(
+                select(ScreeningSession.questions)
+                .where(ScreeningSession.application_id == application_id)
+                .order_by(ScreeningSession.created_at.desc(), ScreeningSession.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if questions is None:
             await session.rollback()
-            raise
-        form_url = f"{settings.frontend_base_url.rstrip('/')}/screening/{fresh.token}"
+            raise ResendError(
+                "Không tìm thấy phiên sàng lọc nào của hồ sơ này để gửi lại.", status_code=409
+            )
+        # Phiên cũ ĐÓNG ngay (không để hai link sống song song): còn mở thì lưới sweep vẫn nhắc bằng
+        # link CŨ, rồi tới hạn CŨ resume `no_response` trong khi phiên mới còn nguyên hạn. Gửi hỏng thì
+        # pha HOÀN mở lại đúng những phiên này.
+        now = _now()
+        for row in open_sessions:
+            row.timed_out_at = now
+        fresh = screening.create_session(session, application_id, list(questions or []))
+        await session.flush()  # có `fresh.id` (dưới đúng các khoá đang giữ)
+        claim = _Claim(
+            kind=kind, applicant_email=applicant_email, job_title=job_title,
+            new_session_id=fresh.id, new_token=fresh.token,
+            retired_session_ids=tuple(r.id for r in open_sessions),
+        )
         detail["expires_at"] = fresh.expires_at.isoformat()
 
     # FR-HR-5: hành động của HR vào audit — kết quả gửi do `_dispatch` ghi riêng (email_sent/failed).
@@ -234,33 +236,97 @@ async def resend_failed_email(session: AsyncSession, application_id: int) -> App
         detail=detail, commit=True,
     )
     # `record(commit=True)` kết thúc bằng `refresh()`, thứ AUTOBEGIN một transaction mới và giữ
-    # connection — đóng nó TRƯỚC khi gọi Resend (Load boundary). `commit()` chứ không `rollback()`:
-    # rollback expire mọi object, đọc `app_row` sau đó là nạp lười (gotcha `cancel_by_candidate`).
+    # connection — đóng nó TRƯỚC khi gọi Resend (Load boundary).
+    await session.commit()
+    return claim
+
+
+async def _settle_screener(session: AsyncSession, application_id: int, claim: _Claim) -> None:
+    """Gửi ĐƯỢC: ghi mốc hiển thị (`screener_sent_at`/`screener_deadline`) theo phiên mới — chỉ khi
+    hồ sơ vẫn đang chờ (ứng viên có thể vừa nộp trên phiên mới ngay khi thư tới)."""
+    assert claim.new_session_id is not None  # chỉ gọi cho thư sàng lọc — pha chiếm luôn tạo phiên
+    await booking_service.lock_application(session, application_id)
+    rows = await _lock_screening_sessions(session, application_id, ids=(claim.new_session_id,))
+    app_row = await _locked_application(session, application_id)
+    if rows and app_row is not None and app_row.status == ApplicationStatus.AWAITING_SCREENER.value:
+        screening.mark_screener_sent(app_row, rows[0])
     await session.commit()
 
-    if kind == "screener":
+
+async def _undo_screener(session: AsyncSession, application_id: int, claim: _Claim) -> None:
+    """Gửi HỎNG: đóng phiên MỚI (chưa tới tay ai), MỞ LẠI phiên cũ — trả hồ sơ về đúng như trước khi
+    bấm. Không mở lại nếu hồ sơ đã rời `AWAITING_SCREENER` trong lúc gửi (vd webhook vừa hạ trạng
+    thái): một phiên mở cho hồ sơ không còn chờ là phiên mập mờ mà AI_GUIDE cấm để lại."""
+    assert claim.new_session_id is not None  # chỉ gọi cho thư sàng lọc — pha chiếm luôn tạo phiên
+    ids = (claim.new_session_id, *claim.retired_session_ids)
+    await booking_service.lock_application(session, application_id)
+    rows = await _lock_screening_sessions(session, application_id, ids=ids)
+    app_row = await _locked_application(session, application_id)
+    still_waiting = (
+        app_row is not None and app_row.status == ApplicationStatus.AWAITING_SCREENER.value
+    )
+    now = _now()
+    for row in rows:
+        if row.used_at is not None:
+            continue
+        if row.id == claim.new_session_id:
+            row.timed_out_at = row.timed_out_at or now
+        elif still_waiting:
+            row.timed_out_at = None
+    await session.commit()
+
+
+async def resend_failed_email(session: AsyncSession, application_id: int) -> Application:
+    """Gửi lại lá thư đã hỏng của hồ sơ này. Trả hàng đọc mới (serialize được ngay).
+
+    `ResendError`: 404 không có hồ sơ · 409 không có gì để gửi lại · 502 dịch vụ gửi VẪN từ chối (hồ
+    sơ được trả về đúng như trước khi bấm, `_dispatch` đã gắn lại cờ — HR sửa cấu hình rồi bấm lại).
+
+    GIỚI HẠN ĐÃ BIẾT (at-most-once, cùng triết lý mốc nhắc của sweep): tiến trình chết đúng giữa pha
+    chiếm và lượt gửi thì cờ đã gỡ mà thư chưa đi. Thư sàng lọc tự lành qua lời nhắc 24h của phiên
+    mới; thư từ chối thì không — dấu vết còn lại là audit `*_resent` không có `email_sent:*`/
+    `email_failed` theo sau.
+    """
+    claim = await _claim(session, application_id)
+
+    # `_dispatch` gắn lại cờ khi gửi hỏng bằng `session.get(Application)` — trả bản trong identity
+    # map nếu còn, mà bản đó là ảnh chụp lúc chiếm. Webhook complaint tới giữa chừng sẽ bị ghi đè mất
+    # (đo được trên DB thật). Tách hết để nó đọc hàng MỚI.
+    session.expunge_all()
+
+    if claim.kind == "screener":
         result = await scheduler.notify_screener(
-            session, application_id=application_id, applicant_email=applicant_email,
-            job_title=job_title, form_url=form_url,
+            session, application_id=application_id, applicant_email=claim.applicant_email,
+            job_title=claim.job_title,
+            form_url=f"{settings.frontend_base_url.rstrip('/')}/screening/{claim.new_token}",
             # `:g` — float, tránh "72.0 giờ" trong thư (lỗi #4 verify prod 18/08).
             deadline_text=f"{settings.screener_deadline_hours:g} giờ",
         )
     else:
         result = await scheduler.notify_decision(
             session, "reject", application_id=application_id,
-            applicant_email=applicant_email, job_title=job_title,
+            applicant_email=claim.applicant_email, job_title=claim.job_title,
         )
 
     if not result.get("email_sent"):
-        logger.warning("email_resend: app=%s gửi lại thư %s VẪN thất bại", application_id, kind)
+        logger.warning(
+            "email_resend: app=%s gửi lại thư %s VẪN thất bại", application_id, claim.kind
+        )
+        if claim.kind == "screener":
+            await _undo_screener(session, application_id, claim)
+        reason = str(result.get("error") or "không rõ lý do").rstrip(". ")  # lỗi Resend tự kết bằng "."
         raise ResendError(
-            f"Dịch vụ gửi thư vẫn từ chối: {result.get('error')}. Hồ sơ giữ nguyên — sửa cấu hình "
-            "gửi thư rồi bấm lại.",
+            f"Dịch vụ gửi thư vẫn từ chối: {reason}. Hồ sơ và liên kết cũ được giữ nguyên — sửa cấu "
+            "hình gửi thư rồi bấm lại.",
             status_code=502,
         )
 
-    logger.info("email_resend: app=%s đã gửi lại thư %s", application_id, kind)
-    # Ở CUỐI, sau lượt gửi mail: route serialize hàng bằng code ĐỒNG BỘ, `updated_at` đã expired sau
-    # UPDATE → thiếu dòng này là HTTP 500 dù thư đã đi (gotcha verify prod 18/08 — hai nút lịch).
-    await session.refresh(app_row)
-    return app_row
+    if claim.kind == "screener":
+        await _settle_screener(session, application_id, claim)
+    logger.info("email_resend: app=%s đã gửi lại thư %s", application_id, claim.kind)
+    # Đọc MỚI ở CUỐI: route serialize bằng code ĐỒNG BỘ — một thuộc tính expired ở đây là
+    # MissingGreenlet → HTTP 500 dù thư đã đi (gotcha verify prod 18/08 — hai nút lịch).
+    reloaded = await session.get(Application, application_id, populate_existing=True)
+    if reloaded is None:  # hồ sơ bị xoá giữa chừng — thư đã đi, không còn gì để trả
+        raise ResendError(f"Application {application_id} không tồn tại.", status_code=404)
+    return reloaded

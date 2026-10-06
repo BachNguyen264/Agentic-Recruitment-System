@@ -67,6 +67,29 @@ def test_resendable_email_tolerates_null_flags() -> None:
     assert email_resend.resendable_email("AWAITING_SCREENER", None) is None
 
 
+def test_pipeline_item_exposes_send_failure_but_not_the_flag_list() -> None:
+    """Dòng "Đang chạy trực tiếp" trên dashboard từng ghi "Chờ ứng viên trả lời" cho đúng hồ sơ #244
+    mà ứng viên chưa hề có link. Cần CỜ để nói thật — nhưng payload phải giữ cỡ cố định (endpoint
+    này được hỏi lại vài giây một lần), nên chỉ lộ một bool, không lộ cả danh sách cờ."""
+    from app.schemas.application import PipelineItem
+
+    failed = PipelineItem.model_validate(
+        _row(status="AWAITING_SCREENER", flags=["cv_truncated", "email_send_failed"])
+    ).model_dump()
+    assert failed["email_send_failed"] is True
+    assert "uncertainty_flags" not in failed
+
+    fine = PipelineItem.model_validate(_row(status="AWAITING_SCREENER", flags=None)).model_dump()
+    assert fine["email_send_failed"] is False
+
+
+def _row(*, status: str, flags: list[str] | None) -> Application:
+    row = Application(job_id=7, applicant_email="ung-vien@example.com", status=status,
+                      uncertainty_flags=flags)
+    row.id = 1
+    return row
+
+
 # ── 2) Route ─────────────────────────────────────────────────────────────────
 
 

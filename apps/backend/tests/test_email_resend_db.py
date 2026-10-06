@@ -14,6 +14,7 @@ nên cờ, `email_delivery` và audit đều là thật. Dữ liệu test tự d
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -200,11 +201,13 @@ async def test_screener_resend_issues_fresh_session_and_retires_old(
     assert ("human_review", "screener_resent") in await _actions(Session, app_id)
 
 
-async def test_screener_resend_failure_reports_502_and_keeps_flag(
+async def test_screener_resend_failure_reports_502_and_restores_the_old_link(
     Session, screening_app, resend  # noqa: N803
 ) -> None:
-    """Dịch vụ gửi VẪN từ chối → HR phải biết ngay (502 kèm lý do), cờ quay lại, hồ sơ vẫn chờ."""
-    app_id, _ = screening_app
+    """Dịch vụ gửi VẪN từ chối → HR biết ngay (502 kèm lý do), cờ quay lại, hồ sơ vẫn chờ — và
+    liên kết CŨ phải sống lại. Ca nguy hiểm: chỉ thư NHẮC hỏng (thư gốc đã tới, ứng viên đang cầm
+    link) mà HR bấm gửi lại lúc sender còn hỏng — đóng link cũ rồi gửi hỏng là ứng viên mất cả hai."""
+    app_id, old_token = screening_app
     resend.fail_with = "Resend gửi email thất bại: You can only send testing emails"
 
     async with Session() as s:
@@ -216,6 +219,116 @@ async def test_screener_resend_failure_reports_502_and_keeps_flag(
     app_row = await _app(Session, app_id)
     assert app_row.status == ApplicationStatus.AWAITING_SCREENER.value
     assert "email_send_failed" in app_row.uncertainty_flags
+
+    old, new = await _sessions(Session, app_id)
+    assert old.token == old_token and old.timed_out_at is None, "link cũ phải dùng lại được"
+    assert new.timed_out_at is not None, "link mới chưa từng tới tay ai — phải đóng"
+
+
+async def test_resend_waits_for_a_submit_in_flight_instead_of_deadlocking(
+    Session, screening_app, resend  # noqa: N803
+) -> None:
+    """Thứ tự khoá phải TRÙNG với `screening.submit_answers` / sweep hết hạn: khoá hàng phiên sàng
+    lọc TRƯỚC, hàng hồ sơ SAU. Ngược thứ tự là deadlock (Postgres huỷ một bên — có thể chính lượt
+    nộp câu trả lời của ứng viên), hoặc lượt gửi lại ghi đè cờ mà graph vừa ghi bằng bản đọc cũ."""
+    app_id, old_token = screening_app
+
+    async def resend_now() -> None:
+        async with Session() as s:
+            await email_resend.resend_failed_email(s, app_id)
+
+    async with Session() as submit:
+        # Đúng thứ tự của submit: FOR UPDATE trên hàng phiên trước, giữ suốt lượt resume graph...
+        sess = (
+            await submit.execute(
+                select(ScreeningSession)
+                .where(ScreeningSession.token == old_token)
+                .with_for_update()
+            )
+        ).scalar_one()
+        task = asyncio.create_task(resend_now())
+        await asyncio.sleep(1.5)  # để lượt gửi lại chạy tới chỗ nó phải chờ khoá
+        # ...rồi mới ghi hàng hồ sơ (kết quả resume) và commit.
+        sess.used_at = _now()
+        row = await submit.get(Application, app_id)
+        row.status = ApplicationStatus.PENDING_REVIEW.value
+        row.uncertainty_flags = ["graph_wrote_this"]
+        await submit.commit()
+
+    with pytest.raises(email_resend.ResendError) as caught:
+        await task
+    assert caught.value.status_code == 409, "hồ sơ đã đi tiếp — không còn gì để gửi lại"
+    assert resend.calls == []
+    assert (await _app(Session, app_id)).uncertainty_flags == ["graph_wrote_this"]
+    assert len(await _sessions(Session, app_id)) == 1, "không được phát phiên mới cho hồ sơ đã đi tiếp"
+
+
+async def test_failed_resend_keeps_a_complaint_that_arrived_meanwhile(
+    Session, rejected_app, resend  # noqa: N803
+) -> None:
+    """Webhook complaint tới ĐÚNG lúc thư đang gửi. Gửi hỏng thì `_dispatch` gắn lại cờ — nếu nó
+    dùng bản hồ sơ cũ trong session thì ghi đè mất `email_complained`, cái cờ duy nhất KHÔNG được
+    phép mất (nó là thứ chặn mọi lượt gửi tiếp theo cho người đã báo spam)."""
+
+    async def complaint_arrives() -> None:
+        async with Session() as webhook:
+            row = await webhook.get(Application, rejected_app)
+            row.uncertainty_flags = [*(row.uncertainty_flags or []), "email_complained"]
+            await webhook.commit()
+
+    resend.before_send = complaint_arrives
+    resend.fail_with = "Resend gửi email thất bại: daily_quota_exceeded"
+
+    async with Session() as s:
+        with pytest.raises(email_resend.ResendError):
+            await email_resend.resend_failed_email(s, rejected_app)
+
+    flags = (await _app(Session, rejected_app)).uncertainty_flags
+    assert "email_complained" in flags
+    assert "email_send_failed" in flags
+
+
+async def test_resend_only_retires_this_applications_sessions(
+    Session, screening_app, resend  # noqa: N803
+) -> None:
+    """Câu UPDATE đóng phiên mà rơi mất điều kiện `application_id` là giết link của MỌI ứng viên."""
+    app_id, _ = screening_app
+    other_id, other_job = await _make_app(
+        Session, status=ApplicationStatus.AWAITING_SCREENER.value, flags=[]
+    )
+    try:
+        async with Session() as s:
+            s.add(ScreeningSession(
+                application_id=other_id, token=f"other-{uuid.uuid4().hex}",
+                questions=list(_QUESTIONS), expires_at=_now() + timedelta(hours=60),
+            ))
+            await s.commit()
+
+        async with Session() as s:
+            await email_resend.resend_failed_email(s, app_id)
+
+        (other,) = await _sessions(Session, other_id)
+        assert other.timed_out_at is None
+    finally:
+        await _drop(Session, other_id, other_job)
+
+
+async def test_concurrent_resends_send_exactly_one_email(
+    Session, rejected_app, resend  # noqa: N803
+) -> None:
+    """Hai tab bấm CÙNG lúc (không phải tuần tự): đúng MỘT thư đi, lượt kia 409."""
+
+    async def one() -> int:
+        async with Session() as s:
+            try:
+                await email_resend.resend_failed_email(s, rejected_app)
+                return 200
+            except email_resend.ResendError as exc:
+                return exc.status_code
+
+    codes = sorted(await asyncio.gather(one(), one()))
+    assert codes == [200, 409]
+    assert len(resend.calls) == 1
 
 
 async def test_second_resend_after_success_is_refused(
@@ -360,6 +473,52 @@ async def test_failure_reason_prefers_the_newer_failure(Session, rejected_app) -
     async with Session() as s:
         reason = await email_resend.latest_send_failure_reason(s, rejected_app)
     assert reason == "reached_daily_quota"
+
+
+async def test_failure_reason_prefers_a_newer_sync_failure_over_an_older_webhook_one(
+    Session, rejected_app  # noqa: N803
+) -> None:
+    """Chiều ngược của test trên: lỗi webhook CŨ, lỗi tại chỗ MỚI → hiện lỗi tại chỗ."""
+    t0 = _now() - timedelta(hours=2)
+    async with Session() as s:
+        s.add(EmailDelivery(
+            resend_email_id=f"e-{_MARK}-{uuid.uuid4().hex}", application_id=rejected_app,
+            kind="reject", recipient="x@example.com", status=DeliveryStatus.FAILED.value,
+            bounce_reason="reached_daily_quota", created_at=t0, updated_at=t0,
+        ))
+        s.add(AuditLog(
+            application_id=rejected_app, node="scheduler", action="email_failed",
+            detail={"mode": "reject", "error": "Resend gửi email thất bại: 403"},
+            created_at=t0 + timedelta(hours=1),
+        ))
+        await s.commit()
+
+    async with Session() as s:
+        reason = await email_resend.latest_send_failure_reason(s, rejected_app)
+    assert reason == "Resend gửi email thất bại: 403"
+
+
+async def test_newest_failure_without_a_reason_does_not_borrow_an_older_one(
+    Session, rejected_app  # noqa: N803
+) -> None:
+    """Lỗi MỚI nhất không kèm lý do → không có gì để hiện. Mượn lý do của một lỗi CŨ (có thể đã hết)
+    là trình bày nguyên nhân sai cho sự cố đang chặn HR."""
+    t0 = _now() - timedelta(hours=2)
+    async with Session() as s:
+        s.add(AuditLog(
+            application_id=rejected_app, node="scheduler", action="email_failed",
+            detail={"mode": "reject", "error": "lỗi cũ đã hết"}, created_at=t0,
+        ))
+        s.add(EmailDelivery(
+            resend_email_id=f"e-{_MARK}-{uuid.uuid4().hex}", application_id=rejected_app,
+            kind="reject", recipient="x@example.com", status=DeliveryStatus.FAILED.value,
+            bounce_reason=None, created_at=t0 + timedelta(hours=1), updated_at=t0 + timedelta(hours=1),
+        ))
+        await s.commit()
+
+    async with Session() as s:
+        reason = await email_resend.latest_send_failure_reason(s, rejected_app)
+    assert reason is None
 
 
 async def test_detail_route_exposes_reason_and_resendable_kind(
