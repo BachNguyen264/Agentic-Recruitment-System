@@ -14,6 +14,8 @@ from app.services.email_delivery import (
     EMAIL_COMPLAINED_FLAG,
     EMAIL_SEND_FAILED_FLAG,
 )
+from app.services.email_resend import ResendableEmail
+from app.services.email_resend import resendable_email as _resendable_email
 from app.services.review import recommendation as _recommendation
 
 # Dev: chỉ đòi "có @, hai bên không rỗng, domain có dấu chấm, không khoảng trắng". Nới ≠ tắt — rác
@@ -184,6 +186,14 @@ class ApplicationRead(BaseModel):
     @property
     def email_send_failed(self) -> bool:
         return EMAIL_SEND_FAILED_FLAG in (self.uncertainty_flags or [])
+
+    # FR-SCR-7 / FR-NOTI-3: lá thư hỏng nào HR gửi lại được ("screener" | "reject"), hoặc None. Hỏi
+    # ĐÚNG câu mà chốt chặn của `POST .../email/resend` hỏi, để nút chỉ xuất hiện khi bấm được (cùng
+    # lý do với `has_booking_link`). Dẫn xuất thuần từ status + cờ nên có ở mọi response, 0 truy vấn.
+    @computed_field
+    @property
+    def resendable_email(self) -> ResendableEmail | None:
+        return _resendable_email(self.status, self.uncertainty_flags)
 
     @computed_field  # có file CV để tải không (slice 06) — thay cho việc lộ key/path ra client.
     @property
