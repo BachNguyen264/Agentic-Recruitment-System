@@ -81,6 +81,10 @@
   sẽ giết một link đặt lịch/sàng lọc vẫn đang sống tốt. Cả hai cờ phải PHƠI RA UI ở MỌI trạng thái
   (không chỉ `PENDING_REVIEW`) — ca đáng lo nhất là ca đã quyết xong mà thư không tới nơi, giấu nhãn
   vì hồ sơ "đã xong" thì không ai phát hiện ra nữa.
+  **Gửi lại thư hỏng (EMAIL-3, FR-SCR-7/FR-NOTI-3)** đi qua MỘT cửa `email_resend.resend_failed_email`
+  (chỉ thư sàng lọc + thư từ chối — thư mời đã có `dispatch_booking_invite`). Thêm loại thư gửi lại được
+  thì sửa `_RESENDABLE_BY_STATUS`: nút trên UI (`ApplicationRead.resendable_email`) và chốt chặn của
+  endpoint cùng gọi `resendable_email`, đừng để UI tự suy điều kiện.
 - **Auth boundary (09):** `require_hr` bảo vệ MỌI router HR (`/api/jobs|applications|agents` + `/api/auth/me`).
   GIỮ MỞ tuyệt đối: `/api/public/*`, `/api/auth/login|logout`, health — ứng viên guest KHÔNG bị chặn. Thêm
   router/endpoint HR mới → NHỚ áp `require_hr` (hoặc thêm vào `_HR_ONLY` trong `main.py`). Cookie Secure/SameSite/
@@ -366,8 +370,9 @@
   `screener_reminder` dùng LẠI đúng token của thư `screener` gốc, nên "gửi thư nhắc thất bại" KHÔNG
   hề nói liên kết đã chết. Hạ trạng thái ở nhánh đó kéo theo `_abandon_in_flight_session` đóng phiên,
   mà `screening._load_valid` từ chối mọi phiên có `timed_out_at` ⇒ ứng viên mở liên kết CÒN HẠN lại
-  nhận "đã quá hạn"; `reminded_at` đã tiêu nên không có lời nhắc thứ hai, và HR KHÔNG có nút gửi lại
-  link sàng lọc (chỉ đặt lịch mới có) ⇒ **mất bài dự tuyển, không đường cứu**. Nguy hiểm gấp bội vì
+  nhận "đã quá hạn"; `reminded_at` đã tiêu nên không có lời nhắc thứ hai, và nút **Gửi lại thư sàng
+  lọc** của HR (FR-SCR-7) chỉ có khi hồ sơ CÒN ở `AWAITING_SCREENER` — hạ trạng thái là mất luôn đường
+  cứu đó ⇒ **mất bài dự tuyển, không đường cứu**. Nguy hiểm gấp bội vì
   `reached_daily_quota` là sự cố TOÀN HỆ THỐNG còn sweep gửi nhắc theo LÔ. Đã có ngoại lệ cho bounce
   Transient (F2) và nay cho `FAILED`; bounce **Permanent** của thư nhắc thì VẪN hạ (địa chỉ chết thì
   liên kết còn sống cũng vô nghĩa). Hai chốt chặn RIÊNG cho cùng một bất biến ⇒ test RIÊNG từng cái
@@ -611,3 +616,34 @@
   hyperlink (email/LinkedIn) — dùng `iter_inner_content()`, và đoạn không có chữ ẩn đi nguyên `para.text`.
 - **Đổi `.format()` sang `.replace()` thì phải bỏ ngoặc kép `{{…}}` (12).** Prompt cũ escape `{{label,
   content}}` cho `.format`; chuyển sang `.replace` mà quên là LLM nhận nguyên hai cặp ngoặc.
+- **Resend từ chối TẠI CHỖ thì KHÔNG có hàng `email_delivery` nào (EMAIL-3, prod 06/10/2026).** 403
+  sandbox / cạn hạn mức trả về ngay lúc gọi ⇒ không có `resend_email_id` để đối chiếu ⇒ `_dispatch` chỉ
+  gắn cờ + audit `email_failed`, và webhook KHÔNG BAO GIỜ tới. Hai hệ quả đã cắn: (a) đọc lý do chỉ
+  từ `email_delivery` thì banner ⛔ trống trơn đúng ở ca phổ biến nhất — dùng
+  `email_resend.latest_send_failure_reason` (lấy cái MỚI hơn giữa audit và `email_delivery`); (b) lưới
+  "hạ trạng thái khi thư hỏng" của `email_delivery` chỉ chạy ở đường webhook, nên thư sàng lọc hỏng tại
+  chỗ để hồ sơ đứng ở `AWAITING_SCREENER` — đó là chủ ý (để HR **Gửi lại** được, FR-SCR-7), nhưng mọi
+  chỗ suy trạng thái từ `status` (AgentTrace, nhãn) PHẢI xét thêm cờ `email_send_failed`, nếu không nó
+  vẽ "đang chờ ứng viên" cho một ứng viên chưa từng có link.
+- **Phản hồi của route thao tác HR là `ApplicationRead` TRẦN — đừng nhét nó vào cache chi tiết (EMAIL-3).**
+  `cancel_by_hr` / `resend_booking_link` / `resend_failed_email` trả hàng ORM qua `model_validate`, nên
+  mọi trường CHỈ endpoint chi tiết mới điền (`has_booking_link`, `interview`, `screener_answers`, lý do
+  email) về mặc định. `setQueryData(["application", id], phản_hồi)` từng làm khung "Gửi lại link đặt
+  lịch" BIẾN MẤT ngay sau "Huỷ lịch" — đúng lúc dòng xác nhận bảo HR bấm nó. Sau thao tác: `await
+  invalidateQueries(["application", id])` (tải lại), không ghi đè cache bằng phản hồi của nút.
+- **Gửi lại thư = CHIẾM → GỬI → CHỐT/HOÀN, và thứ tự KHOÁ phải trùng submit (EMAIL-3, review đối kháng
+  bắt cả 3 lỗi dưới đây, đều tái hiện trên Postgres thật).** (1) **Thứ tự khoá:** `submit_answers` và sweep
+  hết hạn khoá hàng `screening_session` (FOR UPDATE) TRƯỚC rồi mới ghi hàng `application`; lượt gửi lại mà
+  chạm hồ sơ trước (chỉ cần GÁN một cờ rồi chạy một SELECT — autoflush ghi luôn hàng hồ sơ) là ngược thứ
+  tự ⇒ `DeadlockDetectedError`, Postgres có thể huỷ đúng lượt ứng viên nộp câu trả lời. Nay: khoá tư vấn
+  → khoá hàng phiên → `get(..., populate_existing=True, with_for_update=True)` → mới kiểm + ghi. (2)
+  **Gỡ cờ + đóng phiên cũ + phát phiên mới được COMMIT trước lượt gọi Resend** (lượt bấm thứ hai thấy hết
+  cờ → 409; không ôm connection qua I/O) — nhưng gửi HỎNG thì phải HOÀN: đóng phiên mới, mở lại phiên cũ.
+  Ca chỉ thư NHẮC hỏng thì ứng viên đang cầm link cũ; đóng nó rồi gửi hỏng là họ mất cả hai link. (3)
+  **`session.expunge_all()` trước lượt gửi:** `_dispatch` gắn lại cờ bằng `session.get` — trả bản CŨ
+  trong identity map — nên một webhook complaint tới giữa chừng bị ghi đè MẤT `email_complained`.
+  GIỚI HẠN ĐÃ BIẾT: tiến trình chết giữa CHIẾM và GỬI thì cờ đã gỡ mà thư chưa đi (thư sàng lọc tự lành
+  qua lời nhắc 24h của phiên mới; thư từ chối thì không). Và `email_send_failed` chỉ được gỡ khi webhook
+  `delivered` về (hoặc khi HR gửi lại) — lượt gửi THÀNH CÔNG khác KHÔNG gỡ nó, nên cờ của một lá thư cũ
+  có thể còn treo sau khi thư sau đã đi (webhook chết là treo mãi). Sửa tận gốc = gỡ cờ trong
+  `scheduler._dispatch` khi gửi thành công — đụng điểm gửi DUY NHẤT của mọi luồng, chưa làm.

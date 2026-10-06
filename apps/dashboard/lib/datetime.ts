@@ -21,3 +21,20 @@ export function formatVnDateTime(iso: string): string {
   }).format(at);
   return `${time} · ${date}`;
 }
+
+// Ranh giới NGÀY theo giờ Việt Nam cho bộ lọc (chuỗi YYYY-MM-DD của <input type="date">) → ISO CÓ
+// múi giờ. Cùng lý do với hàm trên: để trình duyệt tự dùng múi giờ máy thì một HR đang ở nước ngoài
+// lọc "ngày 06/10" ra một khoảng 24 giờ KHÁC với ngày 06/10 mà bảng đang hiển thị. Việt Nam không có
+// giờ mùa hè nên +07:00 là hằng số — không cần thư viện múi giờ.
+const VN_OFFSET = "+07:00";
+
+export function vnDayStartIso(day: string): string {
+  return `${day}T00:00:00${VN_OFFSET}`;
+}
+
+// Mốc ĐẦU của ngày hôm sau — biên trên KHÔNG bao gồm của "đến hết ngày `day`" (backend lọc nửa mở).
+// Cộng ngày bằng Date.UTC để khỏi dính múi giờ của máy (31/12 → 01/01 năm sau, 28/02 → 01/03…).
+export function vnNextDayStartIso(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return vnDayStartIso(new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10));
+}

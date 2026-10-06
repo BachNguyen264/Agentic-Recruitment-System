@@ -27,7 +27,7 @@ from app.schemas.application import (
     PipelineSnapshot,
     ReviewRequest,
 )
-from app.services import application_service, booking_flow, booking_service, screening
+from app.services import application_service, booking_flow, booking_service, email_resend, screening
 from app.services import review as review_service
 from app.services.storage import (
     StorageError,
@@ -157,8 +157,11 @@ async def get_application(application_id: int, session: DBSession) -> Applicatio
             )
             if read.email_complained
             else None,
-            "email_send_failure_reason": await _latest_reason(
-                session, application_id, DeliveryStatus.FAILED.value
+            # Hai nguồn (audit cho lỗi tại chỗ + `email_delivery` cho lỗi qua webhook) — xem
+            # `email_resend.latest_send_failure_reason`. Chỉ hỏi `email_delivery` thì đúng ca phổ
+            # biến nhất (Resend từ chối ngay lúc gọi) hiện banner KHÔNG có lý do.
+            "email_send_failure_reason": await email_resend.latest_send_failure_reason(
+                session, application_id
             )
             if read.email_send_failed
             else None,
@@ -273,5 +276,20 @@ async def resend_interview_link(application_id: int, session: DBSession) -> Appl
     try:
         app_row = await booking_flow.resend_booking_link(session, application_id)
     except booking_flow.BookingActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
+    return ApplicationRead.model_validate(app_row)
+
+
+@router.post(
+    "/{application_id}/email/resend",
+    response_model=ApplicationRead,
+    summary="HR gửi lại thư bị dịch vụ gửi từ chối — sàng lọc (phiên MỚI) hoặc từ chối (FR-SCR-7, FR-NOTI-3)",
+)
+async def resend_failed_email(application_id: int, session: DBSession) -> ApplicationRead:
+    """409 = hồ sơ không có thư nào để gửi lại (xem `email_resend.resendable_email`); 502 = dịch vụ gửi
+    VẪN từ chối — hồ sơ giữ nguyên trạng thái và cờ, sửa cấu hình gửi thư rồi bấm lại."""
+    try:
+        app_row = await email_resend.resend_failed_email(session, application_id)
+    except email_resend.ResendError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from None
     return ApplicationRead.model_validate(app_row)

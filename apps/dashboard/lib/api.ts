@@ -456,3 +456,10 @@ export async function cancelInterview(id: number): Promise<ApplicationDetail> {
 export async function resendBookingLink(id: number): Promise<ApplicationDetail> {
   return scheduleAction(`/api/applications/${id}/booking/resend`);
 }
+
+// FR-SCR-7 / FR-NOTI-3: gửi lại lá thư mà dịch vụ gửi đã TỪ CHỐI (thư sàng lọc → phiên MỚI; thư từ
+// chối). Đi qua `scheduleAction` vì cùng lý do: 409/502 của backend nói rõ vì sao ("Dịch vụ gửi thư
+// vẫn từ chối: …") — mất câu đó thì HR không biết phải sửa gì trước khi bấm lại.
+export async function resendFailedEmail(id: number): Promise<ApplicationDetail> {
+  return scheduleAction(`/api/applications/${id}/email/resend`);
+}

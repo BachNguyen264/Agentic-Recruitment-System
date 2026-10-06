@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ApplicationDetail, JobPosting } from "@ars/shared-types";
+import type { ApplicationDetail, JobPosting, ResendableEmail } from "@ars/shared-types";
 import { AgentTrace } from "@/components/AgentTrace";
 import { ParsedCVResult } from "@/components/ParsedCVResult";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
@@ -17,6 +17,7 @@ import {
   getApplication,
   getJob,
   resendBookingLink,
+  resendFailedEmail,
 } from "@/lib/api";
 import {
   applicationStatusLabel,
@@ -31,6 +32,36 @@ function initialsOf(email: string): string {
   const name = email.split("@")[0] ?? "";
   const parts = name.split(/[._-]+/).filter(Boolean);
   return ((parts.length >= 2 ? parts[0][0] + parts[1][0] : name.slice(0, 2)) || "??").toUpperCase();
+}
+
+// FR-SCR-7 / FR-NOTI-3 — nhãn nút + lời xác nhận theo LOẠI thư gửi lại.
+const RESEND_LABEL: Record<ResendableEmail, string> = {
+  screener: "Gửi lại thư sàng lọc",
+  reject: "Gửi lại thư từ chối",
+};
+const RESEND_DONE: Record<ResendableEmail, string> = {
+  screener:
+    "Đã gửi lại thư sàng lọc — liên kết MỚI, hạn trả lời tính lại từ bây giờ; liên kết cũ ngừng hoạt động.",
+  reject: "Đã gửi lại thư từ chối.",
+};
+
+// Banner ⛔ phải chỉ ĐÚNG bước tiếp theo theo trạng thái. Câu chung cũ ("gửi lại cho chính địa chỉ
+// này") hứa một nút KHÔNG tồn tại ở phần lớn các trạng thái — HR đọc xong không biết bấm vào đâu.
+// Trên bản PWA đã cài, mọi nút gửi thư ở trang này bị ẩn (PRD §14) — câu gợi ý không được hứa chúng.
+function sendFailureNextStep(app: ApplicationDetail, readOnly: boolean): string {
+  if (app.email_complained)
+    return "KHÔNG gửi lại — ứng viên đã báo cáo thư là spam (xem cảnh báo phía trên).";
+  if (app.status === "PENDING_REVIEW")
+    return "Sửa cấu hình gửi thư, rồi quyết định ở hàng chờ review — Duyệt hay Từ chối đều gửi một thư mới cho ứng viên.";
+  if (readOnly && (Boolean(app.resendable_email) || app.status === "AWAITING_BOOKING"))
+    return "Mở hồ sơ này trên bản web để gửi lại thư — bản cài trên điện thoại chỉ để xem.";
+  if (app.resendable_email === "screener")
+    return "Sửa cấu hình gửi thư, rồi bấm Gửi lại thư sàng lọc bên dưới — hệ thống phát liên kết MỚI, hạn trả lời tính lại từ đầu, liên kết cũ ngừng hoạt động.";
+  if (app.resendable_email === "reject")
+    return "Sửa cấu hình gửi thư, rồi bấm Gửi lại thư từ chối bên dưới.";
+  if (app.status === "AWAITING_BOOKING")
+    return "Sửa cấu hình gửi thư, rồi dùng nút Gửi lại link đặt lịch bên dưới.";
+  return "Sửa cấu hình gửi thư; liên hệ ứng viên thủ công nếu cần.";
 }
 
 export default function ApplicationDetailPage() {
@@ -58,21 +89,37 @@ export default function ApplicationDetailPage() {
   // thứ mà cả tính năng pull-scheduling này sinh ra để bỏ.
   const queryClient = useQueryClient();
   const [confirmingCancel, setConfirmingCancel] = useState(false);
-  const onScheduleChanged = (updated: ApplicationDetail) => {
+  // Sau mỗi thao tác HR: TẢI LẠI chi tiết, KHÔNG nhét phản hồi của nút vào cache. Phản hồi đó là
+  // `ApplicationRead` trần — mọi trường chỉ endpoint chi tiết mới điền (`has_booking_link`,
+  // `interview`, `screener_answers`, lý do email) đều về mặc định. Nhét nó vào cache là: vừa "Huỷ
+  // lịch" xong thì khung "Gửi lại link đặt lịch" BIẾN MẤT (has_booking_link=false) đúng lúc dòng chữ
+  // xác nhận bảo HR bấm nó, và câu trả lời sàng lọc biến khỏi trang cho tới lần tải lại.
+  // `await` để nút giữ "Đang…" tới khi dữ liệu mới về, thay vì nhấp nháy qua một trạng thái sai.
+  const refreshAfterAction = async () => {
     setConfirmingCancel(false);
-    queryClient.setQueryData(["application", id], updated);
-    void queryClient.invalidateQueries({ queryKey: ["applications"] });
-    // Badge sidebar + chip rổ nay đọc `["pipeline"]` (GROUP BY toàn bảng). Thiếu dòng này thì Huỷ
-    // lịch / Gửi lại link để chúng SAI tới 15 giây — trước khi badge đổi nguồn, chúng cập nhật ngay.
-    void queryClient.invalidateQueries({ queryKey: ["pipeline"] });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["application", id] }),
+      queryClient.invalidateQueries({ queryKey: ["applications"] }),
+      // Badge sidebar + chip rổ đọc `["pipeline"]` (GROUP BY toàn bảng). Thiếu dòng này thì chúng
+      // SAI tới 15 giây sau mỗi thao tác.
+      queryClient.invalidateQueries({ queryKey: ["pipeline"] }),
+    ]);
   };
   const cancelSchedule = useMutation({
     mutationFn: () => cancelInterview(id),
-    onSuccess: onScheduleChanged,
+    onSuccess: refreshAfterAction,
   });
   const resendLink = useMutation({
     mutationFn: () => resendBookingLink(id),
-    onSuccess: onScheduleChanged,
+    onSuccess: refreshAfterAction,
+  });
+  // FR-SCR-7 / FR-NOTI-3. Biến của mutation là LOẠI thư: sau khi gửi xong, cờ đã gỡ nên
+  // `app.resendable_email` về null — lời xác nhận phải nhớ vừa gửi thư gì. Lỗi CŨNG tải lại: 502
+  // nghĩa là backend đã gắn lại cờ + ghi lý do MỚI, banner phải hiện đúng lý do đó.
+  const resendEmail = useMutation({
+    mutationFn: (_kind: ResendableEmail) => resendFailedEmail(id),
+    onSuccess: refreshAfterAction,
+    onError: () => void queryClient.invalidateQueries({ queryKey: ["application", id] }),
   });
   const scheduleError = cancelSchedule.error ?? resendLink.error;
   // Chỉ hồ sơ ĐÃ TỪNG được mời mới "gửi LẠI" được — cùng điều kiện backend kiểm (`has_any_session`).
@@ -212,13 +259,44 @@ export default function ApplicationDetailPage() {
               <p className="mt-1.5 text-[13px] text-amber-900">
                 Thư gửi tới <strong>{app.applicant_email}</strong> KHÔNG rời khỏi hệ thống (khác với
                 bounce: ở đây địa chỉ ứng viên không có lỗi gì). Thường do cạn hạn mức gửi, domain
-                chưa xác thực, hoặc khoá API hỏng — hãy kiểm tra lý do bên dưới rồi gửi lại cho chính
-                địa chỉ này.
-                {app.email_send_failure_reason ? (
-                  <> Lý do: <code>{app.email_send_failure_reason}</code></>
-                ) : null}
+                chưa xác thực, hoặc khoá API hỏng.
               </p>
+              <p className="mt-1.5 text-[13px] text-amber-900">
+                <strong>Bước tiếp theo:</strong> {sendFailureNextStep(app, readOnly)}
+              </p>
+              {app.email_send_failure_reason && (
+                <p className="mt-1.5 break-words text-[13px] text-amber-900">
+                  Lý do: <code>{app.email_send_failure_reason}</code>
+                </p>
+              )}
+              {/* FR-SCR-7 / FR-NOTI-3: chỉ hiện khi backend nói gửi lại ĐƯỢC (`resendable_email`) —
+                  cùng câu hỏi với chốt chặn của endpoint, nên bấm là không ra 409. */}
+              {app.resendable_email && !readOnly && (
+                <button
+                  type="button"
+                  disabled={resendEmail.isPending}
+                  onClick={() => resendEmail.mutate(app.resendable_email!)}
+                  className={btn("secondary", "mt-2.5")}
+                >
+                  {resendEmail.isPending ? "Đang gửi…" : RESEND_LABEL[app.resendable_email]}
+                </button>
+              )}
+              {resendEmail.isError && !readOnly && (
+                <p role="alert" className="mt-2 text-[13px] font-semibold text-red-700">
+                  {String((resendEmail.error as Error)?.message) || "Gửi lại không thành công."}
+                </p>
+              )}
             </div>
+          )}
+          {/* Gửi lại xong thì cờ đã gỡ và banner trên biến mất — HR cần một lời xác nhận rằng thư
+              ĐÃ đi, không chỉ thấy cảnh báo im lặng biến mất. */}
+          {resendEmail.isSuccess && resendEmail.variables && !app.email_send_failed && (
+            <p
+              role="status"
+              className="mt-4 rounded-xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-900"
+            >
+              ✓ {RESEND_DONE[resendEmail.variables]}
+            </p>
           )}
 
           {/* Lý do cần HR xem xét (PRD §11) — chỉ báo HÀNH ĐỘNG. Hiện ở BA trạng thái, mỗi cái một
@@ -330,9 +408,13 @@ export default function ApplicationDetailPage() {
               </p>
               <p className="mt-1.5 text-[13px] text-amber-900">
                 Ứng viên đã mở liên kết nhưng không còn khung giờ trống nào trong cửa sổ đặt lịch.
-                Đây là giới hạn lịch của công ty, không phải ứng viên chậm trễ — hãy nới{" "}
-                <code>BOOKING_MAX_PER_DAY</code> / <code>BOOKING_WINDOW_DAYS</code>, hoặc huỷ bớt
-                buổi không cần thiết. Liên kết vẫn còn hiệu lực: có giờ trống là ứng viên đặt được ngay.
+                Đây là giới hạn lịch của công ty, không phải ứng viên chậm trễ — hãy mở thêm khung
+                giờ ở{" "}
+                <Link href="/system" className="font-semibold underline">
+                  Cấu hình → Đặt lịch
+                </Link>{" "}
+                (giờ kết thúc làm việc, độ dài một buổi, số ngày mở lịch), hoặc huỷ bớt buổi không
+                cần thiết. Liên kết vẫn còn hiệu lực: có giờ trống là ứng viên đặt được ngay.
               </p>
             </div>
           )}

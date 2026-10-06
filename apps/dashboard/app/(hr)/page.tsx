@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import type { ApplicationStatus, JobPosting, PipelineSnapshot } from "@ars/shared-types";
-import { ServiceStatus } from "@/components/ServiceStatus";
 import { getJobs, getPipeline } from "@/lib/api";
 
 // Bảng điều hành (PRD §12.1 FR-HR-DASH-1) — giám sát pipeline thời gian thực.
@@ -342,7 +341,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Đang chạy trực tiếp + trạng thái dịch vụ */}
+      {/* Đang chạy trực tiếp + hai gate. Trạng thái dịch vụ KHÔNG còn ở đây: nó trả lời câu hỏi HR chỉ
+          đặt khi nghi ngờ (mà mỗi lần mở dashboard lại tốn một lượt kiểm SÂU Postgres + Qdrant trong
+          hạn mức 20 lượt/giờ) — nay chỉ ở /system → tab Hạ tầng. */}
       <div className="mt-8 grid gap-6 lg:grid-cols-[1.55fr_1fr]">
         <section>
           <div className="flex items-center justify-between gap-3">
@@ -379,20 +380,29 @@ export default function DashboardPage() {
                     {a.job_id ? (jobTitle.get(a.job_id) ?? `JD #${a.job_id}`) : "Không gắn JD"}
                   </span>
                 </span>
-                <span className="flex flex-none items-center gap-2">
-                  <span className="h-[7px] w-[7px] rounded-full bg-accent motion-safe:animate-pulse-dot" aria-hidden />
-                  <span className="hidden text-[13px] text-ink/65 sm:inline">
-                    {STATUS_LABEL[a.status] ?? a.status}
+                {/* Thư bị dịch vụ gửi từ chối: "Chờ ứng viên trả lời" ở đây là nói dối — ứng viên có
+                    thể chưa từng có link (prod 06/10/2026). Không nhấp nháy: không có gì đang chạy. */}
+                {a.email_send_failed ? (
+                  <span className="flex flex-none items-center gap-2">
+                    <span className="h-[7px] w-[7px] rounded-full bg-amber-500" aria-hidden />
+                    <span className="hidden text-[13px] font-semibold text-amber-800 sm:inline">
+                      ⛔ Thư chưa gửi được
+                    </span>
                   </span>
-                </span>
+                ) : (
+                  <span className="flex flex-none items-center gap-2">
+                    <span className="h-[7px] w-[7px] rounded-full bg-accent motion-safe:animate-pulse-dot" aria-hidden />
+                    <span className="hidden text-[13px] text-ink/65 sm:inline">
+                      {STATUS_LABEL[a.status] ?? a.status}
+                    </span>
+                  </span>
+                )}
               </Link>
             ))}
           </div>
         </section>
 
         <section className="space-y-4">
-          <ServiceStatus />
-
           <div>
             <div className="rounded-xl border-2 border-divider bg-canvas p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.08em] text-ink/65">

@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { AuditLogItem, AuditLogPage } from "@ars/shared-types";
-import { Tag } from "@/components/ui";
-import { auditNodeLabel, getAuditLog, getAuditNodes } from "@/lib/admin";
-import { formatVnDateTime } from "@/lib/datetime";
+import { inputClass, Tag } from "@/components/ui";
+import { auditNodeLabel, getAuditLog, getAuditNodes, type AuditLogRange } from "@/lib/admin";
+import { formatVnDateTime, vnDayStartIso, vnNextDayStartIso } from "@/lib/datetime";
 
 // Tab 2 — Nhật ký kiểm toán (PRD §16 / NFR-3 / FR-PIPE-4). Trước slice này bảng `audit_log` được 8
 // service ghi rất dày nhưng KHÔNG có đường đọc nào; muốn tra phải vào thẳng Postgres.
@@ -101,24 +101,56 @@ export function AuditLogTab({ active }: { active: boolean }) {
   const [node, setNode] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set<number>());
+  // Ngày theo giờ VN, dạng YYYY-MM-DD của <input type="date">; "" = không giới hạn phía đó. Cả hai
+  // đầu tính TRỌN NGÀY: "đến 06/10" nghĩa là hết 23:59 ngày 06/10 (gửi lên mốc đầu ngày 07/10).
+  const [fromDay, setFromDay] = useState("");
+  const [toDay, setToDay] = useState("");
+  // `min`/`max` của ô ngày chỉ ràng buộc bộ chọn — gõ tay vẫn ra khoảng ngược, và Chrome cho gõ cả
+  // năm 5–6 chữ số (ô date nhận tới năm 275760; bắt gặp thật khi kiểm). Chặn ở đây (so chuỗi
+  // YYYY-MM-DD là so ngày) thay vì để backend trả 422 rồi hiện như "không tải được nhật ký".
+  // Năm 1970–2999 (khớp chốt chặn backend `admin._created_range`): ngoài khoảng đó backend trả 422, và
+  // năm 0000–0099 còn bị `Date.UTC` hiểu thành 1900–1999 khi tính mốc ngày hôm sau.
+  const wellFormed = (day: string) =>
+    day === "" ||
+    (/^\d{4}-\d{2}-\d{2}$/.test(day) && Number(day.slice(0, 4)) >= 1970 && Number(day.slice(0, 4)) <= 2999);
+  const malformed = !wellFormed(fromDay) || !wellFormed(toDay);
+  const reversed = !malformed && fromDay !== "" && toDay !== "" && fromDay > toDay;
+  const badRange = malformed || reversed;
+  // Chỉ dựng mốc khi ngày HỢP LỆ: với năm vượt giới hạn của `Date` (vd 275760), `toISOString()`
+  // trong `vnNextDayStartIso` NÉM lỗi và làm sập cả tab — chứ không chỉ ra một khoảng sai.
+  const range: AuditLogRange = badRange
+    ? {}
+    : {
+        createdFrom: fromDay ? vnDayStartIso(fromDay) : undefined,
+        createdTo: toDay ? vnNextDayStartIso(toDay) : undefined,
+      };
 
+  // Số đếm theo bước đi theo CÙNG khoảng ngày — chip "Tất cả (n)" phải khớp tổng của bảng bên dưới.
   const { data: nodeCounts } = useQuery<Record<string, number>>({
-    queryKey: ["admin", "audit-nodes"],
-    queryFn: getAuditNodes,
-    enabled: active,
+    queryKey: ["admin", "audit-nodes", fromDay, toDay],
+    queryFn: () => getAuditNodes(range),
+    enabled: active && !badRange,
   });
 
-  const { data, isLoading, isError, error } = useQuery<AuditLogPage>({
-    queryKey: ["admin", "audit-log", node, offset],
-    queryFn: () => getAuditLog({ node: node ?? undefined, limit: PAGE_SIZE, offset }),
-    enabled: active,
+  const { data: fetched, isLoading, isError, error } = useQuery<AuditLogPage>({
+    queryKey: ["admin", "audit-log", node, offset, fromDay, toDay],
+    queryFn: () => getAuditLog({ node: node ?? undefined, limit: PAGE_SIZE, offset, ...range }),
+    enabled: active && !badRange,
     placeholderData: (prev) => prev,
   });
+  // Khoảng sai thì query tắt nhưng `placeholderData` vẫn giữ bảng của khoảng TRƯỚC — hiện nó ra là
+  // trình bày dữ liệu cũ như thể thuộc khoảng mới. Không hiện gì ngoài lời nhắc.
+  const data = badRange ? undefined : fetched;
 
   // Đổi bộ lọc = xem một TẬP khác ⇒ phải về trang 1. Giữ nguyên offset thì đang ở trang 4 mà lọc
   // sang một node chỉ có 12 bản ghi sẽ ra bảng RỖNG — trông hệt như "node này không có dữ liệu".
   const selectNode = (next: string | null) => {
     setNode(next);
+    setOffset(0);
+  };
+  const changeDays = (from: string, to: string) => {
+    setFromDay(from);
+    setToDay(to);
     setOffset(0);
   };
 
@@ -134,7 +166,8 @@ export function AuditLogTab({ active }: { active: boolean }) {
   const total = data?.total ?? 0;
   const hasMore = offset + items.length < total;
 
-  // Chip "Tất cả" cộng từ chính `nodeCounts` (GROUP BY toàn bảng) — không đếm trong trang đang xem.
+  // Chip "Tất cả" cộng từ chính `nodeCounts` (GROUP BY trong khoảng ngày đang lọc) — không đếm trong
+  // trang đang xem.
   const allCount = Object.values(nodeCounts ?? {}).reduce((t, n) => t + n, 0);
   const chips: { key: string | null; label: string; count: number | null }[] = [
     { key: null, label: "Tất cả", count: nodeCounts ? allCount : null },
@@ -144,9 +177,62 @@ export function AuditLogTab({ active }: { active: boolean }) {
       count,
     })),
   ];
+  // Thu hẹp khoảng ngày có thể làm bước ĐANG CHỌN không còn bản ghi nào ⇒ chip của nó biến mất khỏi
+  // danh sách trong khi bộ lọc vẫn đang áp — bảng rỗng mà không thấy vì sao. Giữ chip đó với số 0.
+  if (nodeCounts && node !== null && !(node in nodeCounts)) {
+    chips.push({ key: node, label: auditNodeLabel(node), count: 0 });
+  }
+  const filteringDays = fromDay !== "" || toDay !== "";
 
   return (
     <div>
+      {/* Lọc theo ngày (giờ VN, trọn ngày ở cả hai đầu). Đặt TRƯỚC chip bước: khoanh thời gian là câu
+          hỏi đầu tiên khi tra một sự cố ("hôm qua có gì?"), và số trên chip đi theo khoảng này. */}
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div className="flex w-[170px] flex-col gap-1">
+          <label htmlFor="audit-from" className="text-[13px] font-semibold text-ink/70">
+            Từ ngày
+          </label>
+          <input
+            id="audit-from"
+            type="date"
+            value={fromDay}
+            max={toDay || undefined}
+            onChange={(e) => changeDays(e.target.value, toDay)}
+            className={inputClass}
+          />
+        </div>
+        <div className="flex w-[170px] flex-col gap-1">
+          <label htmlFor="audit-to" className="text-[13px] font-semibold text-ink/70">
+            Đến ngày
+          </label>
+          <input
+            id="audit-to"
+            type="date"
+            value={toDay}
+            min={fromDay || undefined}
+            onChange={(e) => changeDays(fromDay, e.target.value)}
+            className={inputClass}
+          />
+        </div>
+        {filteringDays && (
+          <button
+            type="button"
+            onClick={() => changeDays("", "")}
+            className="rounded-lg border-2 border-divider px-3 py-1.5 text-[13px] font-semibold text-ink/70 transition-colors hover:bg-ink/[0.06]"
+          >
+            Xoá lọc ngày
+          </button>
+        )}
+      </div>
+      {badRange && (
+        <p role="alert" className="mb-4 text-[13px] font-semibold text-red-700">
+          {malformed
+            ? "Ngày không hợp lệ — năm phải từ 1970 đến 2999."
+            : "“Từ ngày” phải trước hoặc bằng “Đến ngày”."}
+        </p>
+      )}
+
       {/* Bộ lọc theo node — chỉ hiện node THỰC SỰ có dữ liệu (endpoint /audit-log/nodes chỉ trả
           những node đã ghi), nên không có chip nào bấm vào ra bảng rỗng. */}
       <div className="flex flex-wrap gap-2">
@@ -171,7 +257,9 @@ export function AuditLogTab({ active }: { active: boolean }) {
         })}
       </div>
 
-      {isError && (
+      {/* Khoảng ngày sai thì query đã tắt — lỗi còn treo (nếu có) thuộc về một lượt tải cũ, hiện nó
+          cạnh lời nhắc ở trên là hai thông báo đỏ nói hai chuyện. */}
+      {isError && !badRange && (
         <p
           role="alert"
           className="mt-4 rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700"
@@ -199,8 +287,12 @@ export function AuditLogTab({ active }: { active: boolean }) {
         {!isLoading && data && items.length === 0 && (
           <p className="px-6 py-10 text-center text-[13px] text-ink/65">
             {node === null
-              ? "Chưa có bản ghi nào — nhật ký sẽ đầy dần khi CV chạy qua pipeline."
-              : "Không có bản ghi nào của bước này."}
+              ? filteringDays
+                ? "Không có bản ghi nào trong khoảng ngày đã chọn."
+                : "Chưa có bản ghi nào — nhật ký sẽ đầy dần khi CV chạy qua pipeline."
+              : filteringDays
+                ? "Không có bản ghi nào của bước này trong khoảng ngày đã chọn."
+                : "Không có bản ghi nào của bước này."}
           </p>
         )}
 
