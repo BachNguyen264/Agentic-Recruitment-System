@@ -154,6 +154,15 @@ làm tên audit action) + lý do đọc từ `data.failed.reason`. Hạ trạng 
 TRỪ `screener_reminder` (thư nhắc chở lại chính link đã giao thành công). `_NEGATIVE` nay DẪN XUẤT
 từ `_STATUS_FLAG`. Không cần migration (`status` là `varchar(16)`).
 
+**EMAIL-3 (gửi lại thư hỏng — PRD FR-SCR-7 / FR-NOTI-3) XONG:** smoke test prod 06/10 thấy sender rơi
+về sandbox `onboarding@resend.dev` ⇒ Resend 403 tại chỗ cho MỌI thư (sự cố + cách sửa →
+`docs/deploy-live-issues.md` §6). HR nay có `POST /api/applications/{id}/email/resend` + nút trong
+banner ⛔: thư sàng lọc → phiên MỚI (link + hạn + mốc nhắc tính lại, phiên cũ đóng), thư từ chối →
+gửi lại; điều kiện nút = `ApplicationRead.resendable_email` (cùng hàm với chốt chặn endpoint). Kèm:
+lý do lỗi tại chỗ đọc từ audit (`latest_send_failure_reason`), AgentTrace hết "đã gửi" khi thư hỏng,
+thao tác lịch HR tải lại chi tiết thay vì ghi đè cache, lọc nhật ký kiểm toán theo ngày, gỡ
+"Trạng thái dịch vụ" khỏi dashboard (chỉ còn ở `/system` → Hạ tầng). Bẫy → `docs/AI_GUIDE.md`.
+
 **VERIFY PROD E2E (18/08/2026) — ĐÃ CHẠY THẬT, 4 lỗi tìm được + đã vá:** dọn sạch prod rồi chạy trọn
 vòng đời trên bản live (JD + AI-gợi-ý-rubric → 4 CV → cả 3 nhánh quyết định → magic-link sàng lọc →
 gate auto-mời → ứng viên tự chọn giờ → huỷ/đặt lại → HR duyệt). Webhook Resend nay CÓ bằng chứng
@@ -174,7 +183,7 @@ tốn đúng **+1 lượt mượn pool ngắn/CV**; guard `IN_FLIGHT_STATUSES`, 
 100 hồ sơ** (`list_applications` có `limit=100`). Frontend: nhịp THÍCH ỨNG (rỗi 6s / đang chạy 2s),
 animation chỉ ở node đang chạy (`pulse-ring` + thanh vô định + mũi tên chảy, đều sau `motion-safe:`),
 và **trạng thái dịch vụ nay KIỂM THEO YÊU CẦU** (nạp 1 lần + nút "Kiểm tra lại"; `/api/health` là
-kiểm SÂU và nằm trong hạn mức 20 lượt/giờ). Đo thật local: `SUBMITTED → PARSING → RANKING → PENDING_
+kiểm SÂU và nằm trong hạn mức 20 lượt/giờ; từ EMAIL-3 chỉ còn ở `/system` → Hạ tầng). Đo thật local: `SUBMITTED → PARSING → RANKING → PENDING_
 REVIEW` hiện đúng thứ tự, parser 10s · ranker 19s. Bốn bẫy → `docs/AI_GUIDE.md` (4 gotcha cuối).
 
 **CVT-1 (kho CV mẫu — hạ rào cản đầu phễu, PRD §8.2b + FR-AP-6/7) XONG:** route CÔNG KHAI `/cv-templates`,

@@ -391,8 +391,8 @@ async def _apply_bounce(
     chỉ `Permanent` (và các loại khác/không rõ, coi như nghiêm trọng) mới hạ. Lý do cụ thể:
     `screener_reminder` chở lại CHÍNH magic-link mà thư `screener` gốc đã giao THÀNH CÔNG — hộp thư
     đầy lúc thư nhắc tới KHÔNG có nghĩa liên kết đã chết, nên hạ về PENDING_REVIEW rồi đóng phiên
-    (`_abandon_in_flight_session`) là giết một link đang sống dưới chân ứng viên, mà HR lại không có
-    nút "gửi lại link sàng lọc" (chỉ booking mới có). `bounce_data` cho phép `None` (complaint/sự
+    (`_abandon_in_flight_session`) là giết một link đang sống dưới chân ứng viên, mà nút "Gửi lại thư
+    sàng lọc" của HR (FR-SCR-7) chỉ có khi hồ sơ CÒN ở AWAITING_SCREENER. `bounce_data` cho phép `None` (complaint/sự
     kiện không mang `data`) — an toàn vì `_is_transient_bounce` tự canh kiểu.
     """
     # Tra BẢNG, không ternary. `_NEGATIVE` được dẫn xuất từ `_STATUS_FLAG` nên khoá chắc chắn tồn
@@ -412,8 +412,9 @@ async def _apply_bounce(
     # nên "thư nhắc không đi được" KHÔNG hề nói rằng liên kết đã chết — nó chỉ nói phía TA đang trục
     # trặc. Hạ trạng thái ở đây sẽ kéo theo `_abandon_in_flight_session` đóng phiên, và
     # `screening._load_valid` từ chối mọi phiên có `timed_out_at` ⇒ ứng viên mở liên kết CÒN HẠN của
-    # mình thì nhận "đã quá hạn", `reminded_at` đã tiêu nên không có lời nhắc thứ hai, mà HR lại
-    # KHÔNG có nút gửi lại link sàng lọc (chỉ đặt lịch mới có). Bài dự tuyển mất, không đường cứu.
+    # mình thì nhận "đã quá hạn", `reminded_at` đã tiêu nên không có lời nhắc thứ hai, và nút "Gửi lại
+    # thư sàng lọc" của HR (FR-SCR-7) chỉ có khi hồ sơ CÒN ở AWAITING_SCREENER — hạ là mất luôn đường
+    # cứu đó. Bài dự tuyển mất, không đường cứu.
     #
     # Nguy hiểm gấp bội vì `reached_daily_quota` là sự cố TOÀN HỆ THỐNG còn sweep gửi nhắc theo LÔ:
     # một lần cạn hạn mức giết liên kết của mọi ứng viên có thư nhắc rơi vào cửa sổ đó.

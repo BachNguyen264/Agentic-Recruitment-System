@@ -155,9 +155,38 @@ null gây hiểu nhầm ở UI.
 
 ---
 
+## 6. 🔴 CRITICAL — Mọi thư tới ứng viên bị Resend chặn: sender rơi về sandbox (06/10/2026)
+
+**Triệu chứng (smoke test prod):** hồ sơ chạy parser → ranker → `AWAITING_SCREENER` bình thường, nhưng audit
+có `scheduler · email_failed` và hồ sơ mang cờ `email_send_failed`; KHÔNG có hàng `email_delivery` nào.
+Lỗi Resend (403): *"You can only send testing emails to your own email address … please verify a domain"*.
+Trên dashboard hồ sơ trông như "Chờ ứng viên trả lời" — trong khi ứng viên chưa hề có link.
+
+**Nguyên nhân gốc:** `/system → Cấu hình → Email → Địa chỉ gửi thư` = `onboarding@resend.dev` — đúng MẶC
+ĐỊNH sandbox trong code. Từ CONFIG-1 thứ tự hiệu lực là `app_config › env › mặc định code`; bảng
+`app_config` prod không có dòng này và env Render cũng không có `EMAIL_FROM` (suy luận — không xem được
+Render; khả năng cao mất khi dọn env theo `.env.example` mới, commit `eda68c9`). API key thì ĐÚNG: lượt 403
+nằm trong chính tài khoản Resend có domain `hireflow.dpdns.org` đã verified — sai mỗi địa chỉ gửi.
+
+**Fix (thao tác vận hành, không cần deploy):** đặt "Địa chỉ gửi thư" = `noreply@hireflow.dpdns.org` (khớp
+`EMAIL_FROM` của `.env` dev) ở `/system` → Lưu — áp ngay vì `email_service` đọc `settings.email_from` mỗi
+lượt gửi. Nên điền luôn "Địa chỉ nhận thư trả lời". Hồ sơ đã kẹt vì thư hỏng: dùng nút **Gửi lại thư**
+trên trang chi tiết (FR-SCR-7 / FR-NOTI-3) sau khi sửa sender.
+
+**Verify:** gửi lại một thư → Resend `list-emails` thấy `From: noreply@hireflow.dpdns.org`, trạng thái
+`delivered`; hồ sơ hết cờ `email_send_failed`.
+
+**Bài học:** chuyển một biến từ env sang `app_config` mà bảng chỉ lưu dòng KHÁC mặc định thì xoá env là
+lặng lẽ rơi về mặc định code — và mặc định của sender lại là địa chỉ sandbox CHỈ gửi được cho chủ tài
+khoản. Prod không báo lỗi khởi động nào; chỉ lộ ra khi một ứng viên thật không nhận được thư.
+
+---
+
 ## Checklist khi gặp lại / trước khi đụng vùng nhạy cảm
 
 - [ ] Pool kết nối RIÊNG tới Neon (ngoài SQLAlchemy engine) → nhớ `check` + `max_idle` < autosuspend.
 - [ ] Thêm/sửa rate-limit sau proxy → xác nhận khoá quota = IP client thật qua log probe (đừng đoán hop).
 - [ ] Health check nền tảng → luôn trỏ `/api/health/live` (không I/O), KHÔNG `/api/health` (kiểm sâu).
 - [ ] Đổi cơ chế lưu dữ liệu → rà cột denormalize cũ còn được ghi không.
+- [ ] Dọn env trên Render → mở `/system → Cấu hình` của prod đối chiếu từng ô với giá trị prod mong muốn
+      (đặc biệt "Địa chỉ gửi thư" ≠ `onboarding@resend.dev`), rồi gửi thử một thư tới địa chỉ ngoài.
