@@ -246,6 +246,11 @@ dậy theo sự kiện hoặc theo hạn.
   ở trạng thái cuối (đã loại/đóng) → ghi log, không mở lại (hoặc auto-reply "vòng xét đã kết thúc").
 - **FR-SCR-6 (bộ câu hỏi):** câu hỏi **cố định**, cấu hình theo JD. LLM chỉ diễn đạt + chuẩn hóa câu trả lời +
   hỏi lại **tối đa 1 lần** khi mơ hồ. KHÔNG trò chuyện tự do (đảm bảo công bằng + kiểm toán + an toàn pháp lý).
+- **FR-SCR-7 (gửi lại khi thư hỏng):** thư câu hỏi bị dịch vụ gửi TỪ CHỐI → hồ sơ vẫn `AWAITING_SCREENER`, gắn
+  cờ `email_send_failed` + lý do cho HR. HR bấm **Gửi lại thư sàng lọc** → phát **phiên MỚI** (link mới; hạn và
+  mốc nhắc FR-SCR-3 tính lại từ lúc gửi lại; giữ nguyên bộ câu hỏi đã chụp), link cũ ngừng hoạt động — cùng
+  nguyên tắc với *Gửi lại link đặt lịch* (§10b.6). Nút CHỈ có khi thư đã gửi hỏng (không phải kênh nhắc tùy ý);
+  hệ thống KHÔNG tự gửi lại.
 
 ---
 
@@ -409,6 +414,10 @@ phải sửa nghiệp vụ.
   ("cần mở thêm lịch"), không hiển thị như thể ứng viên đang chậm.
 - FR-BOOK-5: cấu hình khả dụng **toàn cục** qua env (§10b.7); mọi mốc thời gian theo `Asia/Ho_Chi_Minh`.
 - FR-NOTI-2: badge số ca chờ trong app (web push đẩy thật: xem §17) tới HR khi có ca cần review.
+- FR-NOTI-3: thư tới ứng viên bị dịch vụ gửi từ chối → cờ `email_send_failed` + lý do hiện cho HR ở mọi trạng
+  thái. HR **gửi lại** từ dashboard (web) cho hai loại thư không còn đường cứu nào khác: thư sàng lọc
+  (FR-SCR-7) và thư từ chối (hồ sơ vẫn `REJECTED`). KHÔNG gửi lại cho ứng viên đã báo spam. Thư mời có đường
+  riêng sẵn (duyệt lại ở hàng chờ / gửi lại link đặt lịch).
 
 ---
 
@@ -425,6 +434,8 @@ SCREENING
   → AWAITING_SCREENER  (suspend)
         trả lời    → (resume) → GATE MỜI
         +24h       → gửi thư nhắc (ghi mốc reminded_at) → (vẫn AWAITING_SCREENER)
+        thư gửi hỏng → (vẫn AWAITING_SCREENER, cờ email_send_failed)
+                     → HR gửi lại thư → phiên MỚI, hạn mới (FR-SCR-7)
         timeout    → PENDING_REVIEW[no_response]
   GATE MỜI:
         ổn + auto-invite ON → SCHEDULING
@@ -443,6 +454,8 @@ INTERVIEW_SCHEDULED:
 PENDING_REVIEW (HR quyết):
         duyệt   → SCHEDULING → INTERVIEW_SCHEDULED
         từ chối → REJECTED
+REJECTED:
+        thư từ chối gửi hỏng → HR gửi lại thư (vẫn REJECTED — FR-NOTI-3)
 ```
 
 **Ba rổ dashboard:** đang xử lý (`SUBMITTED..RANKING`, `SCREENING`, `AWAITING_SCREENER`, `SCHEDULING`,
@@ -467,6 +480,7 @@ nhưng gắn nhãn `[error]` để phân biệt với "ứng viên không đạt
 | Thống kê / vòng học                   | ✅     | ❌                   | —             |
 | Kiểm tra CV                           | ✅     | ❌                   | —             |
 | Huỷ / gửi lại link đặt lịch           | ✅     | ❌                   | —             |
+| Gửi lại thư khi gửi hỏng              | ✅     | ❌                   | —             |
 
 > Chỉ một app web (Next.js), responsive — KHÔNG có codebase mobile riêng (§6). Cột "Điện thoại" áp
 > dụng khi app chạy ở **chế độ đã cài (standalone)**: mở cùng địa chỉ bằng trình duyệt trên điện
