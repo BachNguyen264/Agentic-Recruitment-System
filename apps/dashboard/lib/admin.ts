@@ -14,12 +14,26 @@ import { API_BASE, getJson } from "@/lib/api";
 // ── Đọc (GET) — dùng LẠI `getJson`: nó đã lo cookie + 401 → /login ────────────
 export const getAdminConfig = () => getJson<ConfigGroup[]>("/api/admin/config");
 
-export type AuditLogQuery = {
+// Khoảng thời gian NỬA MỞ [createdFrom, createdTo) — ISO 8601 CÓ múi giờ (backend từ chối mốc trần,
+// xem `admin._created_range`). Dựng bằng `vnDayStartIso`/`vnNextDayStartIso` của lib/datetime.
+export type AuditLogRange = {
+  createdFrom?: string;
+  createdTo?: string;
+};
+
+export type AuditLogQuery = AuditLogRange & {
   node?: string;
   limit?: number;
   offset?: number;
   applicationId?: number;
 };
+
+// `URLSearchParams` mã hoá "+" của "+07:00" thành %2B. Ghép chuỗi tay thì "+" về server thành DẤU
+// CÁCH và mọi lượt lọc ngày chết 422.
+function setRange(p: URLSearchParams, r: AuditLogRange): void {
+  if (r.createdFrom) p.set("created_from", r.createdFrom);
+  if (r.createdTo) p.set("created_to", r.createdTo);
+}
 
 export function getAuditLog(q: AuditLogQuery = {}): Promise<AuditLogPage> {
   const p = new URLSearchParams();
@@ -27,12 +41,19 @@ export function getAuditLog(q: AuditLogQuery = {}): Promise<AuditLogPage> {
   if (q.limit != null) p.set("limit", String(q.limit));
   if (q.offset != null) p.set("offset", String(q.offset));
   if (q.applicationId != null) p.set("application_id", String(q.applicationId));
+  setRange(p, q);
   const qs = p.toString();
   return getJson<AuditLogPage>(`/api/admin/audit-log${qs ? `?${qs}` : ""}`);
 }
 
 // Nguồn cho bộ lọc: CHỈ node thực sự có dữ liệu, kèm số lượng (một câu GROUP BY, payload cỡ cố định).
-export const getAuditNodes = () => getJson<Record<string, number>>("/api/admin/audit-log/nodes");
+// Nhận CÙNG khoảng ngày với danh sách — chip phải đếm đúng tập bảng đang hiện.
+export function getAuditNodes(r: AuditLogRange = {}): Promise<Record<string, number>> {
+  const p = new URLSearchParams();
+  setRange(p, r);
+  const qs = p.toString();
+  return getJson<Record<string, number>>(`/api/admin/audit-log/nodes${qs ? `?${qs}` : ""}`);
+}
 
 // Đồng hồ đo bão hoà. KHÔNG nằm trong xô rate-limit nào (`hardening._bucket` so sánh ĐÚNG BẰNG
 // `/api/health`, không trùm lên đường con) và KHÔNG chạm Postgres/Qdrant — khác hẳn `/api/health`
