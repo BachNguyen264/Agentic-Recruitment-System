@@ -100,6 +100,12 @@ function deriveNodes(app: ApplicationDetail) {
   } else if (flags.includes("no_response")) {
     screener = "failed";
     screenerNote = "Hết hạn không phản hồi — chuyển HR xem xét (KHÔNG tự từ chối).";
+  } else if (s === "AWAITING_SCREENER" && flags.includes("email_send_failed")) {
+    // Dịch vụ gửi TỪ CHỐI thư câu hỏi: hồ sơ vẫn đứng ở AWAITING_SCREENER (đúng thiết kế, để HR gửi
+    // lại được) nhưng ứng viên có thể CHƯA TỪNG có link. Vẽ "đang chờ ứng viên" ở đây là trạng thái
+    // nói dối — đúng thứ trace này cam kết không làm (quan sát thật trên prod 06/10/2026).
+    screener = "failed";
+    screenerNote = "Thư câu hỏi KHÔNG gửi được — ứng viên có thể chưa nhận được link (xem cảnh báo phía trên).";
   } else if (s === "AWAITING_SCREENER") {
     // Không tách nhánh "đã nhắc": nhắc là SỰ KIỆN chứ không phải trạng thái, hồ sơ vẫn đứng nguyên ở
     // AWAITING_SCREENER (mốc nằm ở `screening_session.reminded_at`). Nhánh cũ không bao giờ chạy.
@@ -140,6 +146,11 @@ function deriveNodes(app: ApplicationDetail) {
     // quyết định xong lâu rồi, quả bóng đang ở sân ứng viên và HR không phải làm gì cả.
     scheduler = "waiting";
     schedulerNote = "Đã gửi thư mời kèm link đặt lịch — đang chờ ứng viên chọn giờ.";
+  } else if (s === "REJECTED" && flags.includes("email_send_failed")) {
+    // Quyết định đã ghi nhưng dịch vụ gửi TỪ CHỐI lá thư — "Đã gửi thư từ chối" ở đây là nói dối
+    // đúng loại mà nhánh screener phía trên cũng vừa sửa (prod 06/10/2026).
+    scheduler = "failed";
+    schedulerNote = "Đã quyết định từ chối, nhưng thư từ chối KHÔNG gửi được — ứng viên chưa được báo kết quả (xem cảnh báo phía trên).";
   } else if (s === "REJECTED") {
     scheduler = "done";
     schedulerNote = "Đã gửi thư từ chối.";

@@ -85,7 +85,13 @@ export interface ApplicationListItem {
   // RIÊNG với email_bounced: bounce ⇒ địa chỉ ứng viên có vấn đề, tìm kênh khác; failed ⇒ phía TA
   // có vấn đề (hạn mức/domain/khoá API), sửa rồi gửi lại chính địa chỉ đó.
   email_send_failed?: boolean;
+  // FR-SCR-7 / FR-NOTI-3: lá thư hỏng nào HR gửi lại được ở trạng thái hiện tại, hoặc null. Gương của
+  // chốt chặn backend (`email_resend.resendable_email`) — nút "Gửi lại" chỉ hiện khi bấm được.
+  resendable_email?: ResendableEmail | null;
 }
+
+// Hai loại thư KHÔNG còn đường cứu nào khác ngoài gửi lại (thư mời đã có: duyệt lại / gửi lại link).
+export type ResendableEmail = "screener" | "reject";
 
 // Một tiêu chí rubric đã chấm (khớp ranker._reconcile_criteria: tên+trọng số từ JD, điểm từ LLM).
 export interface Criterion {
@@ -129,7 +135,8 @@ export interface ApplicationDetail extends ApplicationListItem {
   email_bounce_reason: string | null;
   // Lý do complaint tương tự — RIÊNG cột, Resend hiếm khi kèm chi tiết cho loại này nên thường null.
   email_complaint_reason: string | null;
-  // Lý do KỸ THUẬT khi không gửi đi được (Resend `failed.reason`, vd "reached_daily_quota").
+  // Lý do KỸ THUẬT gần nhất khi không gửi đi được — từ webhook (`failed.reason`, vd
+  // "reached_daily_quota") HOẶC từ lỗi Resend trả ngay lúc gọi (403 domain chưa xác thực…).
   email_send_failure_reason: string | null;
 }
 

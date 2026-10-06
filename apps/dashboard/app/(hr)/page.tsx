@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import type { ApplicationStatus, JobPosting, PipelineSnapshot } from "@ars/shared-types";
-import { ServiceStatus } from "@/components/ServiceStatus";
 import { getJobs, getPipeline } from "@/lib/api";
 
 // Bảng điều hành (PRD §12.1 FR-HR-DASH-1) — giám sát pipeline thời gian thực.
@@ -342,7 +341,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Đang chạy trực tiếp + trạng thái dịch vụ */}
+      {/* Đang chạy trực tiếp + hai gate. Trạng thái dịch vụ KHÔNG còn ở đây: nó trả lời câu hỏi HR chỉ
+          đặt khi nghi ngờ (mà mỗi lần mở dashboard lại tốn một lượt kiểm SÂU Postgres + Qdrant trong
+          hạn mức 20 lượt/giờ) — nay chỉ ở /system → tab Hạ tầng. */}
       <div className="mt-8 grid gap-6 lg:grid-cols-[1.55fr_1fr]">
         <section>
           <div className="flex items-center justify-between gap-3">
@@ -391,8 +392,6 @@ export default function DashboardPage() {
         </section>
 
         <section className="space-y-4">
-          <ServiceStatus />
-
           <div>
             <div className="rounded-xl border-2 border-divider bg-canvas p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.08em] text-ink/65">
