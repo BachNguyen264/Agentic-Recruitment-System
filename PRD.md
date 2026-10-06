@@ -246,11 +246,13 @@ dậy theo sự kiện hoặc theo hạn.
   ở trạng thái cuối (đã loại/đóng) → ghi log, không mở lại (hoặc auto-reply "vòng xét đã kết thúc").
 - **FR-SCR-6 (bộ câu hỏi):** câu hỏi **cố định**, cấu hình theo JD. LLM chỉ diễn đạt + chuẩn hóa câu trả lời +
   hỏi lại **tối đa 1 lần** khi mơ hồ. KHÔNG trò chuyện tự do (đảm bảo công bằng + kiểm toán + an toàn pháp lý).
-- **FR-SCR-7 (gửi lại khi thư hỏng):** thư câu hỏi bị dịch vụ gửi TỪ CHỐI → hồ sơ vẫn `AWAITING_SCREENER`, gắn
-  cờ `email_send_failed` + lý do cho HR. HR bấm **Gửi lại thư sàng lọc** → phát **phiên MỚI** (link mới; hạn và
-  mốc nhắc FR-SCR-3 tính lại từ lúc gửi lại; giữ nguyên bộ câu hỏi đã chụp), link cũ ngừng hoạt động — cùng
-  nguyên tắc với *Gửi lại link đặt lịch* (§10b.6). Nút CHỈ có khi thư đã gửi hỏng (không phải kênh nhắc tùy ý);
-  hệ thống KHÔNG tự gửi lại.
+- **FR-SCR-7 (gửi lại khi thư hỏng):** thư câu hỏi bị dịch vụ gửi TỪ CHỐI NGAY LÚC GỬI (domain chưa xác thực,
+  cạn hạn mức…) → hồ sơ vẫn `AWAITING_SCREENER`, gắn cờ `email_send_failed` + lý do cho HR. HR bấm **Gửi lại thư
+  sàng lọc** → phát **phiên MỚI** (link mới; hạn và mốc nhắc FR-SCR-3 tính lại từ lúc gửi lại; giữ nguyên bộ câu
+  hỏi đã chụp), link cũ ngừng hoạt động — cùng nguyên tắc với *Gửi lại link đặt lịch* (§10b.6). Gửi lại vẫn hỏng
+  → hồ sơ và link cũ giữ NGUYÊN như trước khi bấm. Nút CHỈ có khi thư đã gửi hỏng (không phải kênh nhắc tùy ý);
+  hệ thống KHÔNG tự gửi lại. (Thư đã được nhận rồi mới báo hỏng qua webhook thì theo EMAIL-2: hạ về
+  `PENDING_REVIEW`, HR quyết — không có nút gửi lại câu hỏi ở trạng thái đó.)
 
 ---
 

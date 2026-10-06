@@ -631,9 +631,19 @@
   email) về mặc định. `setQueryData(["application", id], phản_hồi)` từng làm khung "Gửi lại link đặt
   lịch" BIẾN MẤT ngay sau "Huỷ lịch" — đúng lúc dòng xác nhận bảo HR bấm nó. Sau thao tác: `await
   invalidateQueries(["application", id])` (tải lại), không ghi đè cache bằng phản hồi của nút.
-- **Gửi lại thư: gỡ cờ TRƯỚC khi gửi, phiên MỚI thì phải ĐÓNG phiên cũ (EMAIL-3).** `resend_failed_email`
-  commit việc gỡ `email_send_failed` (+ phiên sàng lọc mới) TRƯỚC lượt gọi Resend: lượt bấm thứ hai chờ
-  khoá xong thấy hết cờ → 409, thay vì phát link thứ hai làm link vừa gửi chết dưới chân ứng viên; gửi
-  hỏng thì `_dispatch` tự gắn cờ lại. Phiên cũ để sống thì sweep vẫn nhắc bằng link CŨ rồi tới hạn CŨ
-  resume `no_response` và kéo hồ sơ về `PENDING_REVIEW` trong khi phiên mới còn nguyên hạn. Có test
-  đọc DB từ connection KHÁC đúng lúc "gửi" để chốt thứ tự này (đột biến dời commit → đỏ).
+- **Gửi lại thư = CHIẾM → GỬI → CHỐT/HOÀN, và thứ tự KHOÁ phải trùng submit (EMAIL-3, review đối kháng
+  bắt cả 3 lỗi dưới đây, đều tái hiện trên Postgres thật).** (1) **Thứ tự khoá:** `submit_answers` và sweep
+  hết hạn khoá hàng `screening_session` (FOR UPDATE) TRƯỚC rồi mới ghi hàng `application`; lượt gửi lại mà
+  chạm hồ sơ trước (chỉ cần GÁN một cờ rồi chạy một SELECT — autoflush ghi luôn hàng hồ sơ) là ngược thứ
+  tự ⇒ `DeadlockDetectedError`, Postgres có thể huỷ đúng lượt ứng viên nộp câu trả lời. Nay: khoá tư vấn
+  → khoá hàng phiên → `get(..., populate_existing=True, with_for_update=True)` → mới kiểm + ghi. (2)
+  **Gỡ cờ + đóng phiên cũ + phát phiên mới được COMMIT trước lượt gọi Resend** (lượt bấm thứ hai thấy hết
+  cờ → 409; không ôm connection qua I/O) — nhưng gửi HỎNG thì phải HOÀN: đóng phiên mới, mở lại phiên cũ.
+  Ca chỉ thư NHẮC hỏng thì ứng viên đang cầm link cũ; đóng nó rồi gửi hỏng là họ mất cả hai link. (3)
+  **`session.expunge_all()` trước lượt gửi:** `_dispatch` gắn lại cờ bằng `session.get` — trả bản CŨ
+  trong identity map — nên một webhook complaint tới giữa chừng bị ghi đè MẤT `email_complained`.
+  GIỚI HẠN ĐÃ BIẾT: tiến trình chết giữa CHIẾM và GỬI thì cờ đã gỡ mà thư chưa đi (thư sàng lọc tự lành
+  qua lời nhắc 24h của phiên mới; thư từ chối thì không). Và `email_send_failed` chỉ được gỡ khi webhook
+  `delivered` về (hoặc khi HR gửi lại) — lượt gửi THÀNH CÔNG khác KHÔNG gỡ nó, nên cờ của một lá thư cũ
+  có thể còn treo sau khi thư sau đã đi (webhook chết là treo mãi). Sửa tận gốc = gỡ cờ trong
+  `scheduler._dispatch` khi gửi thành công — đụng điểm gửi DUY NHẤT của mọi luồng, chưa làm.
