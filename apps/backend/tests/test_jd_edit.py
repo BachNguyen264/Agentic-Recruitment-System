@@ -151,7 +151,7 @@ async def test_update_survives_reembed_error(monkeypatch) -> None:
 
     assert job is not None
     assert job.title == "Tiêu đề MỚI khác hẳn"  # cập nhật DB VẪN xong
-    assert warning is not None and "re-embed" in warning.lower()
+    assert warning is not None and "dữ liệu đối sánh" in warning.lower()
 
 
 # ── set_job_status: đóng/mở (KHÔNG xóa) ──────────────────────────────────────

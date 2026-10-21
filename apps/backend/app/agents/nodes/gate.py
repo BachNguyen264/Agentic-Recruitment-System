@@ -21,8 +21,8 @@ def gate_auto_reject_node(state: RecruitmentState) -> dict:
         # y (PRD §16, NFR-3) mô tả sai người ra quyết định. Đây là lỗi thật bắt được khi verify prod
         # 18/08/2026 — nay cả hai node đều chỉ phát biểu điều mình thực sự biết.
         "escalation_reason": (
-            f"Tự động từ chối: điểm {score}/100 dưới ngưỡng đạt và gate auto-từ-chối của JD đang BẬT "
-            "(PRD §9). Không cần HR xử lý."
+            f"Tự động từ chối: điểm {score}/100 dưới ngưỡng đạt và JD đang bật chế độ tự động từ "
+            "chối. Không cần HR xử lý."
         ),
         "messages": [
             f"[gate] auto-từ-chối: điểm {score} dưới ngưỡng đạt, gate JD BẬT (PRD §9). "

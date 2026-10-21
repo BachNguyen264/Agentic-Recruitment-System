@@ -170,7 +170,7 @@ async def test_create_job_survives_embedding_error(monkeypatch) -> None:
 
     assert job.id == 1  # JD vẫn được lưu
     assert job.embedding_ref is None
-    assert warning is not None and "CHƯA embed" in warning
+    assert warning is not None and "CHƯA tạo được dữ liệu đối sánh" in warning
     assert called["upsert"] is False  # embed hỏng thì không upsert
 
 

@@ -167,7 +167,7 @@ async def suggest_rubric(job_id: int, session: DBSession) -> RubricSuggestRespon
         # Hết lượt → 429 rõ ràng (PRD §12.1: cap 3 lần/JD). Sửa nội dung JD → reset (update_job).
         raise HTTPException(
             status_code=429,
-            detail=f"Đã hết lượt AI gợi ý rubric ({max_retries} lần/JD). "
+            detail=f"Đã hết lượt AI gợi ý tiêu chí ({max_retries} lần/JD). "
             "Sửa nội dung JD (tiêu đề/mô tả/yêu cầu) rồi lưu để đặt lại lượt gợi ý.",
         )
 

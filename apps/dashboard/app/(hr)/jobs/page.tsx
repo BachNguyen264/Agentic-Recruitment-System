@@ -83,7 +83,7 @@ export default function JobsPage() {
       setErrorMsg(null);
     },
     onSuccess: invalidate,
-    onError: (err) => setErrorMsg(String((err as Error)?.message) || "Lỗi khi đổi gate."),
+    onError: (err) => setErrorMsg(String((err as Error)?.message) || "Lỗi khi đổi chế độ tự động."),
     onSettled: () => setBusyId(null),
   });
   const archiveMutation = useMutation({
@@ -103,7 +103,7 @@ export default function JobsPage() {
       <PageHeader
         eyebrow="Quản lý"
         title="Tin tuyển dụng"
-        description="Luồng 2 bước: soạn tin (bước 1) → cấu hình rubric + câu hỏi (bước 2) → Mở JD. Gate tự động (PRD §9) bật/tắt ngay trên từng JD. JD nháp/đóng/lưu-trữ không hiện ở cổng ứng tuyển."
+        description="Tạo JD qua 2 bước: soạn tin tuyển dụng → đặt tiêu chí chấm điểm và câu hỏi sàng lọc → Mở JD. Chế độ tự động bật/tắt ngay trên từng JD. JD nháp, đã đóng hoặc đã lưu trữ không hiện trên trang tuyển dụng."
         actions={
           <Link href="/jobs/new" className={btn("primary")}>
             <svg
@@ -200,18 +200,18 @@ export default function JobsPage() {
                     <Tag tone={statusTone(job.status)}>{jobStatusLabel(job.status)}</Tag>
                   </div>
                   <p className="mt-1.5 text-[13px] text-ink/65">
-                    JD #{job.id} · {job.rubric.length} tiêu chí rubric · tạo {fmtDate(job.created_at)}
+                    JD #{job.id} · {job.rubric.length} tiêu chí chấm điểm · tạo {fmtDate(job.created_at)}
                   </p>
 
                   <div className="mt-2.5 flex flex-wrap gap-2">
                     {salary && <Tag tone="neutral">{salary}</Tag>}
                     {!isArchived && !rubricOk && (
                       <Tag tone="accent" className="border border-accent">
-                        Chưa cấu hình rubric
+                        Chưa có tiêu chí chấm điểm
                       </Tag>
                     )}
                     {!isArchived && job.embedding_ref === null && (
-                      <Tag tone="outline">Chưa embed</Tag>
+                      <Tag tone="outline">Chưa có dữ liệu đối sánh CV–JD</Tag>
                     )}
                   </div>
 
@@ -231,7 +231,7 @@ export default function JobsPage() {
                         disabled={busy || (!isOpen && !rubricOk)}
                         title={
                           !isOpen && !rubricOk
-                            ? "Cần cấu hình rubric trước khi mở (bấm Cấu hình)"
+                            ? "Cần thêm tiêu chí chấm điểm trước khi mở (bấm Cấu hình)"
                             : undefined
                         }
                         className={btn("secondary")}
@@ -263,20 +263,26 @@ export default function JobsPage() {
                 {!isArchived ? (
                   <div className="flex flex-none flex-col gap-3.5 border-t-2 border-divider pt-4 sm:w-[212px] sm:border-l-2 sm:border-t-0 sm:pl-4 sm:pt-0">
                     <span className="text-xs font-semibold uppercase tracking-[0.08em] text-ink/65">
-                      Gate tự động
+                      Chế độ tự động
                     </span>
                     <Toggle
                       checked={job.gate_config.auto_reject}
                       disabled={busy}
-                      label="Auto-từ-chối"
+                      label="Tự động từ chối"
                       onChange={(v) => gateMutation.mutate({ id: job.id, patch: { auto_reject: v } })}
                     />
                     <Toggle
                       checked={job.gate_config.auto_invite}
                       disabled={busy}
-                      label="Auto-mời"
+                      label="Tự động mời"
                       onChange={(v) => gateMutation.mutate({ id: job.id, patch: { auto_invite: v } })}
                     />
+                    {/* "Cờ thắng gate" (PRD §9) phải đọc được ngay cạnh công tắc — không có câu này
+                        HR dễ tưởng bật lên là MỌI hồ sơ đều được hệ thống tự quyết. */}
+                    <p className="text-xs leading-snug text-ink/65">
+                      Chỉ áp dụng cho hồ sơ đủ chắc chắn. Hồ sơ chưa đủ chắc chắn luôn chuyển HR
+                      duyệt.
+                    </p>
                   </div>
                 ) : (
                   <div className="flex flex-none items-start">

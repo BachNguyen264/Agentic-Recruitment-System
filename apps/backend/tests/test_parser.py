@@ -124,7 +124,7 @@ def test_llm_error_parse_failed_no_crash() -> None:
     result = parse_cv(_fixture("good_cv.pdf"), "good_cv.pdf", llm=_BoomLLM())
     assert result["uncertainty_flags"] == ["parse_failed"]
     assert result["confidence"] == 0.0
-    assert "LLM" in result["escalation_reason"]
+    assert "AI" in result["escalation_reason"]
 
 
 # ── extract_text THẬT (không mock) — kiểm extractor PDF/DOCX từ BYTES ────────────
@@ -242,7 +242,7 @@ async def test_parser_node_storage_error_parse_failed_no_crash(monkeypatch) -> N
 
     assert out["uncertainty_flags"] == ["parse_failed"]
     assert out["confidence"] == 0.0
-    assert "storage" in out["escalation_reason"].lower()
+    assert "kho lưu trữ" in out["escalation_reason"].lower()
 
 
 # ── slice 01c: certificates / languages / awards / other ────────────────────────

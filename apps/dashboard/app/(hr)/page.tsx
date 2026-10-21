@@ -45,7 +45,7 @@ const MACHINE_BUSY: ApplicationStatus[] = [
 // Nút pipeline cố định (PRD §5 trụ cột 1): parser → ranker → screener → scheduler.
 const NODES: { key: string; label: string; caption: string; statuses: ApplicationStatus[]; icon: React.ReactNode }[] = [
   {
-    key: "parser", label: "parser", caption: "CV → JSON có cấu trúc",
+    key: "parser", label: "Parser", caption: "Đọc CV, trích thông tin",
     statuses: ["SUBMITTED", "PARSING"],
     icon: (
       <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -54,7 +54,7 @@ const NODES: { key: string; label: string; caption: string; statuses: Applicatio
     ),
   },
   {
-    key: "ranker", label: "ranker", caption: "Chấm rubric — nút quyết định",
+    key: "ranker", label: "Ranker", caption: "Chấm điểm theo tiêu chí của JD",
     statuses: ["RANKING"],
     icon: (
       <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -63,7 +63,7 @@ const NODES: { key: string; label: string; caption: string; statuses: Applicatio
     ),
   },
   {
-    key: "screener", label: "screener", caption: "Hỏi đáp qua email — bất đồng bộ",
+    key: "screener", label: "Screener", caption: "Hỏi thêm ứng viên qua email",
     statuses: ["SCREENING", "AWAITING_SCREENER"],
     icon: (
       <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -72,7 +72,7 @@ const NODES: { key: string; label: string; caption: string; statuses: Applicatio
     ),
   },
   {
-    key: "scheduler", label: "scheduler", caption: "Điểm gửi thư DUY NHẤT",
+    key: "scheduler", label: "Scheduler", caption: "Gửi thư kết quả, đặt lịch phỏng vấn",
     statuses: ["SCHEDULING", "AWAITING_BOOKING"],
     icon: (
       <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -83,10 +83,10 @@ const NODES: { key: string; label: string; caption: string; statuses: Applicatio
 ];
 
 const STATUS_LABEL: Record<string, string> = {
-  SUBMITTED: "Vừa nộp", PARSING: "Đang bóc tách", RANKING: "Đang chấm điểm",
+  SUBMITTED: "Vừa nộp", PARSING: "Đang đọc CV", RANKING: "Đang chấm điểm",
   SCREENING: "Đang sàng lọc", AWAITING_SCREENER: "Chờ ứng viên trả lời",
   SCHEDULING: "Đang gửi thư", AWAITING_BOOKING: "Chờ chọn lịch",
-  PENDING_REVIEW: "Chờ HR duyệt", INTERVIEW_SCHEDULED: "Đã hẹn PV", REJECTED: "Đã từ chối",
+  PENDING_REVIEW: "Chờ HR duyệt", INTERVIEW_SCHEDULED: "Đã hẹn phỏng vấn", REJECTED: "Đã từ chối",
 };
 
 function initialsOf(email: string): string {
@@ -215,15 +215,15 @@ export default function DashboardPage() {
   // trong khi thực tế có thể đang bật. Với HR đó là lời trấn an sai về thứ tự động gửi thư cho ứng
   // viên. Chưa đọc được thì nói chưa đọc được.
   const gateLabel = (n: number) => {
-    if (jobsError || !jobs) return "— chưa đọc được";
-    return n > 0 ? `${n} JD bật` : "Tắt toàn hệ thống";
+    if (jobsError || !jobs) return "Chưa tải được";
+    return n > 0 ? `Bật ở ${n} JD` : "Đang tắt ở mọi JD";
   };
 
   return (
     <div className="mx-auto max-w-[1120px] px-4 pb-8 pt-6 sm:px-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="eyebrow mb-1.5">Giám sát pipeline · thời gian thực</p>
+          <p className="eyebrow mb-1.5">Theo dõi hồ sơ · thời gian thực</p>
           <h1 className="text-[28px] sm:text-[38px]">Bảng điều hành</h1>
         </div>
         {/* Nói ĐÚNG nhịp đang chạy. Câu cũ ("mỗi 5 giây") sẽ thành sai ngay khi trang tự thả nhịp
@@ -238,8 +238,8 @@ export default function DashboardPage() {
           {/* Nói về TÁC TỬ, không nói "pipeline rỗi" — còn hồ sơ chờ ứng viên thì câu đó mâu thuẫn
               với ô "Đang xử lý" ngay bên dưới. */}
           {anyBusy
-            ? "Tác tử đang chạy · làm tươi mỗi 2 giây"
-            : "Không tác tử nào chạy · làm tươi mỗi 6 giây"}
+            ? "Tác tử AI đang xử lý · cập nhật mỗi 2 giây"
+            : "Tác tử AI đang rảnh · cập nhật mỗi 6 giây"}
         </p>
       </div>
 
@@ -259,25 +259,25 @@ export default function DashboardPage() {
 
       {/* Bốn chỉ số chính */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile label="Đang xử lý" value={cProcessing} caption="CV đang chạy pipeline" />
+        <StatTile label="Đang xử lý" value={cProcessing} caption="Hồ sơ chưa có kết quả" />
         <StatTile
           label="Chờ HR duyệt"
           value={cReview}
           accent
           action={
             <Link href="/review" className="mt-1 inline-block text-[13px] font-semibold text-white underline-offset-4 hover:underline">
-              Mở hàng đợi →
+              Mở danh sách →
             </Link>
           }
         />
-        <StatTile label="Đã hẹn PV" value={cPassed} caption="Tổng cộng" />
+        <StatTile label="Đã hẹn phỏng vấn" value={cPassed} caption="Tổng cộng" />
         <StatTile label="Đã từ chối" value={cRejected} caption="Tổng cộng" />
       </div>
 
       {/* Pipeline đa tác tử */}
-      <div className="mt-8 flex items-center justify-between gap-4">
-        <h2 className="text-[22px]">Pipeline đa tác tử</h2>
-        <p className="text-[13px] text-ink/65">Luồng cố định · không Supervisor</p>
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <h2 className="text-[22px]">Quy trình xử lý hồ sơ</h2>
+        <p className="text-[13px] text-ink/65">4 tác tử AI chạy theo thứ tự cố định</p>
       </div>
       <div className="mt-4 rounded-xl border-2 border-divider bg-surface p-4 pb-4 sm:p-6">
         <div className="flex flex-col items-stretch gap-3 md:flex-row md:gap-0">
@@ -324,17 +324,18 @@ export default function DashboardPage() {
               <path d="M18 21a8 8 0 0 0-16 0" /><circle cx="10" cy="8" r="5" /><path d="M22 20c0-3.37-2-6.5-4-8a5 5 0 0 0-.45-8.3" />
             </svg>
             <div className="min-w-0 flex-1">
-              <p className="font-heading text-sm font-bold text-accent-800">human_review · điểm dừng con người</p>
+              <p className="font-heading text-sm font-bold text-accent-800">Human review · Chờ HR duyệt</p>
               <p className="text-[13px] text-accent-800/85">
-                Ca bất định (parse_failed · weak_match · no_response · sát ngưỡng) luôn về đây, bất kể gate.
+                Hồ sơ chưa đủ chắc chắn (không đọc được CV, CV ít liên quan tới JD, ứng viên không trả
+                lời, điểm sát ngưỡng…) luôn chuyển HR duyệt, kể cả khi JD bật chế độ tự động.
               </p>
             </div>
             <p className="font-heading text-[30px] font-bold leading-none text-accent-800">{cReview}</p>
           </div>
           <div className="flex items-center gap-3 rounded-lg border-2 border-divider bg-canvas px-4 py-3 lg:w-[200px] lg:flex-none">
             <div className="flex-1">
-              <p className="font-heading text-sm font-bold">Kết thúc</p>
-              <p className="text-xs text-ink/65">hẹn PV / từ chối</p>
+              <p className="font-heading text-sm font-bold">Đã có kết quả</p>
+              <p className="text-xs text-ink/65">hẹn phỏng vấn / từ chối</p>
             </div>
             <p className="font-heading text-[26px] font-bold leading-none">{cDone}</p>
           </div>
@@ -347,7 +348,7 @@ export default function DashboardPage() {
       <div className="mt-8 grid gap-6 lg:grid-cols-[1.55fr_1fr]">
         <section>
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-[22px]">Đang chạy trực tiếp</h2>
+            <h2 className="text-[22px]">Hồ sơ đang xử lý</h2>
             <Link href="/applications" className="text-[13px] font-semibold text-accent underline-offset-4 hover:underline">
               Tất cả ứng viên →
             </Link>
@@ -362,7 +363,7 @@ export default function DashboardPage() {
             {/* KHÔNG khẳng định "không có hồ sơ nào đang chạy" khi query đang lỗi (chưa đọc được) */}
             {!isLoading && !isError && inflight.length === 0 && (
               <p className="px-4 py-8 text-center text-sm text-ink/65">
-                Không có hồ sơ nào đang chạy. CV mới nộp sẽ hiện ở đây.
+                Không có hồ sơ nào đang xử lý. CV mới nộp sẽ hiện ở đây.
               </p>
             )}
             {inflight.map((a) => (
@@ -406,16 +407,16 @@ export default function DashboardPage() {
           <div>
             <div className="rounded-xl border-2 border-divider bg-canvas p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.08em] text-ink/65">
-                Hai gate cấu hình
+                Chế độ tự động
               </p>
               <div className="mt-3 flex items-center justify-between">
-                <span className="text-[13px]">Auto-từ-chối</span>
+                <span className="text-[13px]">Tự động từ chối</span>
                 <span className="rounded bg-steel-100 px-2.5 py-1 text-[11px] font-semibold text-steel-800">
                   {gateLabel(autoReject)}
                 </span>
               </div>
               <div className="mt-2.5 flex items-center justify-between">
-                <span className="text-[13px]">Auto-mời</span>
+                <span className="text-[13px]">Tự động mời</span>
                 <span className="rounded bg-steel-100 px-2.5 py-1 text-[11px] font-semibold text-steel-800">
                   {gateLabel(autoInvite)}
                 </span>
@@ -424,7 +425,7 @@ export default function DashboardPage() {
                 href="/jobs"
                 className="mt-4 block rounded-lg border-2 border-divider px-3 py-2 text-center text-[13px] font-semibold hover:bg-ink/5"
               >
-                Cấu hình theo JD →
+                Cài đặt cho từng JD →
               </Link>
             </div>
           </div>

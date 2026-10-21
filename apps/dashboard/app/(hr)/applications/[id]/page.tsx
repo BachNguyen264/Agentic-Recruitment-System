@@ -52,7 +52,7 @@ function sendFailureNextStep(app: ApplicationDetail, readOnly: boolean): string 
   if (app.email_complained)
     return "KHÔNG gửi lại — ứng viên đã báo cáo thư là spam (xem cảnh báo phía trên).";
   if (app.status === "PENDING_REVIEW")
-    return "Sửa cấu hình gửi thư, rồi quyết định ở hàng chờ review — Duyệt hay Từ chối đều gửi một thư mới cho ứng viên.";
+    return "Sửa cấu hình gửi thư, rồi quyết định ở trang Chờ HR duyệt — Duyệt hay Từ chối đều gửi một thư mới cho ứng viên.";
   if (readOnly && (Boolean(app.resendable_email) || app.status === "AWAITING_BOOKING"))
     return "Mở hồ sơ này trên bản web để gửi lại thư — bản cài trên điện thoại chỉ để xem.";
   if (app.resendable_email === "screener")
@@ -258,8 +258,8 @@ export default function ApplicationDetailPage() {
               </p>
               <p className="mt-1.5 text-[13px] text-amber-900">
                 Thư gửi tới <strong>{app.applicant_email}</strong> KHÔNG rời khỏi hệ thống (khác với
-                bounce: ở đây địa chỉ ứng viên không có lỗi gì). Thường do cạn hạn mức gửi, domain
-                chưa xác thực, hoặc khoá API hỏng.
+                thư bị trả về: ở đây địa chỉ ứng viên không có lỗi gì). Thường do hết hạn mức gửi
+                thư, tên miền gửi thư chưa được xác thực, hoặc khoá kết nối dịch vụ gửi thư bị lỗi.
               </p>
               <p className="mt-1.5 text-[13px] text-amber-900">
                 <strong>Bước tiếp theo:</strong> {sendFailureNextStep(app, readOnly)}

@@ -23,15 +23,18 @@ def _fallback_reason(state: RecruitmentState) -> str:
     """
     flags = [f for f in (state.get("uncertainty_flags") or []) if f]
     if flags:
-        return f"Có dấu hiệu bất định ({', '.join(flags)}) — cần HR xem xét."
+        # Gần như chỉ chạy ở chế độ stub: ở chế độ thật, node nào gắn cờ cũng tự ghi lý do bằng lời.
+        # Giữ mã cờ trong ngoặc để đối soát.
+        return f"Hồ sơ chưa đủ chắc chắn ({', '.join(flags)}) — cần HR xem xét."
 
     score = state.get("score")
     if score is not None and score >= settings.score_pass_threshold:
         gate = ((state.get("input") or {}).get("jd") or {}).get("gate_config") or {}
         if not gate.get("auto_invite"):
             return (
-                f"Hồ sơ đạt {score}/100 (ngưỡng {settings.score_pass_threshold:g}), không có cờ bất "
-                "định. Gate auto-mời đang TẮT cho JD này nên mọi ca đạt đều chờ HR xác nhận."
+                f"Hồ sơ đạt {score}/100 (ngưỡng {settings.score_pass_threshold:g}) và không có dấu "
+                "hiệu bất thường. JD này đang TẮT chế độ tự động mời nên mọi hồ sơ đạt đều chờ HR "
+                "xác nhận."
             )
         return f"Hồ sơ đạt {score}/100 — chờ HR xác nhận trước khi mời."
 

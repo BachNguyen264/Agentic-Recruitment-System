@@ -65,8 +65,8 @@ const NAV: NavItem[] = [
   },
   {
     href: "/review",
-    label: "Hàng đợi review",
-    shortLabel: "Hàng đợi",
+    label: "Chờ HR duyệt",
+    shortLabel: "Chờ duyệt",
     icon: (
       <svg viewBox="0 0 24 24" className={ICON} {...strokeProps}>
         <path d="M11 12H3" />
@@ -202,7 +202,7 @@ export default function HrLayout({ children }: { children: React.ReactNode }) {
 
   // Đang chuyển hướng (effect ở trên) — không vẽ nội dung màn bị ẩn dù chỉ một khung hình.
   if (isPwa && isHiddenOnPwa(pathname)) {
-    return <div className="p-8 text-sm text-ink/65">Đang chuyển về hàng đợi…</div>;
+    return <div className="p-8 text-sm text-ink/65">Đang chuyển về trang chờ duyệt…</div>;
   }
 
   if (isLoading) {

@@ -307,4 +307,4 @@ async def test_resume_auto_invite_dispatch_error_isolated(monkeypatch) -> None:
 
     # KHÔNG reset về PENDING_REVIEW[error]: giữ SCHEDULING (trạng thái đã commit ở main commit).
     assert app_row.status == ApplicationStatus.SCHEDULING.value
-    assert app_row.escalation_reason != "Lỗi kỹ thuật khi resume screener (error)."
+    assert app_row.escalation_reason != "Lỗi kỹ thuật khi xử lý câu trả lời sàng lọc — cần HR xem lại."

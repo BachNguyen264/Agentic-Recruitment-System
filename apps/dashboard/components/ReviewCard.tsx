@@ -99,15 +99,15 @@ export function ReviewCard({
           <strong className="font-bold">⛔ Hệ thống chưa gửi được thư: </strong>
           Thư trước đó KHÔNG rời khỏi hệ thống
           {app.email_send_failure_reason ? ` (${app.email_send_failure_reason})` : ""}. Địa chỉ của
-          ứng viên không có lỗi — hãy kiểm tra cấu hình gửi (hạn mức / domain / khoá API) TRƯỚC khi
-          bấm, nếu không lá thư này nhiều khả năng cũng không đi được.
+          ứng viên không có lỗi — hãy kiểm tra cấu hình gửi thư (hạn mức, tên miền, khoá kết nối)
+          TRƯỚC khi bấm, nếu không lá thư này nhiều khả năng cũng không đi được.
         </p>
       )}
 
       {/* Lý do vào review (escalation) — nổi bật, đây là thứ HR cần đọc trước khi quyết */}
       {app.escalation_reason?.trim() && (
         <p className="mt-3 rounded-r-lg border-l-[3px] border-accent bg-accent-100 px-3 py-2.5 text-[13px] text-accent-800">
-          <strong className="font-bold">Vì sao vào review: </strong>
+          <strong className="font-bold">Vì sao cần HR duyệt: </strong>
           {app.escalation_reason}
         </p>
       )}
@@ -122,7 +122,7 @@ export function ReviewCard({
       {/* Điểm rubric — bản GỌN cho hàng đợi (chi tiết đầy đủ ở trang chi tiết) */}
       {rankFailed ? (
         <p className="mt-3.5 rounded-lg border-2 border-accent bg-accent-100 px-4 py-3 text-[13px] font-semibold text-accent-800">
-          Chưa chấm được điểm — Ranker gặp lỗi, ca này cần HR xem xét thủ công.
+          Chưa chấm được điểm — hệ thống gặp lỗi khi chấm, hồ sơ này cần HR xem xét thủ công.
         </p>
       ) : (
         <>
@@ -130,7 +130,7 @@ export function ReviewCard({
             <span className="font-heading text-[30px] font-bold leading-none">
               {app.score != null ? app.score : "—"}
             </span>
-            <span className="text-[13px] text-ink/65">/ 100 điểm rubric</span>
+            <span className="text-[13px] text-ink/65">/ 100 điểm</span>
           </div>
           {criteria.length > 0 && (
             <div className="mt-2.5 grid gap-x-4 gap-y-2 sm:grid-cols-2">
@@ -174,7 +174,7 @@ export function ReviewCard({
               <strong className="font-bold">
                 {app.parsed_data?.full_name?.trim() || app.applicant_email}
               </strong>
-              ? Thư từ chối gửi đi NGAY qua scheduler và{" "}
+              ? Thư từ chối sẽ được gửi đi NGAY và{" "}
               <strong className="font-bold">không thu hồi được</strong>.
             </p>
             <div className="mt-2.5 flex flex-wrap items-center gap-2.5">

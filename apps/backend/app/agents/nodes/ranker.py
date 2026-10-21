@@ -151,21 +151,27 @@ def _flags_and_confidence(
     if abs(overall - pass_t) < settings.score_near_band:
         flags.append("near_threshold")
         caps.append(0.5)
-        reasons.append(f"Điểm {overall}/100 sát ngưỡng {pass_t:g}")
+        reasons.append(f"Điểm {overall}/100 sát ngưỡng đạt {pass_t:g}")
     if similarity is not None and similarity < _WEAK_SIM:
         flags.append("weak_match")
         caps.append(0.4)
-        reasons.append(f"Tương đồng ngữ nghĩa thấp (cosine={similarity})")
+        reasons.append(f"Nội dung CV ít liên quan tới JD (độ tương đồng {similarity:.2f})")
     if similarity is not None and (
         (overall >= pass_t and similarity < _MISMATCH_SIM_LOW)
         or (overall < pass_t and similarity > _MISMATCH_SIM_HIGH)
     ):
         flags.append("score_signal_mismatch")
         caps.append(0.45)
-        reasons.append(f"Điểm rubric ({overall}) lệch tín hiệu tương đồng ({similarity})")
+        # Câu cho HR đọc: nói rõ HAI tín hiệu lệch nhau THEO CHIỀU NÀO, không chỉ "lệch".
+        reasons.append(
+            f"Điểm cao ({overall}) không tương xứng với độ tương đồng thấp ({similarity:.2f})"
+            if overall >= pass_t
+            else f"Điểm thấp ({overall}) dù nội dung CV khá sát với JD (độ tương đồng {similarity:.2f})"
+        )
 
     confidence = round(min(caps), 2) if caps else 1.0
-    escalation = "; ".join(reasons) if reasons else None
+    # Câu hoàn chỉnh (". " + dấu chấm cuối) như lý do của parser — HR đọc liền một mạch ở ReviewCard.
+    escalation = ". ".join(reasons) + "." if reasons else None
     return flags, confidence, escalation
 
 
@@ -245,7 +251,7 @@ async def rank_cv(
         summary = result.summary
     except Exception as exc:  # noqa: BLE001
         logger.warning("ranker: lỗi LLM/parse khi chấm điểm: %s", exc)
-        return _failed(f"Lỗi gọi LLM khi chấm điểm: {exc}", similarity)
+        return _failed(f"Lỗi khi gọi AI chấm điểm: {exc}", similarity)
 
     overall = computed if computed is not None else round(llm_overall, 1)
     if computed is not None and abs(computed - llm_overall) > _OVERALL_DIVERGE:
@@ -321,7 +327,7 @@ async def ranker_node(state: RecruitmentState) -> dict:
             "confidence": 0.0,
             "uncertainty_flags": ["parse_failed"],
             "escalation_reason": state.get("escalation_reason")
-            or "CV không đọc/parse được — cần HR xem xét.",
+            or "Không đọc được CV — cần HR xem xét.",
             "messages": ["[ranker] parse_failed từ parser → giữ cờ, KHÔNG chấm điểm → human_review"],
         }
 

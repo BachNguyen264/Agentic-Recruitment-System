@@ -32,7 +32,7 @@ from app.services import audit_service
 
 logger = get_logger("app.services.stuck_applications")
 
-_STUCK_REASON = "Xử lý bị gián đoạn giữa chừng — cần HR xem lại (error)."
+_STUCK_REASON = "Xử lý bị gián đoạn giữa chừng — cần HR xem lại."
 
 # CHỈ quét hồ sơ "đang bay" — pipeline CHƯA quyết và CHƯA email gì, nên đưa về hàng chờ HR là an
 # toàn tuyệt đối. Dùng CHUNG hằng số với `background` (models/application.py) vì đây là cùng MỘT

@@ -69,7 +69,7 @@ async def create_job(
         await session.rollback()
         job.embedding_ref = None
         logger.warning("Embed/upsert JD id=%s thất bại (JD vẫn lưu DB): %s", job.id, exc)
-        warning = f"JD đã lưu nhưng CHƯA embed được (embedding_ref=None): {exc}"
+        warning = f"JD đã lưu nhưng CHƯA tạo được dữ liệu đối sánh CV–JD: {exc}"
     return job, warning
 
 
@@ -144,7 +144,7 @@ async def update_job(
     except Exception as exc:  # noqa: BLE001 — re-embed lỗi KHÔNG sập cập nhật (JD đã lưu, vector cũ giữ)
         await session.rollback()
         logger.warning("Re-embed JD id=%s thất bại (JD vẫn cập nhật): %s", job.id, exc)
-        warning = f"JD đã cập nhật nhưng CHƯA re-embed được: {exc}"
+        warning = f"JD đã cập nhật nhưng CHƯA cập nhật được dữ liệu đối sánh CV–JD: {exc}"
     return job, warning
 
 
@@ -161,8 +161,8 @@ async def set_job_status(
         return None
     if status == "OPEN" and not is_valid_rubric(job.rubric):
         raise RubricRequiredError(
-            "JD cần có rubric (≥1 tiêu chí, tổng trọng số > 0) mới mở được — "
-            "hãy cấu hình rubric ở màn 'Cấu hình sàng lọc' trước."
+            "JD cần ít nhất 1 tiêu chí chấm điểm (tổng trọng số > 0) mới mở được — "
+            "hãy thêm tiêu chí ở màn 'Cấu hình sàng lọc' trước."
         )
     job.status = status
     await session.commit()

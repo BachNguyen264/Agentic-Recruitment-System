@@ -310,5 +310,5 @@ async def test_parsing_mark_failure_does_not_kill_the_pipeline(monkeypatch) -> N
     assert ran == ["pipeline"], "mốc hiển thị hỏng đã giết pipeline của một ứng viên thật"
     # Chuỗi phải khớp NGUYÊN VĂN `_escalate_technical_error` gọi ở nhánh `except` của
     # `process_application` — lệch một chữ là assert này luôn xanh và không canh gì cả.
-    assert app_row.escalation_reason != "Lỗi kỹ thuật khi xử lý pipeline (error)."
+    assert app_row.escalation_reason != "Lỗi kỹ thuật khi xử lý hồ sơ — cần HR xem lại."
     assert app_row.status == ApplicationStatus.PENDING_REVIEW.value  # kết quả THẬT của pipeline

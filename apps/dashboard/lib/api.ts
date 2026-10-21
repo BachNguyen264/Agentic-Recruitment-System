@@ -236,7 +236,7 @@ export async function suggestRubric(id: number): Promise<RubricSuggestResult> {
   }
   if (!res.ok) {
     const detail = await res.json().catch(() => null);
-    throw new Error(detail?.detail ?? `HTTP ${res.status} khi gợi ý rubric`);
+    throw new Error(detail?.detail ?? `HTTP ${res.status} khi gợi ý tiêu chí`);
   }
   return (await res.json()) as RubricSuggestResult;
 }

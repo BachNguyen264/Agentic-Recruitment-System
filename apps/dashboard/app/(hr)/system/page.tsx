@@ -46,7 +46,7 @@ export default function SystemPage() {
       <PageHeader
         eyebrow="Quản trị"
         title="Cấu hình hệ thống"
-        description="Ngưỡng chấm điểm, mốc nhắc/hết hạn, lịch phỏng vấn, mô hình AI và giới hạn an toàn — đổi được ngay, không cần deploy lại. Kèm nhật ký kiểm toán mọi quyết định và số liệu hạ tầng."
+        description="Ngưỡng chấm điểm, mốc nhắc/hết hạn, lịch phỏng vấn, mô hình AI và giới hạn an toàn — lưu xong là có hiệu lực ngay. Kèm nhật ký kiểm toán mọi quyết định và số liệu hạ tầng."
       />
 
       <div role="tablist" aria-label="Khu quản trị" className="flex flex-wrap gap-2">

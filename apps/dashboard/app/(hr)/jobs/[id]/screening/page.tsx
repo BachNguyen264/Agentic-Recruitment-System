@@ -72,8 +72,8 @@ export default function ScreeningConfigPage({ params }: { params: { id: string }
         <p className="eyebrow mb-1.5">Bước 2/2 · Cấu hình sàng lọc</p>
         <h1 className="text-[26px] sm:text-[30px]">Cấu hình sàng lọc</h1>
         <p className="mt-2 max-w-[66ch] text-[13px] leading-relaxed text-ink/65">
-          Rubric (bắt buộc để MỞ JD) + câu hỏi sàng lọc (tùy chọn). Chỉ HR thấy — không lộ cho ứng
-          viên.
+          Tiêu chí chấm điểm (bắt buộc để mở JD) và câu hỏi sàng lọc (tuỳ chọn). Ứng viên không
+          nhìn thấy tiêu chí chấm điểm; câu hỏi sàng lọc chỉ gửi cho ứng viên đạt điểm.
         </p>
       </div>
 

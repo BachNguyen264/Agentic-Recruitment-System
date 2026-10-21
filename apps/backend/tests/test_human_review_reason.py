@@ -37,7 +37,7 @@ def test_ho_so_sach_gate_moi_tat_neu_dung_ly_do() -> None:
     out = human_review_node(_state(score=score, uncertainty_flags=[]))
     reason = out["escalation_reason"]
     assert "chưa xác định" not in reason
-    assert "auto-mời" in reason and "TẮT" in reason
+    assert "tự động mời" in reason and "TẮT" in reason
     assert str(score) in reason
 
 

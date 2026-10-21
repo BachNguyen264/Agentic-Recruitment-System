@@ -20,8 +20,8 @@ export default function CvCheckPage() {
     <div className="mx-auto max-w-[820px] px-4 pb-8 pt-6 sm:px-8">
       <PageHeader
         eyebrow="Công cụ · Parser"
-        title="Kiểm tra bóc tách CV"
-        description="Tải lên một CV (PDF/DOCX) để xem Parser trích ra gì — họ tên, kỹ năng, kinh nghiệm, học vấn — kèm độ tin cậy. Xử lý trong bộ nhớ, KHÔNG lưu file và KHÔNG tạo hồ sơ ứng viên."
+        title="Đọc thử CV"
+        description="Tải lên một CV (PDF/DOCX) để xem hệ thống đọc được những gì — họ tên, kỹ năng, kinh nghiệm, học vấn — kèm mức độ đầy đủ. Chỉ đọc thử: KHÔNG lưu file và KHÔNG tạo hồ sơ ứng viên."
       />
 
       <CVUpload key={runKey} onResult={setResult} />

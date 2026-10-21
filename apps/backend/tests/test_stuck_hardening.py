@@ -125,7 +125,7 @@ async def test_pool_timeout_on_first_db_op_escalates_not_silent(monkeypatch) -> 
     await background.process_application(30)  # KHÔNG được raise ra ngoài
 
     assert app_row.status == ApplicationStatus.PENDING_REVIEW.value
-    assert app_row.escalation_reason == "Lỗi kỹ thuật khi xử lý pipeline (error)."
+    assert app_row.escalation_reason == "Lỗi kỹ thuật khi xử lý hồ sơ — cần HR xem lại."
     assert ("system", "error") in rescue.audits()  # có DẤU VẾT, không mất im lặng
 
 
@@ -182,7 +182,7 @@ async def test_session_teardown_error_does_not_downgrade_awaiting_screener(monke
 
     # Magic-link đã gửi → hồ sơ PHẢI ở nguyên AWAITING_SCREENER để ứng viên còn nộp được câu trả lời.
     assert app_row.status == ApplicationStatus.AWAITING_SCREENER.value
-    assert app_row.escalation_reason != "Lỗi kỹ thuật khi xử lý pipeline (error)."
+    assert app_row.escalation_reason != "Lỗi kỹ thuật khi xử lý hồ sơ — cần HR xem lại."
 
 
 async def test_scheduling_not_downgraded_by_technical_error(monkeypatch) -> None:
@@ -195,7 +195,7 @@ async def test_scheduling_not_downgraded_by_technical_error(monkeypatch) -> None
     session = _FakeSession({(Application, 36): app_row})
     monkeypatch.setattr(background, "AsyncSessionLocal", lambda: _Ctx(session))
 
-    await background._escalate_technical_error(36, "Lỗi kỹ thuật khi xử lý pipeline (error).")
+    await background._escalate_technical_error(36, "Lỗi kỹ thuật khi xử lý hồ sơ — cần HR xem lại.")
 
     assert app_row.status == ApplicationStatus.SCHEDULING.value
     assert ("system", "error") not in session.audits()
@@ -380,7 +380,7 @@ async def test_sweep_reconciles_stuck_application(monkeypatch) -> None:
 
     assert counts == {"reconciled": 1, "errors": 0}
     assert stuck.status == ApplicationStatus.PENDING_REVIEW.value
-    assert stuck.escalation_reason == "Xử lý bị gián đoạn giữa chừng — cần HR xem lại (error)."
+    assert stuck.escalation_reason == "Xử lý bị gián đoạn giữa chừng — cần HR xem lại."
     assert ("system", "stuck_reconciled") in work.audits()
     # TUYỆT ĐỐI KHÔNG auto-reject: im lặng của hệ thống không phải lỗi ứng viên (PRD §9).
     assert stuck.status != ApplicationStatus.REJECTED.value

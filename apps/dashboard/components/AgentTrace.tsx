@@ -2,10 +2,10 @@ import type { ApplicationDetail } from "@ars/shared-types";
 
 // Agent trace — trạng thái TỪNG NODE của pipeline cố định (PRD §5 trụ cột 1, §7).
 //
-// TRUNG THỰC VỀ DỮ LIỆU: backend CHƯA có endpoint nhật ký kiểm toán (audit_log nằm trong DB nhưng
-// ApplicationRead không trả ra), nên ở đây KHÔNG có mốc thời gian/tool-call từng bước. Mọi trạng thái
-// dưới đây SUY RA từ dữ liệu THẬT của hồ sơ (parsed_data · score · uncertainty_flags · screener_answers
-// · status) — không bịa. Khi nào expose audit_log thì thay phần suy luận này bằng dữ liệu thật.
+// TRUNG THỰC VỀ DỮ LIỆU: ApplicationRead không trả audit_log (nhật ký chỉ đọc được ở /system → Nhật
+// ký kiểm toán), nên ở đây KHÔNG có mốc thời gian/tool-call từng bước. Mọi trạng thái dưới đây SUY
+// RA từ dữ liệu THẬT của hồ sơ (parsed_data · score · uncertainty_flags · screener_answers · status)
+// — không bịa. Khi nào chi tiết hồ sơ đọc audit_log thì thay phần suy luận này bằng dữ liệu thật.
 
 type NodeState = "done" | "active" | "failed" | "waiting" | "skipped" | "pending";
 
@@ -65,30 +65,30 @@ function deriveNodes(app: ApplicationDetail) {
   let parserNote = "Chưa chạy — hồ sơ vừa nộp.";
   if (flags.includes("parse_failed")) {
     parser = "failed";
-    parserNote = "Không đọc/bóc tách được CV — hồ sơ chuyển HR xem xét.";
+    parserNote = "Không đọc được CV — hồ sơ chuyển HR xem xét.";
   } else if (app.parsed_data) {
     parser = "done";
     const nSkills = app.parsed_data.skills?.length ?? 0;
     const nExp = app.parsed_data.experiences?.length ?? 0;
-    parserNote = `CV → JSON có cấu trúc: ${nSkills} kỹ năng, ${nExp} mốc kinh nghiệm.`;
+    parserNote = `Đã đọc CV: ${nSkills} kỹ năng, ${nExp} mục kinh nghiệm.`;
   } else if (s === "PARSING") {
     parser = "active";
-    parserNote = "Đang bóc tách CV thành dữ liệu có cấu trúc.";
+    parserNote = "Đang đọc CV và trích thông tin.";
   }
 
   // ranker
   let ranker: NodeState = "pending";
-  let rankerNote = "Chờ dữ liệu bóc tách từ parser.";
+  let rankerNote = "Chờ bước đọc CV xong.";
   if (flags.includes("rank_failed")) {
     ranker = "failed";
-    rankerNote = "Gọi LLM chấm điểm thất bại — chuyển HR xem xét.";
+    rankerNote = "Chấm điểm bị lỗi — chuyển HR xem xét.";
   } else if (app.score != null) {
     ranker = "done";
     const n = app.score_breakdown?.criteria?.length ?? 0;
-    rankerNote = `Chấm ${n} tiêu chí rubric → điểm tổng ${app.score}/100.`;
+    rankerNote = `Chấm ${n} tiêu chí của JD → điểm tổng ${app.score}/100.`;
   } else if (s === "RANKING") {
     ranker = "active";
-    rankerNote = "Đang chấm rubric có suy luận.";
+    rankerNote = "Đang chấm điểm theo tiêu chí của JD.";
   }
 
   // screener (JD-2b: TÙY CHỌN — JD không câu hỏi thì bỏ qua)
@@ -96,10 +96,12 @@ function deriveNodes(app: ApplicationDetail) {
   let screenerNote = "Chờ kết quả chấm điểm.";
   if (answers.length > 0) {
     screener = "done";
-    screenerNote = `Ứng viên đã trả lời ${answers.length} câu hỏi sàng lọc.`;
+    // Chỉ đường tới khối câu trả lời: trên trang chi tiết nó nằm DƯỚI khối điểm (dài) — HR hỏi
+    // "câu trả lời nằm đâu" là đã bỏ lỡ nó một lần.
+    screenerNote = `Ứng viên đã trả lời ${answers.length} câu hỏi sàng lọc — xem mục "Câu trả lời sàng lọc" bên dưới.`;
   } else if (flags.includes("no_response")) {
     screener = "failed";
-    screenerNote = "Hết hạn không phản hồi — chuyển HR xem xét (KHÔNG tự từ chối).";
+    screenerNote = "Ứng viên không trả lời trong thời hạn — chuyển HR xem xét (không tự động từ chối).";
   } else if (s === "AWAITING_SCREENER" && flags.includes("email_send_failed")) {
     // Dịch vụ gửi TỪ CHỐI thư câu hỏi: hồ sơ vẫn đứng ở AWAITING_SCREENER (đúng thiết kế, để HR gửi
     // lại được) nhưng ứng viên có thể CHƯA TỪNG có link. Vẽ "đang chờ ứng viên" ở đây là trạng thái
@@ -122,13 +124,13 @@ function deriveNodes(app: ApplicationDetail) {
     // hồ sơ không phân biệt được, nên chỉ nói điều đúng cho cả hai (prod 18/10: ca gate tự từ chối
     // từng hiện "chuyển thẳng HR").
     if (app.recommendation === "consider_reject" && s === "PENDING_REVIEW") {
-      screenerNote = "Điểm dưới ngưỡng đạt → pipeline chuyển thẳng HR, không tới bước sàng lọc.";
+      screenerNote = "Điểm dưới ngưỡng đạt → chuyển thẳng HR duyệt, không qua bước sàng lọc.";
     } else if (app.recommendation === "consider_reject") {
       screenerNote = "Điểm dưới ngưỡng đạt → hồ sơ không đi tới bước sàng lọc.";
     } else if (app.recommendation === "invite") {
-      screenerNote = "Đạt ngưỡng nhưng JD không có câu hỏi sàng lọc → pipeline bỏ qua bước này.";
+      screenerNote = "Đạt ngưỡng nhưng JD không có câu hỏi sàng lọc → bỏ qua bước này.";
     } else {
-      screenerNote = "Pipeline không đi qua bước sàng lọc ở hồ sơ này.";
+      screenerNote = "Hồ sơ này không đi qua bước sàng lọc.";
     }
   } else if (s === "SCREENING") {
     screener = "active";
@@ -165,10 +167,10 @@ function deriveNodes(app: ApplicationDetail) {
   }
 
   return [
-    { key: "parser", label: "parser", state: parser, note: parserNote },
-    { key: "ranker", label: "ranker", state: ranker, note: rankerNote },
-    { key: "screener", label: "screener", state: screener, note: screenerNote },
-    { key: "scheduler", label: "scheduler", state: scheduler, note: schedulerNote },
+    { key: "parser", label: "Parser", state: parser, note: parserNote },
+    { key: "ranker", label: "Ranker", state: ranker, note: rankerNote },
+    { key: "screener", label: "Screener", state: screener, note: screenerNote },
+    { key: "scheduler", label: "Scheduler", state: scheduler, note: schedulerNote },
   ];
 }
 
@@ -179,8 +181,8 @@ export function AgentTrace({ app }: { app: ApplicationDetail }) {
   return (
     <section className="rounded-xl border-2 border-divider bg-surface p-5">
       <div className="flex flex-wrap items-center justify-between gap-2.5">
-        <h2 className="text-[20px]">Agent trace</h2>
-        <span className="text-xs text-ink/65">parser → ranker → screener → scheduler</span>
+        <h2 className="text-[20px]">Quá trình xử lý</h2>
+        <span className="text-xs text-ink/65">Parser → Ranker → Screener → Scheduler</span>
       </div>
 
       <ol className="mt-4">
@@ -203,7 +205,7 @@ export function AgentTrace({ app }: { app: ApplicationDetail }) {
                   <span className="text-xs text-ink/65">{st.text}</span>
                   {n.key === "ranker" && app.confidence != null && n.state === "done" && (
                     <span className="text-xs font-semibold text-accent">
-                      confidence {app.confidence.toFixed(2)}
+                      độ tin cậy {app.confidence.toFixed(2)}
                     </span>
                   )}
                 </div>
@@ -231,14 +233,14 @@ export function AgentTrace({ app }: { app: ApplicationDetail }) {
             <circle cx="10" cy="8" r="5" />
           </svg>
           <p className="text-[13px] font-semibold text-accent-800">
-            human_review · đang chờ HR quyết định
+            Human review · đang chờ HR quyết định
           </p>
         </div>
       )}
 
       <p className="mt-3 border-t border-divider pt-2.5 text-xs text-ink/65">
-        Trạng thái từng node suy ra từ dữ liệu hồ sơ. Mốc thời gian + tool-call chi tiết nằm trong
-        audit_log (chưa mở qua API).
+        Trạng thái từng bước suy ra từ dữ liệu hồ sơ. Mốc thời gian chi tiết xem ở Cấu hình → Nhật
+        ký kiểm toán.
       </p>
     </section>
   );

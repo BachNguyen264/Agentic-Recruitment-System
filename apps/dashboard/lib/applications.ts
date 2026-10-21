@@ -15,6 +15,27 @@ export function isEmailFlag(flag: string): boolean {
   return EMAIL_FLAGS.includes(flag);
 }
 
+// Nhãn cờ cho HR đọc — mã cờ (`near_threshold`…) là tên biến, không phải chữ cho người dùng. Cờ chưa
+// có nhãn (cờ mới / dữ liệu cũ) rơi về chính mã gốc thay vì biến mất khỏi màn hình.
+const FLAG_LABEL: Record<string, string> = {
+  parse_failed: "Không đọc được CV",
+  rank_failed: "Chấm điểm bị lỗi",
+  cv_truncated: "CV quá dài, chỉ đọc phần đầu",
+  hidden_text: "CV có chữ ẩn",
+  injection_suspected: "Nghi chèn lệnh điều khiển AI",
+  near_threshold: "Điểm sát ngưỡng",
+  weak_match: "CV ít liên quan tới JD",
+  score_signal_mismatch: "Điểm và độ tương đồng không khớp",
+  no_response: "Không trả lời câu hỏi sàng lọc",
+  booking_no_response: "Không chọn giờ phỏng vấn",
+  booking_no_slots: "Hết khung giờ trống",
+  booking_cancelled: "Ứng viên đã huỷ lịch",
+};
+
+export function flagLabel(flag: string): string {
+  return FLAG_LABEL[flag] ?? flag;
+}
+
 // Gộp các trường ApplicationDetail thành prop cho ScoreBreakdown (semantic_similarity nằm trong
 // score_breakdown; overall = cột score). Dùng chung: trang chi tiết + ReviewCard.
 export function toBreakdown(app: ApplicationDetail): ScoreBreakdownData {
@@ -49,11 +70,11 @@ function statusBucket(status: ApplicationStatus): StatusBucket {
 
 const STATUS_LABEL: Record<ApplicationStatus, string> = {
   SUBMITTED: "Đã nộp",
-  PARSING: "Đang bóc tách",
+  PARSING: "Đang đọc CV",
   RANKING: "Đang chấm điểm",
-  SCREENING: "Sàng lọc",
+  SCREENING: "Đang sàng lọc",
   AWAITING_SCREENER: "Chờ trả lời sàng lọc",
-  SCHEDULING: "Đang đặt lịch",
+  SCHEDULING: "Đang gửi thư",
   // SCH-2: thư mời + link ĐÃ gửi — quả bóng đang ở sân ứng viên, HR không phải làm gì.
   AWAITING_BOOKING: "Chờ ứng viên chọn lịch",
   PENDING_REVIEW: "Chờ HR duyệt",

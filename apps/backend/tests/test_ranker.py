@@ -124,6 +124,21 @@ async def test_score_signal_mismatch_high_score_low_sim() -> None:
     res = await ranker.rank_cv(_PARSED, _JD, llm=llm, jd_vector=[0.0, 1.0, 0.0])
     assert "score_signal_mismatch" in res["uncertainty_flags"]
     assert res["require_human_review"] is False  # điểm vẫn đạt; review vì cờ (qua should_review)
+    # HR đọc câu này trên ReviewCard: phải nói lệch theo CHIỀU nào, không lộ tên kỹ thuật.
+    assert "Điểm cao (90.0) không tương xứng với độ tương đồng thấp (0.00)" in (
+        res["escalation_reason"]
+    )
+    assert "cosine" not in res["escalation_reason"]
+
+
+async def test_score_signal_mismatch_low_score_high_sim_reason() -> None:
+    # điểm 19 (trượt) nhưng cosine 1.0 (> 0.5) → lệch theo chiều ngược lại.
+    llm = FakeLLM(_result(("A", 0.6, 15), ("B", 0.4, 25)))
+    res = await ranker.rank_cv(_PARSED, _JD, llm=llm, jd_vector=[1.0, 0.0, 0.0])
+    assert "score_signal_mismatch" in res["uncertainty_flags"]
+    assert "Điểm thấp (19.0) dù nội dung CV khá sát với JD (độ tương đồng 1.00)" in (
+        res["escalation_reason"]
+    )
 
 
 # ── không sập ────────────────────────────────────────────────────────────────
@@ -138,7 +153,7 @@ async def test_llm_error_rank_failed_no_crash() -> None:
     assert res["uncertainty_flags"] == ["rank_failed"]
     assert res["score"] is None
     assert res["require_human_review"] is True
-    assert "LLM" in res["escalation_reason"]
+    assert "AI" in res["escalation_reason"]
 
 
 async def test_embedding_error_similarity_none_still_scores(monkeypatch) -> None:

@@ -282,18 +282,18 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
     _f(
         name="rubric_suggest_model", group="Mô hình AI", kind="enum", choices=_CHAT_MODELS,
         label="Mô hình gợi ý tiêu chí chấm điểm",
-        tooltip="Model dùng khi HR bấm 'AI gợi ý rubric' lúc tạo JD.",
+        tooltip="Model dùng khi HR bấm 'AI gợi ý tiêu chí' lúc cấu hình JD.",
     ),
     _f(
         name="rubric_suggest_reasoning_effort", group="Mô hình AI", kind="enum", choices=_EFFORT,
         nullable=True,
-        label="Mức độ suy luận khi gợi ý rubric",
+        label="Mức độ suy luận khi gợi ý tiêu chí",
         tooltip="Như mức suy luận của chấm điểm, áp cho phần gợi ý tiêu chí.",
     ),
     _f(
         name="rubric_suggest_max_retries", group="Mô hình AI", kind="int", minimum=1, maximum=20,
         unit="lần",
-        label="Số lần được gợi ý rubric mỗi JD",
+        label="Số lần được gợi ý tiêu chí mỗi JD",
         tooltip="Giới hạn số lần bấm nút gợi ý cho một tin tuyển dụng (đếm lại từ đầu khi nội dung JD "
                 "thay đổi) để tránh tốn chi phí AI.",
     ),

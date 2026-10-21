@@ -53,8 +53,8 @@ export default function EditJobPage({ params }: { params: { id: string } }) {
           </Link>
         </div>
         <p className="mt-2 max-w-[66ch] text-[13px] leading-relaxed text-ink/65">
-          Chỉ nội dung tin tuyển dụng (ứng viên thấy). Rubric + câu hỏi sàng lọc ở màn “Cấu hình sàng
-          lọc”. Chỉ re-embed khi tiêu đề/mô tả/yêu cầu đổi.
+          Nội dung tin tuyển dụng mà ứng viên nhìn thấy. Tiêu chí chấm điểm và câu hỏi sàng lọc nằm
+          ở màn “Cấu hình sàng lọc”.
         </p>
       </header>
 

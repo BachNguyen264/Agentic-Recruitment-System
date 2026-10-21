@@ -1,5 +1,6 @@
 import type { ScoreBreakdownData } from "@ars/shared-types";
 import { Tag } from "@/components/ui";
+import { flagLabel } from "@/lib/applications";
 
 // THUẦN presentational: nhận prop, KHÔNG tự fetch — tái dùng ở ReviewCard.
 // Chỉ hiển thị điểm rubric (điểm CHÍNH) + tín hiệu phụ; KHÔNG chứa nút duyệt/từ chối.
@@ -39,13 +40,13 @@ export function ScoreBreakdown({
           <h2 className="mr-1 text-[20px]">Điểm đối sánh CV–JD</h2>
           {conf && (
             <Tag tone={conf.tone}>
-              Tự tin: {conf.label} · {confidence!.toFixed(2)}
+              Độ tin cậy: {conf.label} · {confidence!.toFixed(2)}
             </Tag>
           )}
           {showFlags &&
             uncertainty_flags.map((flag) => (
               <Tag key={flag} tone="warn">
-                {flag}
+                {flagLabel(flag)}
               </Tag>
             ))}
         </div>
@@ -58,8 +59,8 @@ export function ScoreBreakdown({
               Hồ sơ đã quyết chỉ nêu SỰ THẬT "chấm không thành công". */}
           <p className="mt-1.5 text-[13px] text-accent-800">
             {showFlags
-              ? "Ranker gặp lỗi khi chấm — ca này vào hàng chờ HR xem xét."
-              : "Ranker gặp lỗi khi chấm — hồ sơ không chấm được điểm."}
+              ? "Hệ thống gặp lỗi khi chấm điểm — hồ sơ được chuyển HR xem xét."
+              : "Hệ thống gặp lỗi khi chấm điểm — hồ sơ không có điểm."}
           </p>
         </div>
       ) : (
@@ -70,7 +71,7 @@ export function ScoreBreakdown({
               <span className="font-heading text-[44px] font-bold leading-none">
                 {overall_score != null ? overall_score : "—"}
               </span>
-              <span className="text-[13px] text-ink/65">/ 100 · điểm tổng theo rubric</span>
+              <span className="text-[13px] text-ink/65">/ 100 · điểm tổng theo tiêu chí của JD</span>
             </div>
             {summary?.trim() && (
               <p className="mt-2.5 text-[13px] leading-relaxed text-ink/80">{summary}</p>
@@ -106,17 +107,18 @@ export function ScoreBreakdown({
             </ol>
           ) : (
             <p className="mt-3 text-[13px] text-ink/65">
-              Chưa có breakdown theo tiêu chí (ứng viên có thể đang chờ chấm điểm).
+              Chưa có điểm từng tiêu chí (hồ sơ có thể đang chờ chấm điểm).
             </p>
           )}
 
           {/* Tín hiệu phụ: độ tương đồng ngữ nghĩa — KHÔNG tính vào điểm (PRD §7.2). */}
+          {/* 2 chữ số — khớp số in trong câu lý do của ranker (HR đối chiếu hai chỗ với nhau). */}
           <p className="mt-2.5 text-[13px] text-ink/65">
-            Độ tương đồng ngữ nghĩa:{" "}
+            Độ tương đồng nội dung CV–JD:{" "}
             <span className="font-bold text-ink">
-              {semantic_similarity != null ? semantic_similarity.toFixed(4) : "—"}
+              {semantic_similarity != null ? semantic_similarity.toFixed(2) : "—"}
             </span>{" "}
-            — tham khảo, không tính điểm
+            — chỉ để tham khảo, không tính vào điểm
           </p>
         </>
       )}

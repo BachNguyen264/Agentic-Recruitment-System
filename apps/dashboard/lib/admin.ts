@@ -117,17 +117,108 @@ export function configDefaultLabel(value: ConfigValue): string {
   return text === "" ? BLANK_LABEL : text;
 }
 
-// Nhãn tiếng Việt cho node trong nhật ký. Chỉ 6 node (xem docstring `routes/admin.py`); node lạ
-// (dữ liệu cũ) rơi về chính chuỗi gốc thay vì biến mất.
+// Nhãn tiếng Việt cho node trong nhật ký (xem docstring `routes/admin.py`); node lạ (dữ liệu cũ) rơi
+// về chính chuỗi gốc thay vì biến mất. `gate` có mặt vì node gate cũng ghi audit (auto-từ-chối, và
+// thư mời khi auto-mời).
 const NODE_LABEL: Record<string, string> = {
-  parser: "Bóc tách CV",
+  parser: "Đọc CV",
   ranker: "Chấm điểm",
   screener: "Sàng lọc",
   scheduler: "Gửi thư / đặt lịch",
   human_review: "HR duyệt",
+  gate: "Chế độ tự động",
   system: "Hệ thống",
 };
 
 export function auditNodeLabel(node: string): string {
   return NODE_LABEL[node] ?? node;
+}
+
+// Nhãn cho `action`. Mã gốc VẪN hiện cạnh nhãn ở AuditLogTab — nó là khoá đối soát với code (grep
+// ngược ra nơi ghi). Mã chưa có nhãn rơi về chính nó. Tên action tra từ các lệnh
+// `audit_service.record(...)` của backend, KHÔNG đoán.
+const ACTION_LABEL: Record<string, string> = {
+  received: "Nhận hồ sơ",
+  parsed: "Đọc CV xong",
+  parse_failed: "Không đọc được CV",
+  ranked: "Chấm điểm xong",
+  rank_failed: "Chấm điểm bị lỗi",
+  auto_reject: "Tự động từ chối",
+  auto_invite: "Tự động mời",
+  screener_skipped: "Bỏ qua bước sàng lọc",
+  screener_resumed: "Nhận câu trả lời sàng lọc",
+  screener_timeout: "Hết hạn trả lời sàng lọc",
+  screener_resent: "Gửi lại thư sàng lọc",
+  rejection_resent: "Gửi lại thư từ chối",
+  queued_for_human_review: "Chuyển HR duyệt",
+  // Lượt chạy ĐẦU ghi bước human_review bằng mã này (lượt resume thì ghi `queued_for_human_review`) —
+  // nghĩa thật là "hồ sơ vào bước ở cột Bước".
+  stub_pass_through: "Vào bước này",
+  approve: "HR duyệt",
+  reject: "HR từ chối",
+  error: "Lỗi kỹ thuật",
+  stuck_reconciled: "Xử lý hồ sơ bị kẹt",
+  booking_invite_sent: "Gửi thư mời đặt lịch",
+  booking_invite_failed: "Gửi thư mời đặt lịch thất bại",
+  booking_confirmed: "Ứng viên chốt lịch",
+  booking_cancelled: "Huỷ lịch phỏng vấn",
+  booking_no_slots: "Hết khung giờ trống",
+  booking_no_response: "Ứng viên không chọn giờ",
+  email_failed: "Gửi thư thất bại",
+  email_send_failed: "Dịch vụ gửi thư báo lỗi",
+  email_bounced: "Thư bị trả về",
+  email_complained: "Ứng viên báo thư là spam",
+  config_updated: "Đổi cấu hình",
+  config_reset: "Khôi phục cấu hình mặc định",
+};
+
+// Hai họ action có hậu tố: `route:<nhánh>` (background) và `email_sent:<loại thư>` (scheduler).
+const ROUTE_LABEL: Record<string, string> = {
+  screener: "sàng lọc",
+  human_review: "HR duyệt",
+  auto_reject: "tự động từ chối",
+  auto_invite: "tự động mời",
+};
+
+const EMAIL_KIND_LABEL: Record<string, string> = {
+  invite: "thư mời",
+  reject: "thư từ chối",
+  screener: "câu hỏi sàng lọc",
+  screener_reminder: "thư nhắc trả lời sàng lọc",
+  booking_confirmed: "thư xác nhận lịch",
+  interview_reminder: "thư nhắc phỏng vấn",
+  booking_reminder: "thư nhắc chọn lịch",
+  booking_cancelled: "thư báo huỷ lịch",
+};
+
+export function auditActionLabel(action: string): string {
+  const known = ACTION_LABEL[action];
+  if (known) return known;
+  const sep = action.indexOf(":");
+  if (sep > 0) {
+    const head = action.slice(0, sep);
+    const tail = action.slice(sep + 1);
+    if (head === "route") return `Chuyển sang ${ROUTE_LABEL[tail] ?? tail}`;
+    if (head === "email_sent") return `Đã gửi ${EMAIL_KIND_LABEL[tail] ?? tail}`;
+  }
+  return action;
+}
+
+// Một số lượt ghi đặt MÃ vào cột lý do thay vì câu chữ (vd `technical_error`, `no_slots`) — dịch
+// những mã đó; câu tiếng Việt đầy đủ thì giữ nguyên.
+const REASON_CODE_LABEL: Record<string, string> = {
+  technical_error: "Lỗi kỹ thuật khi xử lý hồ sơ",
+  resume_error: "Lỗi kỹ thuật khi xử lý câu trả lời sàng lọc",
+  stuck_pipeline: "Hồ sơ bị kẹt quá lâu ở một bước",
+  invite_email_failed: "Gửi thư mời thất bại",
+  booking_email_failed: "Gửi thư xác nhận lịch thất bại",
+  no_slots: "Hết khung giờ trống",
+  booking_cancelled: "Lịch phỏng vấn bị huỷ",
+  email_bounced: "Thư bị trả về",
+  email_complained: "Ứng viên báo thư là spam",
+  email_send_failed: "Dịch vụ gửi thư báo lỗi",
+};
+
+export function auditReasonLabel(reason: string): string {
+  return REASON_CODE_LABEL[reason] ?? reason;
 }

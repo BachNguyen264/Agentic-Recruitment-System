@@ -30,7 +30,7 @@ function decisionErrorMessage(err: unknown): string {
 
 export default function ReviewPage() {
   return (
-    <Suspense fallback={<div className="p-8 text-sm text-ink/65">Đang tải hàng đợi…</div>}>
+    <Suspense fallback={<div className="p-8 text-sm text-ink/65">Đang tải danh sách chờ duyệt…</div>}>
       <ReviewQueue />
     </Suspense>
   );
@@ -157,7 +157,7 @@ function ReviewQueue() {
       const stillPending = data?.status === "PENDING_REVIEW";
       setNotice(
         stillPending
-          ? `Hồ sơ #${id}: quyết định đã ghi nhận nhưng THƯ CHƯA GỬI ĐƯỢC — hồ sơ vẫn ở hàng đợi, xem lý do trong thẻ.`
+          ? `Hồ sơ #${id}: quyết định đã ghi nhận nhưng THƯ CHƯA GỬI ĐƯỢC — hồ sơ vẫn ở danh sách chờ duyệt, xem lý do trong thẻ.`
           : decision === "approve"
             ? `Đã duyệt hồ sơ #${id} — thư mời kèm link đặt lịch đã gửi cho ứng viên.`
             : `Đã từ chối hồ sơ #${id} — thư từ chối đã gửi cho ứng viên.`,
@@ -173,14 +173,15 @@ function ReviewQueue() {
   return (
     <div className="mx-auto max-w-[900px] px-4 pb-8 pt-6 sm:px-8">
       <PageHeader
-        eyebrow="Human-in-the-loop"
-        title="Hàng đợi review"
+        eyebrow="Human review"
+        title="Hồ sơ chờ HR duyệt"
         description={
           <>
-            Mỗi ca kèm ReviewCard (tóm tắt + điểm + lý do).{" "}
-            <strong className="font-semibold text-ink">Duyệt</strong> → giao scheduler mời phỏng vấn;{" "}
-            <strong className="font-semibold text-ink">Từ chối</strong> → scheduler gửi thư từ chối.
-            Mọi quyết định ghi vào audit_log.
+            Mỗi hồ sơ kèm tóm tắt, điểm và lý do cần HR xem.{" "}
+            <strong className="font-semibold text-ink">Duyệt</strong> → hệ thống gửi thư mời kèm link
+            tự chọn giờ phỏng vấn;{" "}
+            <strong className="font-semibold text-ink">Từ chối</strong> → hệ thống gửi thư từ chối.
+            Mọi quyết định đều được ghi vào nhật ký kiểm toán.
           </>
         }
       />
@@ -190,7 +191,7 @@ function ReviewQueue() {
           role="status"
           className="mb-4 rounded-lg border-2 border-divider bg-ink/[0.03] px-4 py-2.5 text-sm text-ink/70"
         >
-          Màn bạn vừa mở chỉ có trên bản máy tính. Đã đưa bạn về hàng đợi duyệt.
+          Màn bạn vừa mở chỉ có trên bản máy tính. Đã đưa bạn về trang chờ duyệt.
         </p>
       )}
 
@@ -222,31 +223,31 @@ function ReviewQueue() {
           role="alert"
           className="mb-4 rounded-lg border-2 border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800"
         >
-          {failedCount} ca không tải được chi tiết nên chưa hiện ở đây. Tải lại trang để thử lại.
+          {failedCount} hồ sơ không tải được chi tiết nên chưa hiện ở đây. Tải lại trang để thử lại.
         </p>
       )}
 
-      {listQuery.isLoading && <p className="text-sm text-ink/65">Đang tải hàng đợi…</p>}
+      {listQuery.isLoading && <p className="text-sm text-ink/65">Đang tải danh sách chờ duyệt…</p>}
       {/* 20 request chi tiết đang bay: list đã xong (isLoading=false) nhưng chưa thẻ nào dựng được ⇒
           không có dòng này thì dưới tiêu đề là một khoảng trắng CÂM, kéo dài 6–19s sau mỗi lần
           Render free tỉnh dậy. */}
       {!listQuery.isLoading && loadingDetails && cases.length === 0 && (
-        <p className="text-sm text-ink/65">Đang tải chi tiết {pendingIds.length} ca…</p>
+        <p className="text-sm text-ink/65">Đang tải chi tiết {pendingIds.length} hồ sơ…</p>
       )}
       {/* BUG-1: mất mạng thì query bị TẠM DỪNG chứ không lỗi — isLoading/isError đều false và data
           undefined, nên không có dòng này thì trang chỉ còn tiêu đề và một khoảng trống câm. */}
       {listQuery.fetchStatus === "paused" && !listQuery.data && (
         <p className="rounded-lg border-2 border-divider bg-ink/[0.03] px-4 py-2.5 text-sm text-ink/65">
-          Mất kết nối máy chủ — chưa tải được hàng đợi. Sẽ tự thử lại khi có mạng trở lại.
+          Mất kết nối máy chủ — chưa tải được danh sách chờ duyệt. Sẽ tự thử lại khi có mạng trở lại.
         </p>
       )}
       {listQuery.isError && (
         <p className="rounded-lg border-2 border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
-          Không tải được hàng đợi ({String((listQuery.error as Error)?.message)}). Vui lòng thử lại.
+          Không tải được danh sách chờ duyệt ({String((listQuery.error as Error)?.message)}). Vui lòng thử lại.
         </p>
       )}
       {listQuery.data && pendingIds.length === 0 && offset === 0 && (
-        <EmptyState>Không có ca nào chờ HR quyết. Hàng đợi trống.</EmptyState>
+        <EmptyState>Không có hồ sơ nào đang chờ HR duyệt.</EmptyState>
       )}
 
       {/* "Đang hiện X trong Y" — tổng lấy từ `counts` (GROUP BY toàn bảng), KHÔNG đếm trong trang.
@@ -255,7 +256,7 @@ function ReviewQueue() {
       {totalPending != null && cases.length > 0 && (
         <p className="mb-3 text-[13px] text-ink/65">
           Đang hiện <strong className="font-semibold text-ink">{offset + cases.length}</strong> trong{" "}
-          <strong className="font-semibold text-ink">{totalPending}</strong> ca chờ duyệt.
+          <strong className="font-semibold text-ink">{totalPending}</strong> hồ sơ chờ duyệt.
         </p>
       )}
 

@@ -484,7 +484,7 @@ async def process_application(application_id: int, *, force_review: bool = False
         _PIPELINES_FAILED += 1
         logger.exception("BG: lỗi xử lý application_id=%s", application_id)
         await _escalate_technical_error(
-            application_id, "Lỗi kỹ thuật khi xử lý pipeline (error)."
+            application_id, "Lỗi kỹ thuật khi xử lý hồ sơ — cần HR xem lại."
         )
     finally:
         # `finally` mới thêm — nó KHÔNG đổi luồng điều khiển nào: chỉ hai phép cộng/trừ int, không
@@ -615,7 +615,9 @@ async def resume_screener(
         application = await session.get(Application, application_id)
         if application is not None:
             application.status = ApplicationStatus.PENDING_REVIEW.value
-            application.escalation_reason = "Lỗi kỹ thuật khi resume screener (error)."
+            application.escalation_reason = (
+                "Lỗi kỹ thuật khi xử lý câu trả lời sàng lọc — cần HR xem lại."
+            )
             await audit_service.record(
                 session, application_id=application_id, node="system",
                 action="error", escalation_reason="resume_error", commit=True,

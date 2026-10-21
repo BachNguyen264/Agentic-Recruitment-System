@@ -5,7 +5,14 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { AuditLogItem, AuditLogPage } from "@ars/shared-types";
 import { inputClass, Tag } from "@/components/ui";
-import { auditNodeLabel, getAuditLog, getAuditNodes, type AuditLogRange } from "@/lib/admin";
+import {
+  auditActionLabel,
+  auditNodeLabel,
+  auditReasonLabel,
+  getAuditLog,
+  getAuditNodes,
+  type AuditLogRange,
+} from "@/lib/admin";
 import { formatVnDateTime, vnDayStartIso, vnNextDayStartIso } from "@/lib/datetime";
 
 // Tab 2 — Nhật ký kiểm toán (PRD §16 / NFR-3 / FR-PIPE-4). Trước slice này bảng `audit_log` được 8
@@ -20,8 +27,8 @@ const COLUMNS: { key: string; label: string; align?: "right" }[] = [
   { key: "node", label: "Bước" },
   { key: "action", label: "Hành động" },
   { key: "applicant", label: "Ứng viên" },
-  { key: "confidence", label: "Tự tin", align: "right" },
-  { key: "reason", label: "Lý do leo thang" },
+  { key: "confidence", label: "Độ tin cậy", align: "right" },
+  { key: "reason", label: "Lý do" },
   { key: "expand", label: "", align: "right" },
 ];
 
@@ -36,6 +43,7 @@ function Row({
 }) {
   const hasDetail = Object.keys(item.detail).length > 0;
   const panelId = `audit-detail-${item.id}`;
+  const actionLabel = auditActionLabel(item.action);
 
   return (
     <>
@@ -46,9 +54,15 @@ function Row({
         <td className="px-3 py-2">
           <Tag tone="neutral">{auditNodeLabel(item.node)}</Tag>
         </td>
-        {/* `action` giữ NGUYÊN chuỗi kỹ thuật ("route:human_review", "email_sent:invite"): nó là
-            khoá đối soát với code, dịch sang tiếng Việt là mất khả năng grep ngược lại nguồn ghi. */}
-        <td className="px-3 py-2 font-mono text-xs text-ink">{item.action}</td>
+        {/* Nhãn tiếng Việt cho HR đọc, NHƯNG mã gốc ("route:human_review", "email_sent:invite")
+            vẫn hiện ngay dưới: nó là khoá đối soát với code — bỏ đi là mất khả năng grep ngược lại
+            nguồn ghi. Mã chưa có nhãn thì chỉ hiện một dòng (nhãn = chính mã). */}
+        <td className="px-3 py-2">
+          <span className="block text-ink">{actionLabel}</span>
+          {actionLabel !== item.action && (
+            <span className="block font-mono text-[11px] text-ink/55">{item.action}</span>
+          )}
+        </td>
         <td className="px-3 py-2">
           {item.application_id == null ? (
             <span className="text-ink/55">hệ thống</span>
@@ -64,7 +78,9 @@ function Row({
         <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
           {item.confidence == null ? "—" : item.confidence.toFixed(2)}
         </td>
-        <td className="px-3 py-2 text-ink/75">{item.escalation_reason ?? "—"}</td>
+        <td className="px-3 py-2 text-ink/75">
+          {item.escalation_reason ? auditReasonLabel(item.escalation_reason) : "—"}
+        </td>
         <td className="px-3 py-2 text-right">
           {hasDetail ? (
             <button
@@ -289,7 +305,7 @@ export function AuditLogTab({ active }: { active: boolean }) {
             {node === null
               ? filteringDays
                 ? "Không có bản ghi nào trong khoảng ngày đã chọn."
-                : "Chưa có bản ghi nào — nhật ký sẽ đầy dần khi CV chạy qua pipeline."
+                : "Chưa có bản ghi nào — nhật ký sẽ đầy dần khi có hồ sơ được xử lý."
               : filteringDays
                 ? "Không có bản ghi nào của bước này trong khoảng ngày đã chọn."
                 : "Không có bản ghi nào của bước này."}

@@ -12,6 +12,7 @@ import {
   STATUSES_IN_BUCKET,
   applicationStatusLabel,
   applicationStatusTone,
+  flagLabel,
   isEmailFlag,
   type StatusBucket,
 } from "@/lib/applications";
@@ -48,7 +49,7 @@ function StatusCell({ a }: { a: ApplicationListItem }) {
       {a.email_bounced && <Tag tone="danger">⚠ Email không gửi được</Tag>}
       {a.email_send_failed && <Tag tone="danger">⛔ Hệ thống chưa gửi được thư</Tag>}
       {a.status === "PENDING_REVIEW" && otherFlags.length > 0 && (
-        <span className="text-xs font-semibold text-accent">{otherFlags.join(" · ")}</span>
+        <span className="text-xs font-semibold text-accent">{otherFlags.map(flagLabel).join(" · ")}</span>
       )}
     </div>
   );
@@ -110,7 +111,7 @@ export default function ApplicationsPage() {
       <PageHeader
         eyebrow="Danh sách hồ sơ"
         title="Ứng viên"
-        description="Toàn bộ CV đã nộp kèm điểm và trạng thái theo bốn rổ pipeline (PRD §13). Bấm một hàng để mở chi tiết điểm và agent trace."
+        description="Toàn bộ hồ sơ đã nộp kèm điểm và trạng thái. Bấm vào một hồ sơ để xem chi tiết điểm, câu trả lời sàng lọc và quá trình xử lý."
       />
 
       {/* Bộ lọc theo rổ trạng thái */}
@@ -166,7 +167,7 @@ export default function ApplicationsPage() {
           thẳng ra, thay vì để người dùng tự đoán vì sao các số biến thành "…". */}
       {pipelineError && (
         <p role="status" className="mt-3 text-[13px] text-amber-700">
-          Chưa đọc được tổng số hồ sơ — các con số trên chip tạm ẩn. Danh sách bên dưới vẫn đúng.
+          Chưa đọc được tổng số hồ sơ — các con số trên nút lọc tạm ẩn. Danh sách bên dưới vẫn đúng.
         </p>
       )}
 
@@ -199,8 +200,8 @@ export default function ApplicationsPage() {
         {!isLoading && data && filtered.length === 0 && (
           <p className="px-6 py-10 text-center text-[13px] text-ink/65">
             {bucket === "all"
-              ? "Chưa có ứng viên nào — nộp CV qua cổng tuyển dụng công khai để pipeline chạy."
-              : "Không có ứng viên trong rổ này."}
+              ? "Chưa có ứng viên nào. Hồ sơ nộp qua trang tuyển dụng sẽ hiện ở đây."
+              : "Không có ứng viên ở nhóm này."}
           </p>
         )}
 

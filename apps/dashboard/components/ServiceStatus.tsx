@@ -78,7 +78,7 @@ export function ServiceStatus() {
           <p className="border-b border-divider bg-red-50 px-4 py-3 text-[13px] text-red-700">
             {throttled
               ? "Đã kiểm quá nhiều lần trong một giờ (giới hạn 20 lượt). Chờ ít phút rồi thử lại — đây là giới hạn chống lạm dụng, không phải sự cố hệ thống."
-              : `Không gọi được backend (${message}).`}
+              : `Không kết nối được máy chủ (${message}).`}
           </p>
         )}
 

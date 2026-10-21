@@ -145,7 +145,7 @@ def parse_cv(data: bytes, name: str, *, llm: Any | None = None) -> dict:
         parsed: ParsedCV = client.invoke(_messages(llm_text))
     except Exception as exc:  # noqa: BLE001 — lỗi LLM/API KHÔNG được làm sập pipeline (PRD §7.1)
         logger.warning("parser: lỗi gọi LLM cho %s — %s", name, exc)
-        return _failed(f"Lỗi gọi LLM khi parse CV: {exc}")
+        return _failed(f"Lỗi khi gọi AI đọc CV: {exc}")
 
     # Chữ ẩn ĐÃ bị loại khỏi `text` ở cv_reader nên LLM không đọc được nó. Cờ vẫn cần: người giấu
     # chữ trong CV là người đang cố qua mặt hệ thống, và HR phải biết trước khi tin phần còn lại —
@@ -213,7 +213,7 @@ async def parser_node(state: RecruitmentState) -> dict:
         data = await get_storage().get(cv_key)
     except StorageError as exc:
         logger.warning("parser: không lấy được CV %s — %s", cv_key, exc)
-        result = _failed(f"Không đọc được file CV từ storage: {exc}")
+        result = _failed(f"Không lấy được file CV từ kho lưu trữ: {exc}")
     else:
         # parse_cv ĐỒNG BỘ (PyMuPDF/python-docx + gọi LLM sync) → PHẢI offload sang thread. Node này
         # là async (để await storage) nên KHÔNG còn được LangGraph tự chạy trong executor như hồi

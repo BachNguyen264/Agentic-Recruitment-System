@@ -36,8 +36,8 @@ export default function NewJobPage() {
         <h1 className="text-[26px] sm:text-[30px]">Tạo JD mới</h1>
         <p className="mt-2 max-w-[66ch] text-[13px] leading-relaxed text-ink/65">
           Thông tin ứng viên nhìn thấy ở cổng tuyển dụng. Lưu xong JD ở dạng{" "}
-          <strong className="font-semibold text-accent-800">Nháp</strong> → sang bước cấu hình rubric
-          để mở JD.
+          <strong className="font-semibold text-accent-800">Nháp</strong> → sang bước đặt tiêu chí
+          chấm điểm để mở JD.
         </p>
       </header>
 

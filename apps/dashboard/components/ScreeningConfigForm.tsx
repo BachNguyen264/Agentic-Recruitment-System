@@ -124,7 +124,7 @@ export function ScreeningConfigForm({
         setRubric(suggested.map((c) => ({ criterion: c.criterion, weight: c.weight })));
       }
     } catch (e) {
-      setSuggestErr(String((e as Error)?.message) || "Không gợi ý được rubric.");
+      setSuggestErr(String((e as Error)?.message) || "Không gợi ý được tiêu chí.");
     } finally {
       setSuggesting(false);
     }
@@ -171,7 +171,7 @@ export function ScreeningConfigForm({
               ô nào — một <label> không htmlFor và không bọc input chỉ là chữ trang trí, mà trình đọc
               màn hình lại hứa hẹn ngược lại. Tên đọc được của từng ô nằm ở `aria-label` của nó. */}
           <p className={GROUP_LABEL}>
-            Rubric chấm điểm (HR tự nhập) <span className="text-red-500">*</span>
+            Tiêu chí chấm điểm <span className="text-red-500">*</span>
           </p>
           <span className={`text-xs ${balanced ? "text-ink/65" : "text-amber-600"}`}>
             Tổng trọng số: <span className="font-semibold">{sum.toFixed(2)}</span>
@@ -204,7 +204,7 @@ export function ScreeningConfigForm({
             >
               <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
             </svg>
-            {suggesting ? "Đang gợi ý…" : "AI gợi ý rubric"}
+            {suggesting ? "Đang gợi ý…" : "AI gợi ý tiêu chí"}
           </button>
           <span className="min-w-[180px] flex-1 text-[13px] leading-snug text-accent-800">
             {suggestionsRemaining > 0
@@ -265,7 +265,8 @@ export function ScreeningConfigForm({
           </button>
         </div>
         <p className="text-xs text-ink/65">
-          Cần ≥1 tiêu chí + tổng trọng số &gt; 0 để MỞ JD. Tổng nên ≈ 1.0 (ranker tự chuẩn hóa).
+          Cần ít nhất 1 tiêu chí (tổng trọng số &gt; 0) để mở JD. Tổng trọng số nên bằng 1.0 — nếu
+          lệch, hệ thống tự quy đổi theo tỉ lệ.
         </p>
       </div>
 
@@ -280,7 +281,10 @@ export function ScreeningConfigForm({
           addLabel="Thêm câu hỏi"
           itemLabel="Câu hỏi"
         />
-        <p className="text-xs text-ink/65">Dùng cho vòng Screener (PRD §10).</p>
+        <p className="text-xs text-ink/65">
+          Gửi qua email cho ứng viên đạt điểm, trước khi mời phỏng vấn. Để trống nếu không cần hỏi
+          thêm.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 border-t border-divider pt-4">
@@ -297,14 +301,14 @@ export function ScreeningConfigForm({
             type="button"
             onClick={() => onSaveAndOpen(cleanRubric, cleanQuestions)}
             disabled={busy || !rubricOk}
-            title={rubricOk ? "Lưu cấu hình và mở JD để nhận CV" : "Cần ≥1 tiêu chí rubric (tổng trọng số > 0) để mở JD"}
+            title={rubricOk ? "Lưu cấu hình và mở JD để nhận CV" : "Cần ít nhất 1 tiêu chí chấm điểm (tổng trọng số > 0) để mở JD"}
             className={btn("primary")}
           >
             {opening ? "Đang mở…" : "Lưu & Mở JD"}
           </button>
         )}
         {isOpen && (
-          <span className="text-sm text-green-700">JD đang mở — đã nhận CV ở /apply.</span>
+          <span className="text-sm text-green-700">JD đang mở — ứng viên đã nộp CV được trên trang tuyển dụng.</span>
         )}
       </div>
     </div>

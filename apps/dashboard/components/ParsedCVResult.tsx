@@ -1,5 +1,6 @@
 import type { ParsedCV } from "@ars/shared-types";
 import { Tag, type TagTone } from "@/components/ui";
+import { flagLabel } from "@/lib/applications";
 
 // THUẦN presentational: nhận prop, KHÔNG tự fetch — tái dùng ở chi tiết ứng viên (HR) + /cv-check.
 // Kiểu dáng bám thiết kế (ARS.dc.html 741–757): thẻ dữ liệu viền 2px, nhãn mục 13px/700, các mục
@@ -58,15 +59,15 @@ export function ParsedCVResult({
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="mr-1 text-[20px]">Kết quả bóc tách</h2>
+        <h2 className="mr-1 text-[20px]">Thông tin trích từ CV</h2>
         {showConfidence && (
           <>
             <Tag tone={conf.tone}>
-              {conf.label} · conf {confidence.toFixed(2)}
+              {conf.label} · độ tin cậy {confidence.toFixed(2)}
             </Tag>
             {uncertainty_flags.map((flag) => (
               <Tag key={flag} tone="warn">
-                {flag}
+                {flagLabel(flag)}
               </Tag>
             ))}
           </>
@@ -84,7 +85,7 @@ export function ParsedCVResult({
         </div>
       ) : parsed_data == null || Object.keys(parsed_data).length === 0 ? (
         // parsed_data có thể là {} (row scaffold/legacy chưa qua parser) — coi như chưa có dữ liệu.
-        <p className="text-[13px] text-ink/65">Không có dữ liệu bóc tách.</p>
+        <p className="text-[13px] text-ink/65">Chưa có thông tin trích từ CV.</p>
       ) : (
         <div className="space-y-4">
           {/* Liên hệ */}
@@ -97,7 +98,7 @@ export function ParsedCVResult({
             <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5">
               <Field label="Điện thoại" value={parsed_data.phone} />
               <Field
-                label="Tổng năm KN"
+                label="Số năm kinh nghiệm"
                 value={
                   parsed_data.total_years_experience != null
                     ? String(parsed_data.total_years_experience)

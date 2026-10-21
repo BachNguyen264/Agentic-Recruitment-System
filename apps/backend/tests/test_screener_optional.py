@@ -327,4 +327,4 @@ async def test_process_no_questions_auto_invite_error_isolated(monkeypatch) -> N
     await background.process_application(22)  # KHÔNG raise ra ngoài
 
     assert app_row.status == ApplicationStatus.SCHEDULING.value  # KHÔNG reset về PENDING_REVIEW[error]
-    assert app_row.escalation_reason != "Lỗi kỹ thuật khi xử lý pipeline (error)."
+    assert app_row.escalation_reason != "Lỗi kỹ thuật khi xử lý hồ sơ — cần HR xem lại."
