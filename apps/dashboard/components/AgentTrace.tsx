@@ -118,8 +118,13 @@ function deriveNodes(app: ApplicationDetail) {
     // là sai sự thật. recommendation (dẫn xuất từ điểm) phân biệt được: "consider_reject" ⟺ dưới
     // ngưỡng và không cờ; "invite" ⟺ đạt ngưỡng (tới đây tức JD không câu hỏi vì ca có câu hỏi đã
     // rẽ nhánh answers/AWAITING ở trên).
-    if (app.recommendation === "consider_reject") {
+    // Ca dưới ngưỡng đã REJECTED có thể do gate auto-từ-chối HOẶC do HR từ chối sau review — dữ liệu
+    // hồ sơ không phân biệt được, nên chỉ nói điều đúng cho cả hai (prod 18/10: ca gate tự từ chối
+    // từng hiện "chuyển thẳng HR").
+    if (app.recommendation === "consider_reject" && s === "PENDING_REVIEW") {
       screenerNote = "Điểm dưới ngưỡng đạt → pipeline chuyển thẳng HR, không tới bước sàng lọc.";
+    } else if (app.recommendation === "consider_reject") {
+      screenerNote = "Điểm dưới ngưỡng đạt → hồ sơ không đi tới bước sàng lọc.";
     } else if (app.recommendation === "invite") {
       screenerNote = "Đạt ngưỡng nhưng JD không có câu hỏi sàng lọc → pipeline bỏ qua bước này.";
     } else {
